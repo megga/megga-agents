@@ -15,6 +15,25 @@ La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`
 
 Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
 
+## Les modèles par métier
+
+Un modèle (« gabarit » dans le code) pré-remplit une configuration complète : métier, ton, consignes, outils, voix par défaut. Le client choisit son métier, donne un prénom, et obtient un agent qui marche tel quel ; il peut ensuite l'affiner.
+
+| Modèle | Pour |
+|---|---|
+| `generaliste` | accueillir les clients, répondre, retenir, programmer des rappels |
+| `immobilier` | une agence : demandes d'achat, de vente, de location, critères, rappels ; la recherche de biens s'ajoute quand MEGGA branche le catalogue de l'agence |
+
+Un modèle ne touche jamais à ce qui tient au client (identifiant, entreprise, zone, numéro WhatsApp) ni aux réglages avancés de MEGGA (modèles de langue, catalogue, modèles Meta). Les deux usages passent par le même moteur : le client qui construit son seul agent, et MEGGA pour tous les clients.
+
+## Les erreurs
+
+Une configuration refusée rend, champ par champ, un message en français clair, prêt à montrer : « Le prénom doit faire 40 caractères au plus. », « Choisissez une voix dans la liste. », « Choisissez un métier : general ou immobilier. »…
+
+```json
+{"erreur": "configuration invalide", "details": [{"champ": "nom_agent", "message": "Le prénom doit faire 40 caractères au plus."}]}
+```
+
 ## Le parcours
 
 1. MEGGA crée le client d'une configuration complète : version 1, brouillon. Puis lui donne un jeton.
@@ -33,13 +52,15 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /catalogue` | tous | métiers, outils, zones, modèles, réglages du client |
+| `GET /gabarits` | tous | les modèles par métier et leurs réglages |
 | `GET /clients` | tous | les clients et leur état (annuaire, conteneur) ; un client ne voit que le sien |
-| `POST /clients` | MEGGA | `{config}` : un nouveau client |
+| `POST /clients` | MEGGA | `{config}`, ou `{gabarit, client: {id, entreprise, zone, numero_id}, nom_agent}` : un nouveau client |
 | `GET /clients/{id}` | tous | le client, sa version en service et sa configuration |
 | `GET /clients/{id}/versions` | tous | l'historique |
 | `GET /clients/{id}/versions/{v}` | tous | une version |
 | `POST /clients/{id}/valider` | tous | `{base?, changements}` : la configuration résultante, sans rien garder |
 | `POST /clients/{id}/versions` | tous | `{base?, changements}` : un brouillon |
+| `POST /clients/{id}/gabarit` | tous | `{gabarit, nom_agent?, base?}` : un brouillon d'après un modèle par métier |
 | `POST /clients/{id}/versions/{v}/essai` | tous | `{message, conversation?}` : la réponse de l'agent |
 | `POST /clients/{id}/versions/{v}/activer` | tous | `{forcer?}` : mise en service ou retour |
 | `POST /clients/{id}/reprise` | MEGGA | `{gere_par_megga}` : reprendre ou rendre la main |
@@ -80,6 +101,7 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Redémarrage** : un message arrivé pendant les quelques secondes entre la fin des tours et l'arrêt du conteneur peut rester sans réponse.
 - **Un numéro, un client** : `essai-megga` et `megga-estates` ont le même numéro ; la porte refusera d'activer le second tant que le premier le garde.
 - **Zone suisse et chez le client** : la mise en service y est notée mais pas poussée ; elle passera par le pilotage (lot 6).
+- **Inscription d'un client** : créer le compte (identifiant, entreprise, zone, numéro WhatsApp) reste à MEGGA ; le client règle ensuite son agent lui-même.
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.
 - **Agno 3.2** : sous Postgres, la table des versions a une colonne `deleted_at` que SQLite n'a pas ; l'export d'une base qui contient des versions ne se recharge pas encore dans SQLite. À régler avant de déménager la base de l'atelier.

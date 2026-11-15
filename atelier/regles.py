@@ -60,7 +60,9 @@ def fusionner(base: dict, changements: dict) -> dict:
 
 
 def erreurs(e: ValidationError) -> list[dict]:
-    return [{"champ": ".".join(str(x) for x in err["loc"]), "message": err["msg"]} for err in e.errors()]
+    from .messages import erreurs as en_francais
+
+    return en_francais(e)
 
 
 def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | None) -> Config:

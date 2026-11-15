@@ -13,14 +13,17 @@ Rôles, par le jeton (Authorization: Bearer …) :
 
 Routes (toutes sous /atelier) :
   GET   /catalogue                              métiers, outils, zones, modèles, réglages du client
+  GET   /gabarits                               les modèles par métier, prêts à marcher
   GET   /clients                                les clients et leur état (MEGGA : tous ; client : le sien) ;
                                                 « ecart » : l'annuaire de la porte ne sert pas la version en service
   POST  /clients                                MEGGA : un nouveau client, d'une configuration complète
+                                                ou d'un modèle par métier (gabarit, identité, prénom)
   GET   /clients/{id}                           un client, sa version en service et sa configuration
   GET   /clients/{id}/versions                  l'historique
   GET   /clients/{id}/versions/{v}              une version et sa configuration
   POST  /clients/{id}/valider                   valide des changements sans rien enregistrer
   POST  /clients/{id}/versions                  une nouvelle version (brouillon), d'après une base
+  POST  /clients/{id}/gabarit                   une nouvelle version d'après un modèle par métier et un prénom
   POST  /clients/{id}/versions/{v}/essai        l'agent de cette version répond, hors WhatsApp
   POST  /clients/{id}/versions/{v}/activer      mise en service (ou retour à une version publiée)
   POST  /clients/{id}/reprise                   MEGGA : reprendre la main (ou la rendre)
@@ -59,7 +62,7 @@ from noyau.app import CLES
 from noyau.config import Config
 from noyau.suivi import PERSONNE
 
-from . import regles
+from . import gabarits, regles
 from .couts import Tarifs, couts
 from .essai import essayer
 from .porte import Porte, PorteErreur
@@ -196,10 +199,18 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         dernieres = await bd(versions.dernieres, {c["component_id"] for c in tous}) if tous else {}
         return {"clients": [resume(c, dernieres.get(c["component_id"]), etats) for c in tous], "porte": etats is not None}
 
+    @r.get("/gabarits")
+    def liste_gabarits(qui: Identite = Depends(identite)):
+        return {"gabarits": gabarits.lister()}
+
     @r.post("/clients", status_code=201)
     def creer_client(qui: Identite = Depends(identite), corps: dict = Body(...)):
         megga(qui)
-        conf = regles.valider(corps.get("config") or {})
+        if corps.get("gabarit") is not None:
+            donnees = gabarits.nouvelle_config(corps["gabarit"], corps.get("client"), corps.get("nom_agent"))
+        else:
+            donnees = corps.get("config") or {}
+        conf = regles.valider(donnees)
         if versions.db.get_component(conf.id, include_deleted=True) is not None:
             raise Refus(409, "ce client existe déjà")
         return {"client": conf.id, **versions.creer(conf, "megga")}
@@ -232,6 +243,22 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         conf, base = preparer(qui, ident, corps)
         v = versions.ajouter(conf, qui.role, base)
         return {**v, "manques": regles.manques(conf)}
+
+    @r.post("/clients/{ident}/gabarit", status_code=201)
+    def depuis_gabarit(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """Un modèle par métier appliqué à ce client : son identité et les réglages de MEGGA restent."""
+        client_de(qui, ident)
+        base_n = regles.numero(corps.get("base"), "base")
+        base = version_de(ident, base_n) if base_n is not None else versions.derniere(ident)
+        if base is None:
+            raise Refus(404, "aucune version de base")
+        changements = gabarits.reglages_pour(corps.get("gabarit"), base["config"])
+        if corps.get("nom_agent") is not None:
+            changements["nom_agent"] = corps["nom_agent"]
+        conf = regles.valider(regles.fusionner(base["config"], changements))
+        regles.verifier_zone(conf, zone_en_service(ident))
+        v = versions.ajouter(conf, qui.role, base["version"])
+        return {**v, "gabarit": corps["gabarit"], "manques": regles.manques(conf)}
 
     @r.post("/clients/{ident}/versions/{numero}/essai")
     async def essai(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict = Body(...)):
