@@ -7,8 +7,8 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
 ## Avant (Julien, une seule fois)
 
 1. **Meta** : le numéro de l'essai est le +41 22 567 04 07 (Telnyx). Le 15.11.2026, il a été ajouté sur un compte WhatsApp « MEGGA » à part, dans le portefeuille MEGGA, puis vérifié par appel (renvoyé chez Telnyx vers le mobile de Julien) et inscrit. Reste :
-   - créer l'app « Alix MEGGA » (ni « Alix FSP », dont le webhook va au routeur `megga-whatsapp`, ni « LCS ») ;
-   - abonner le compte « MEGGA » à cette app, une fois la porte en ligne ;
+   - fait : l'app « Alix MEGGA » (4746973982197378, portefeuille MEGGA, usage WhatsApp) est créée, et le compte « MEGGA » lui envoie ses événements. Alix FSP n'a pas bougé : son app garde son webhook et ses comptes ;
+   - publier l'app (elle est en développement) ;
    - garder sa clé secrète (Paramètres, De base) ;
    - créer un jeton d'utilisateur système qui a `whatsapp_business_messaging` sur ce compte ;
    - ajouter un moyen de paiement au compte « MEGGA » (sans lui, les modèles Meta ne partent pas).
