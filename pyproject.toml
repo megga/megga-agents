@@ -23,7 +23,7 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["noyau", "packs", "packs.immobilier"]
+packages = ["noyau", "atelier", "packs", "packs.immobilier"]
 
 [tool.setuptools.package-data]
 "packs.immobilier" = ["demo/*.json"]

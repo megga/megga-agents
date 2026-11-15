@@ -236,3 +236,52 @@ class Rappels:
         t = self._t
         with self._e.connect() as c:
             return c.execute(select(func.min(t.c.quand)).where(t.c.etat == "attente")).scalar()
+
+
+class Jetons:
+    """Les jetons d'accès des clients à l'atelier (table megga_jetons, dans la base de l'atelier).
+
+    Seule leur empreinte est gardée : un jeton se montre une fois, à sa création.
+    """
+
+    def __init__(self, url: str):
+        self._e = moteur(url)
+        pg = self._e.dialect.name == "postgresql"
+        meta = MetaData(schema=SCHEMA if pg else None)
+        self._t = Table(
+            "megga_jetons",
+            meta,
+            Column("empreinte", String(64), primary_key=True),
+            Column("client", String(63), nullable=False, index=True),
+            Column("cree", Float, nullable=False),
+        )
+        with self._e.begin() as c:
+            if pg:
+                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+        meta.create_all(self._e)
+
+    @staticmethod
+    def _empreinte(jeton: str) -> str:
+        import hashlib
+
+        return hashlib.sha256(jeton.encode()).hexdigest()
+
+    def creer(self, client: str) -> str:
+        import secrets
+        import time as _t
+
+        jeton = "mgc_" + secrets.token_urlsafe(32)
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(empreinte=self._empreinte(jeton), client=client, cree=_t.time()))
+        return jeton
+
+    def client(self, jeton: str) -> str | None:
+        """Le client de ce jeton, ou None."""
+        if not jeton:
+            return None
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.client).where(self._t.c.empreinte == self._empreinte(jeton))).scalar()
+
+    def revoquer(self, client: str) -> int:
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.client == client)).rowcount

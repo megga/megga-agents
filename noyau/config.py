@@ -13,10 +13,12 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 VERSION = 1
 ZONES = ("suisse", "europe", "etats-unis", "client")
+# Les métiers, et les packs d'outils que chacun permet.
+METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
 
 
 class Strict(BaseModel):
@@ -88,10 +90,27 @@ class Config(Strict):
     modeles_meta: dict[str, ModeleMeta] = {}
     # Un 👀 sur le message quand un tour traîne, retiré à la réponse.
     reactions: bool = True
+    # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
+    metier: Literal["general", "immobilier"] = "general"
     # Les packs actifs (aujourd'hui : « immobilier »).
     outils: tuple[Literal["immobilier"], ...] = ()
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
     catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
+
+    @model_validator(mode="before")
+    @classmethod
+    def metier_par_defaut(cls, d):
+        # Une configuration d'avant le métier : celui de ses packs.
+        if isinstance(d, dict) and "metier" not in d and "immobilier" in (d.get("outils") or ()):
+            d = {**d, "metier": "immobilier"}
+        return d
+
+    @model_validator(mode="after")
+    def outils_du_metier(self):
+        hors = [o for o in self.outils if o not in METIERS[self.metier]]
+        if hors:
+            raise ValueError(f"outils hors du métier {self.metier} : {', '.join(hors)}")
+        return self
 
     @field_validator("version")
     @classmethod

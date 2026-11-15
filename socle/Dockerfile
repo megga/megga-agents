@@ -10,6 +10,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY noyau ./noyau
 COPY packs ./packs
+COPY atelier ./atelier
 RUN pip install --no-cache-dir . && useradd --create-home --uid 10001 agent
 USER agent
 

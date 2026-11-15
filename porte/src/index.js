@@ -4,16 +4,26 @@
 //   POST /meta                     un webhook : signature vérifiée, puis transmis tel quel
 //                                  au conteneur de chaque client concerné
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
+//   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
+//                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
+//   GET  /admin/clients            les clients de l'annuaire et l'état de leur conteneur
+//   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
+//   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
+//                                  qui vérifie lui-même les jetons (MEGGA ou client)
 //
 // Elle ne garde aucun message et ne journalise ni texte ni numéro de personne.
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
-import { clientParId, clientParNumero, idValide } from "./annuaire.js";
+import { RefusAnnuaire, clientParId, clientParNumero, idValide, inscrire, lister } from "./annuaire.js";
 import { defiAbonnement, egal, numerosDe, signatureValide } from "./meta.js";
 import { agentDe } from "./zones.js";
 
-export { AgentEtatsUnis, AgentEurope } from "./agent.js";
+export { AgentEtatsUnis, AgentEurope, Atelier } from "./agent.js";
 
 const texte = (t, status = 200) => new Response(t, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
+const json = (v, status = 200) => Response.json(v, { status });
+const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.headers.get("authorization") ?? "").replace(/^Bearer /, ""), env.ADMIN_TOKEN);
+// L'atelier est unique, en zone Europe.
+const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 
 export async function recevoir(requete, env, ctx) {
   const url = new URL(requete.url);
@@ -23,8 +33,14 @@ export async function recevoir(requete, env, ctx) {
     return defi === null ? texte("refusé", 403) : texte(defi);
   }
   if (url.pathname === "/meta" && requete.method === "POST") return webhook(requete, env, ctx);
-  const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/secrets$/);
-  if (admin && requete.method === "PUT") return secrets(requete, env, admin[1]);
+  const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
+  if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
+  if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env);
+  if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
+  if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
+    const atelier = atelierDe(env);
+    return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
+  }
   return texte("introuvable", 404);
 }
 
@@ -59,8 +75,7 @@ async function webhook(requete, env, ctx) {
 }
 
 async function secrets(requete, env, id) {
-  const jeton = (requete.headers.get("authorization") ?? "").replace(/^Bearer /, "");
-  if (!env.ADMIN_TOKEN || !egal(jeton, env.ADMIN_TOKEN)) return texte("refusé", 401);
+  if (!autorise(requete, env)) return texte("refusé", 401);
   if (!idValide(id)) return texte("identifiant", 400);
   const client = await clientParId(env.ANNUAIRE, id);
   const agent = client && agentDe(env, client);
@@ -73,6 +88,56 @@ async function secrets(requete, env, id) {
   }
   try {
     const noms = await agent.poserSecrets(corps);
+    return texte(`rangés : ${noms.join(", ")}`);
+  } catch (e) {
+    return texte(String(e?.message ?? e).slice(0, 100), 400);
+  }
+}
+
+/** La configuration mise en service par l'atelier : l'annuaire d'abord, puis le conteneur redémarre. */
+async function configuration(requete, env, id) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  if (!idValide(id)) return texte("identifiant", 400);
+  let corps;
+  try {
+    corps = await requete.json();
+  } catch {
+    return texte("corps", 400);
+  }
+  const agent = agentDe(env, { id, zone: corps?.config?.zone });
+  if (!agent) return texte("zone non servie ici", 400);
+  try {
+    await inscrire(env.ANNUAIRE, id, corps);
+  } catch (e) {
+    if (e instanceof RefusAnnuaire) return texte(e.message, e.statut);
+    throw e;
+  }
+  // Le conteneur relit sa configuration au démarrage : on l'arrête, le prochain message le relance.
+  const redemarre = await agent.redemarrer();
+  return json({ ok: true, id, version: corps.version, redemarre });
+}
+
+async function clients(requete, env) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const tous = await lister(env.ANNUAIRE);
+  const etats = await Promise.all(
+    tous.map((c) => (agentDe(env, c)?.etat() ?? Promise.resolve(null)).catch(() => null)),
+  );
+  return json({ clients: tous.map((c, i) => ({ ...c, conteneur: etats[i] })) });
+}
+
+async function secretsAtelier(requete, env) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const atelier = atelierDe(env);
+  if (!atelier) return texte("atelier absent", 503);
+  let corps;
+  try {
+    corps = await requete.json();
+  } catch {
+    return texte("corps", 400);
+  }
+  try {
+    const noms = await atelier.poserSecrets(corps);
     return texte(`rangés : ${noms.join(", ")}`);
   } catch (e) {
     return texte(String(e?.message ?? e).slice(0, 100), 400);

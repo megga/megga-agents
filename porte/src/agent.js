@@ -5,6 +5,8 @@
 // Les secrets propres au client (l'adresse de sa base) sont rangés dans le stockage
 // de cet objet par la route d'administration, jamais relus vers l'extérieur.
 // Ceux de MEGGA (clés des modèles, jeton et clé de l'app Meta) sont des secrets du Worker.
+//
+// L'atelier (lot 5) tourne de la même façon : un objet, un conteneur de la même image.
 import { DurableObject } from "cloudflare:workers";
 import { clientParId } from "./annuaire.js";
 
@@ -22,15 +24,18 @@ export async function jetonInterne(admin, nom) {
 }
 export const SECRETS_CLIENT = ["DATABASE_URL"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
+// L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
+const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
 
-class AgentClient extends DurableObject {
+/** Un objet qui fait tourner un conteneur de l'image unique, et lui transmet les requêtes. */
+class Conteneur extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     const c = ctx.container;
     if (c?.running) void ctx.blockConcurrencyWhile(() => c.setInactivityTimeout(INACTIVITE_MS));
   }
 
-  /** Range les secrets du client ; ne rend que leurs noms. */
+  /** Range les secrets propres à cet objet ; ne rend que leurs noms. */
   async poserSecrets(secrets) {
     const gardes = {};
     for (const k of SECRETS_CLIENT) if (typeof secrets?.[k] === "string" && secrets[k]) gardes[k] = secrets[k];
@@ -38,8 +43,21 @@ class AgentClient extends DurableObject {
     const avant = (await this.ctx.storage.get("secrets")) ?? {};
     await this.ctx.storage.put("secrets", { ...avant, ...gardes });
     // Les nouveaux secrets s'appliquent au prochain démarrage du conteneur.
-    if (this.ctx.container?.running) await this.ctx.container.destroy().catch(() => {});
+    await this.redemarrer();
     return Object.keys(gardes);
+  }
+
+  /** Arrête le conteneur s'il tourne : le prochain message le relance avec l'annuaire et les secrets du moment. */
+  async redemarrer() {
+    const c = this.ctx.container;
+    if (!c?.running) return false;
+    await c.destroy().catch(() => {});
+    return true;
+  }
+
+  /** L'état du conteneur, sans rien de privé. */
+  async etat() {
+    return { demarre: Boolean(this.ctx.container?.running) };
   }
 
   async fetch(requete) {
@@ -50,13 +68,41 @@ class AgentClient extends DurableObject {
     const transmise = new Request(url, requete);
     transmise.headers.delete("host");
     const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
-    if (url.pathname === "/whatsapp") await this.verifierBientot();
+    await this.apres(url.pathname);
     return reponse;
   }
+
+  async apres() {}
 
   pret() {
     this.demarrage ??= this.demarrer().finally(() => (this.demarrage = undefined));
     return this.demarrage;
+  }
+
+  async demarrer() {
+    const c = this.ctx.container;
+    if (!c.running) c.start({ enableInternet: true, env: await this.environnement() });
+    await c.setInactivityTimeout(INACTIVITE_MS);
+    const port = c.getTcpPort(PORT);
+    let derniere;
+    for (let i = 0; i < 100; i++) {
+      try {
+        const r = await port.fetch("http://container/sante", { signal: AbortSignal.timeout(1000) });
+        await r.body?.cancel();
+        if (r.ok) return;
+        derniere = new Error(`santé ${r.status}`);
+      } catch (e) {
+        derniere = e;
+      }
+      await scheduler.wait(200);
+    }
+    throw new Error("le conteneur ne répond pas", { cause: derniere });
+  }
+}
+
+class AgentClient extends Conteneur {
+  async apres(chemin) {
+    if (chemin === "/whatsapp") await this.verifierBientot();
   }
 
   /** Une vérification des rappels sous peu, sauf si une alarme plus proche est déjà posée. */
@@ -79,37 +125,35 @@ class AgentClient extends DurableObject {
     if (prochain) await this.ctx.storage.setAlarm(Math.max(Math.round(prochain * 1000), Date.now() + 5000));
   }
 
-  async demarrer() {
-    const c = this.ctx.container;
-    if (!c.running) {
-      const nom = this.ctx.id.name;
-      const client = await clientParId(this.env.ANNUAIRE, nom);
-      if (!client) throw new Error("client inconnu ou inactif");
-      const secrets = (await this.ctx.storage.get("secrets")) ?? {};
-      for (const k of SECRETS_CLIENT) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
-      const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await jetonInterne(this.env.ADMIN_TOKEN ?? "", nom) };
-      for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
-      // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.
-      c.start({ enableInternet: true, env });
-    }
-    await c.setInactivityTimeout(INACTIVITE_MS);
-    const port = c.getTcpPort(PORT);
-    let derniere;
-    for (let i = 0; i < 100; i++) {
-      try {
-        const r = await port.fetch("http://container/sante", { signal: AbortSignal.timeout(1000) });
-        await r.body?.cancel();
-        if (r.ok) return;
-        derniere = new Error(`santé ${r.status}`);
-      } catch (e) {
-        derniere = e;
-      }
-      await scheduler.wait(200);
-    }
-    throw new Error("le conteneur ne répond pas", { cause: derniere });
+  /** L'environnement du conteneur : la configuration de l'annuaire, ses secrets et ceux de MEGGA. */
+  async environnement() {
+    const nom = this.ctx.id.name;
+    const client = await clientParId(this.env.ANNUAIRE, nom);
+    if (!client) throw new Error("client inconnu ou inactif");
+    const secrets = (await this.ctx.storage.get("secrets")) ?? {};
+    for (const k of SECRETS_CLIENT) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
+    const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await jetonInterne(this.env.ADMIN_TOKEN ?? "", nom) };
+    for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
+    // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.
+    return env;
   }
 }
 
 // Une classe par zone : chacune a son application de conteneurs, contrainte à sa juridiction.
 export class AgentEurope extends AgentClient {}
 export class AgentEtatsUnis extends AgentClient {}
+
+/**
+ * L'atelier de MEGGA (un seul, en zone Europe) : la même image, en service « atelier ».
+ * Sa base (versions des configurations, jetons des clients) se pose comme celle d'un client.
+ */
+export class Atelier extends Conteneur {
+  async environnement() {
+    const secrets = (await this.ctx.storage.get("secrets")) ?? {};
+    if (!secrets.DATABASE_URL) throw new Error("secret de l'atelier manquant : DATABASE_URL");
+    if (!this.env.ADMIN_TOKEN || !this.env.PORTE_URL) throw new Error("ADMIN_TOKEN et PORTE_URL attendus");
+    const env = { MEGGA_SERVICE: "atelier", DATABASE_URL: secrets.DATABASE_URL, ADMIN_TOKEN: this.env.ADMIN_TOKEN, PORTE_URL: this.env.PORTE_URL };
+    for (const k of SECRETS_ATELIER) if (this.env[k]) env[k] = this.env[k];
+    return env;
+  }
+}
