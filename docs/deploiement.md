@@ -6,9 +6,12 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
 
 ## Avant (Julien, une seule fois)
 
-1. **Meta** : confirmer le numéro de l'essai (+1 555-880-9814 ?) et l'app qui le porte. Il faut de cette app :
-   - sa clé secrète (Paramètres, De base) ;
-   - un jeton d'utilisateur système qui a `whatsapp_business_messaging` sur le compte de ce numéro.
+1. **Meta** : le numéro de l'essai est le +41 22 567 04 07 (Telnyx). Le 15.11.2026, il a été ajouté sur un compte WhatsApp « MEGGA » à part, dans le portefeuille MEGGA, puis vérifié par appel (renvoyé chez Telnyx vers le mobile de Julien) et inscrit. Reste :
+   - créer l'app « Alix MEGGA » (ni « Alix FSP », dont le webhook va au routeur `megga-whatsapp`, ni « LCS ») ;
+   - abonner le compte « MEGGA » à cette app, une fois la porte en ligne ;
+   - garder sa clé secrète (Paramètres, De base) ;
+   - créer un jeton d'utilisateur système qui a `whatsapp_business_messaging` sur ce compte ;
+   - ajouter un moyen de paiement au compte « MEGGA » (sans lui, les modèles Meta ne partent pas).
 2. **Neon** : fait le 15.11.2026. Le projet `calm-king-39242423` (AWS Francfort, Postgres 18) est lié au dépôt par `neon init`. Ses adresses sont dans `.env.local`, jamais suivi par git ; connexion vérifiée sans les afficher.
 3. **Cloudflare** :
    - vérifier que le compte est en Workers Paid (obligatoire pour les conteneurs) ;

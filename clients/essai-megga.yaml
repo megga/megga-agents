@@ -12,8 +12,8 @@ modeles:
   principal: claude-sonnet-5-5
   secours: deepseek-v4-pro
 whatsapp:
-  # À confirmer par Julien : le numéro +1 555-880-9814 (« Megga »), vu chez Meta le 15.11.2026.
-  numero_id: "1441238265738859"
+  # +41 22 567 04 07 (Telnyx), ajouté chez Meta le 15.11.2026 sur un compte WhatsApp « MEGGA » à part.
+  numero_id: "1476827312177165"
 voix:
   # Elise, une voix de la bibliothèque d'ElevenLabs.
   voix: EST9Ui6982FZPSi7gCHi
