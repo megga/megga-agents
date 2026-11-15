@@ -284,3 +284,19 @@ test("les pannes d'un conteneur sont gardées, puis marquées résolues quand il
   for (let i = 0; i < 15; i++) await agent.noterAlerte("transmission", new Error(`panne ${i}`));
   assert.equal((await agent.etat()).alertes.length, 10); // les dix dernières seulement
 });
+
+test("après un déploiement : chaque conteneur allumé repart sur la nouvelle image, réservé à MEGGA", async () => {
+  const journal = [];
+  const e = env(journal, new Set(["exemple"]), new Set(["casse"]));
+  await put(e, "exemple", { version: 1, config: config() });
+  await put(e, "dort", { version: 1, config: config("dort", { whatsapp: { numero_id: "100000000000005" } }) });
+  journal.length = 0;
+  const post = (jeton) => recevoir(new Request("https://porte/admin/redemarrer", { method: "POST", headers: { authorization: `Bearer ${jeton}` } }), e);
+  assert.equal((await post("faux")).status, 401);
+  assert.equal(journal.length, 0);
+  const r = await (await post("admin")).json();
+  assert.deepEqual(r.clients, [{ id: "dort", redemarre: false }, { id: "exemple", redemarre: true }]);
+  // l'atelier aussi (« megga »), pour qu'il reparte lui aussi sur la nouvelle image
+  assert.deepEqual(journal.filter((x) => "redemarre" in x).map((x) => x.nom).sort(), ["dort", "exemple", "megga"]);
+  assert.equal(r.atelier, false);
+});

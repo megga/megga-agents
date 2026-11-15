@@ -1,0 +1,103 @@
+name: publier
+
+# Construit l'image une seule fois, la publie dans le registre de MEGGA et la signe.
+# Seulement à la main, depuis main, en écrivant « Publie ». Une version publiée ne se republie
+# pas : pour publier, changer la version dans pyproject.toml (docs/deploiement.md).
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Écrire : Publie"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # Le registre privé de MEGGA (GitHub). Cloudflare ne tire pas d'ici : il reçoit une copie
+  # de la même image (scripts/vers_cloudflare.sh).
+  IMAGE: ghcr.io/megga/megga-agents
+
+jobs:
+  publier:
+    if: ${{ github.event.inputs.confirmation == 'Publie' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: La version (pyproject.toml)
+        id: v
+        run: |
+          echo "version=$(python3 -c "import tomllib;print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")" >> "$GITHUB_OUTPUT"
+
+      - name: La clé publique est dans le dépôt
+        run: |
+          test -s socle/cosign.pub || { echo "socle/cosign.pub absente : lancer scripts/cle_signature.sh"; exit 1; }
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Une version publiée ne se republie pas
+        run: |
+          if docker manifest inspect "$IMAGE:${{ steps.v.outputs.version }}" > /dev/null 2>&1; then
+            echo "la version ${{ steps.v.outputs.version }} est déjà publiée : changer pyproject.toml"; exit 1
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Construire et publier
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: socle/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Un seul manifeste : la copie chez Cloudflare garde la même empreinte.
+          provenance: false
+          sbom: false
+          build-args: |
+            MEGGA_VERSION=${{ steps.v.outputs.version }}
+            MEGGA_REVISION=${{ github.sha }}
+          tags: ${{ env.IMAGE }}:${{ steps.v.outputs.version }}
+
+      - name: L'image publiée démarre et dit sa version
+        run: |
+          REF="$IMAGE@${{ steps.image.outputs.digest }}"
+          docker run -d --name essai -p 8080:8080 -e MEGGA_SERVICE=atelier \
+            -e DATABASE_URL=sqlite:////tmp/a.db -e ADMIN_TOKEN=essai "$REF"
+          for i in $(seq 1 30); do
+            if curl -sf localhost:8080/sante | grep -q '"version":"${{ steps.v.outputs.version }}"'; then exit 0; fi
+            sleep 1
+          done
+          docker logs essai; exit 1
+
+      - uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: "v2.4.1"
+
+      - name: Signer
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        # Sans journal public : le dépôt est privé, rien n'en sort.
+        run: |
+          cosign sign --yes --key env://COSIGN_KEY --tlog-upload=false "$IMAGE@${{ steps.image.outputs.digest }}"
+
+      - name: Vérifier avec la clé publique du dépôt
+        run: |
+          cosign verify --key socle/cosign.pub --insecure-ignore-tlog=true "$IMAGE@${{ steps.image.outputs.digest }}" > /dev/null
+
+      - name: Résumé
+        run: |
+          {
+            echo "### megga-agents ${{ steps.v.outputs.version }}"
+            echo ""
+            echo "- image : \`$IMAGE@${{ steps.image.outputs.digest }}\`"
+            echo "- commit : \`${{ github.sha }}\`"
+            echo "- signée, vérifiée avec \`socle/cosign.pub\`"
+          } >> "$GITHUB_STEP_SUMMARY"

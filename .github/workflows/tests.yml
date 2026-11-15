@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f socle/Dockerfile -t megga-agents:essai .
+      - run: docker build -f socle/Dockerfile --build-arg MEGGA_REVISION=${{ github.sha }} -t megga-agents:essai .
       - name: Le conteneur démarre et répond à /sante
         run: |
           CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
@@ -58,7 +58,7 @@ jobs:
           docker run -d --name atelier -p 8081:8080 -e MEGGA_SERVICE=atelier \
             -e DATABASE_URL=sqlite:////tmp/atelier.db -e ADMIN_TOKEN=essai megga-agents:essai
           for i in $(seq 1 30); do
-            if curl -sf localhost:8081/sante | grep -q atelier; then
+            if curl -sf localhost:8081/sante | grep -q '"revision":"${{ github.sha }}"'; then
               curl -sf -H "authorization: Bearer essai" localhost:8081/atelier/catalogue && exit 0
             fi
             sleep 1
