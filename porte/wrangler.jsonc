@@ -39,9 +39,9 @@
     "AgentEurope": { "type": "durable-object", "storage": "sqlite" },
     "AgentEtatsUnis": { "type": "durable-object", "storage": "sqlite" }
   },
-  // L'annuaire des clients ; base à créer au premier déploiement (wrangler d1 create).
+  // L'annuaire des clients (D1, juridiction UE, créé le 15.11.2026).
   "d1_databases": [
-    { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+    { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "637715e3-6675-4310-bbdd-27a4f3b5d8c2", "migrations_dir": "migrations" }
   ]
   // Secrets (wrangler secret put) : META_APP_SECRET, META_VERIFY_TOKEN, META_TOKEN,
   // ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, ELEVENLABS_API_KEY, ADMIN_TOKEN.
