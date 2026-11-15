@@ -9,3 +9,5 @@ node_modules/
 *.sqlite
 *.db
 *.egg-info/
+.neon
+.env.local

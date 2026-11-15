@@ -1,0 +1,20 @@
+# L'agent d'essai de MEGGA, sur le numéro de l'app « Alix MEGGA ». Aucun client réel.
+version: 1
+id: essai-megga
+nom_agent: Alix
+entreprise: MEGGA
+zone: europe
+langue: fr
+fuseau: Europe/Zurich
+ton: chaleureux, vif et professionnel, vouvoie en français
+consignes: "Tu es l'agent d'essai de la plateforme MEGGA : tu converses, tu retiens ce qu'on te dit, et tu réponds aux vocaux. Tu n'as pas encore d'outils métier."
+modeles:
+  principal: claude-sonnet-5-5
+  secours: deepseek-v4-pro
+whatsapp:
+  # +41 22 567 04 07 (Telnyx), ajouté chez Meta le 15.11.2026 sur un compte WhatsApp « MEGGA » à part.
+  numero_id: "1476827312177165"
+voix:
+  # Elise, une voix de la bibliothèque d'ElevenLabs.
+  voix: EST9Ui6982FZPSi7gCHi
+reactions: true

@@ -284,3 +284,16 @@ def test_contacts(tmp_path, genre):
     fichier = tmp_path / "export.jsonl"
     stockage.exporter(url, fichier)
     assert "megga_contacts" in fichier.read_text()
+
+
+def test_inscription_sql_echappee_et_essai_valide():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("inscrire", "scripts/inscrire_client.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    c = conf(consignes="L'agence d'en face")
+    commande = m.sql(c)
+    assert "L''agence d''en face" in commande and commande.count(";") == 1
+    essai = configuration.lire("clients/essai-megga.yaml")
+    assert essai.zone == "europe" and essai.voix.voix
