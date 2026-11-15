@@ -12,6 +12,7 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 
 from .config import Config
+from .garde import crochet_secrets
 from .typographie import crochet_typographie
 
 REGLES = (
@@ -20,6 +21,8 @@ REGLES = (
     "N'invente rien : ni chiffre, ni nom, ni fait. Si tu ne sais pas, dis-le simplement.",
     "Ne demande et ne répète jamais de mot de passe, de clé ou de code.",
     "Réponds dans la langue de la personne.",
+    "Mémoire : ne retiens que ce que la personne te dit ou te confirme, jamais un mot de passe, une clé, un code ni une donnée bancaire. Si elle te demande d'oublier quelque chose, oublie-le.",
+    "Rappels : seulement quand la personne le demande. Jamais de message spontané. Donne l'heure au format AAAA-MM-JJTHH:MM, à l'heure locale.",
 )
 
 
@@ -47,8 +50,9 @@ def consignes(config: Config) -> list[str]:
     return base
 
 
-def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None) -> Agent:
-    """`principal` et `secours` remplacent les modèles de la configuration (essais)."""
+def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None,
+               outils: list | None = None) -> Agent:
+    """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs."""
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
@@ -61,10 +65,13 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         instructions=consignes(config),
         add_history_to_context=True,
         num_history_runs=12,
-        update_memory_on_run=True,
+        # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.
+        enable_agentic_memory=True,
+        add_memories_to_context=True,
+        tools=list(outils or []),
         add_datetime_to_context=True,
         timezone_identifier=config.fuseau,
-        post_hooks=[crochet_typographie],
+        post_hooks=[crochet_secrets, crochet_typographie],
         markdown=False,
         telemetry=False,
     )

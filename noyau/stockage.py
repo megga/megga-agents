@@ -106,6 +106,7 @@ def preparer(url: str) -> None:
     if creer:
         creer()
     Contacts(url)
+    Rappels(url)
 
 
 def importer(fichier: str | Path, url: str) -> int:
@@ -167,3 +168,71 @@ class Contacts:
     def dernier(self, personne: str) -> float | None:
         with self._e.connect() as c:
             return c.execute(select(self._t.c.dernier_entrant).where(self._t.c.personne == personne)).scalar()
+
+
+class Rappels:
+    """Les rappels demandés à l'agent (« rappelle-moi jeudi de… »), table megga_rappels.
+
+    états : attente (à envoyer), differe (l'heure est passée hors des 24 heures sans
+    modèle Meta : part au prochain message de la personne), envoye, annule.
+    """
+
+    def __init__(self, url: str):
+        self._e = moteur(url)
+        pg = self._e.dialect.name == "postgresql"
+        meta = MetaData(schema=SCHEMA if pg else None)
+        self._t = Table(
+            "megga_rappels",
+            meta,
+            Column("id", String(36), primary_key=True),
+            Column("personne", String(32), nullable=False, index=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("texte", String(500), nullable=False),
+            Column("etat", String(10), nullable=False, default="attente"),
+            Column("cree", Float, nullable=False),
+        )
+        with self._e.begin() as c:
+            if pg:
+                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+        meta.create_all(self._e)
+
+    def ajouter(self, personne: str, quand: float, texte: str) -> str:
+        import time as _t
+
+        ident = uuid.uuid4().hex[:12]
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=ident, personne=personne, quand=quand, texte=texte, etat="attente", cree=_t.time()))
+        return ident
+
+    def lister(self, personne: str) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t).where(t.c.personne == personne, t.c.etat.in_(("attente", "differe"))).order_by(t.c.quand))
+            return [dict(l._mapping) for l in lignes]
+
+    def annuler(self, personne: str, ident: str) -> bool:
+        t = self._t
+        with self._e.begin() as c:
+            r = c.execute(update(t).where(t.c.id == ident, t.c.personne == personne, t.c.etat.in_(("attente", "differe"))).values(etat="annule"))
+            return r.rowcount > 0
+
+    def echus(self, maintenant: float) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.etat == "attente", t.c.quand <= maintenant).order_by(t.c.quand))]
+
+    def differes(self, personne: str) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.personne == personne, t.c.etat == "differe").order_by(t.c.quand))]
+
+    def marquer(self, ident: str, etat: str) -> None:
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.id == ident).values(etat=etat))
+
+    def prochain(self) -> float | None:
+        from sqlalchemy import func
+
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(func.min(t.c.quand)).where(t.c.etat == "attente")).scalar()

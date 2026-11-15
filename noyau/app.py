@@ -9,17 +9,21 @@ Variables d'environnement (jamais dans le dépôt) :
   DEEPSEEK_API_KEY     le modèle de secours
   ELEVENLABS_API_KEY   facultatif : écouter les vocaux et répondre de vive voix
   JWT_VERIFICATION_KEY facultatif : ouvre l'API d'AgentOS, protégée par jeton (console, mode 2)
+  INTERNE_TOKEN        le jeton des routes internes (posé par la porte, propre à chaque client)
 
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
+  POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
+import time
 from collections import OrderedDict
 
 from fastapi import FastAPI, Request, Response
@@ -28,6 +32,7 @@ from . import config as configuration
 from . import stockage
 from .agent import construire, modele
 from .oral import consignes as consignes_orales
+from .rappels import outils as outils_rappels
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .whatsapp import Expediteur, lire_entrants, signature_valide
@@ -71,7 +76,7 @@ def _reecriture(conf, cles):
 
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
-          reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0) -> FastAPI:
+          reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais)."""
     env = dict(os.environ if env is None else env)
     os.environ.setdefault("AGNO_TELEMETRY", "false")
@@ -83,14 +88,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if agent is None:
         if not env.get("DATABASE_URL"):
             raise RuntimeError("DATABASE_URL manquante")
-        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles)
+        rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
+        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_rappels(rappels, conf.fuseau))
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         reecrire = reecrire or _reecriture(conf, cles)
     if expediteur is None:
         expediteur = Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
-    conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard)
+    conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels)
+    jeton_interne = env.get("INTERNE_TOKEN", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
 
@@ -123,6 +130,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             lus += 1
         # Meta veut une réponse rapide : le tour se poursuit après.
         return Response(f"reçu {lus}", media_type="text/plain")
+
+    @app.post("/interne/rappels")
+    async def interne_rappels(requete: Request):
+        jeton = requete.headers.get("x-megga-interne", "")
+        if not jeton_interne or not hmac.compare_digest(jeton, jeton_interne):
+            return Response("refusé", status_code=401)
+        return await conversations.envoyer_rappels_echus(time.time())
 
     if env.get("JWT_VERIFICATION_KEY"):
         from agno.os import AgentOS
