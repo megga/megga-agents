@@ -3,8 +3,10 @@
 L'offre premium : l'agent tourne sur le serveur ou dans le cloud du client (Azure, AWS, son Kubernetes…). Ses conversations, sa base et ses fichiers ne quittent pas son infrastructure. Seuls partent les appels aux modèles (Claude, DeepSeek) et à la voix (ElevenLabs), vers les comptes que le client a choisis : il doit le savoir.
 
 C'est la même image signée que chez MEGGA. Deux façons de l'installer :
-- **Docker Compose**, sur un serveur : l'agent, sa base Postgres et une entrée HTTPS (`installation/compose/`) ;
+- **Docker Compose**, sur un serveur : l'agent, sa base Postgres, une entrée HTTPS et le pilote (`installation/compose/`) ;
 - **Helm**, dans le Kubernetes du client, avec sa propre base Postgres (`installation/helm/megga-agent/`).
+
+Le pilote, à côté de l'agent, permet à MEGGA de suivre l'installation et, si le client le veut, d'en changer la configuration. Il appelle MEGGA, jamais l'inverse (voir « Le pilotage par MEGGA »).
 
 ## Ce que MEGGA remet au client
 
@@ -37,6 +39,7 @@ Les secrets restent chez lui : en variables, ou en fichiers montés par Docker, 
 | `ANTHROPIC_API_KEY`, `DEEPSEEK_API_KEY` | les modèles |
 | `ELEVENLABS_API_KEY` | facultatif : écouter les vocaux et répondre de vive voix |
 | `DATABASE_URL` | Helm seulement : la base Postgres du client (Compose fournit la sienne) |
+| `PILOTE_CLE` | le pilote seulement : la clé de l'installation (voir « Le pilotage par MEGGA ») |
 
 ## L'accès au registre
 
@@ -50,15 +53,18 @@ docker login ghcr.io -u <compte remis par MEGGA> --password-stdin
 
 ## Avec Docker Compose
 
-Sur un serveur Linux avec Docker, le DNS du domaine pointé dessus, ports 80 et 443 ouverts :
+Sur un serveur Linux avec Docker (Compose 2.24 ou plus récent), le DNS du domaine pointé dessus, ports 80 et 443 ouverts :
 
 ```bash
 cd installation/compose
-cp exemple.env .env                    # l'image, le domaine, le mot de passe de la base (tous caractères permis)
+cp exemple.env .env                    # l'image, le domaine, le mot de passe de la base, le pilotage
 cp exemple-secrets.env secrets.env     # les secrets ; chmod 600 secrets.env
 cp <configuration remise par MEGGA> client.yaml
+(umask 077; echo "PILOTE_CLE=$(openssl genpkey -algorithm ed25519 -outform DER | base64)" > pilote.env)
 docker compose up -d
 ```
+
+La quatrième ligne crée la clé de l'installation, sans l'afficher ; elle ne sert qu'au pilote. Avec `PILOTAGE=non`, elle peut attendre.
 
 Sans `client.yaml`, l'installation s'arrête net (« bind source path does not exist ») au lieu de démarrer un agent sans configuration. L'entrée HTTPS (Caddy) obtient seule son certificat, et ne laisse passer que `/whatsapp` : `/sante` et les routes internes de l'agent ne sont jamais exposées. Pour vérifier :
 
@@ -83,6 +89,8 @@ helm install agent installation/helm/megga-agent \
 
 Ou un fichier de valeurs, sur le modèle de `exemple-valeurs.yaml`.
 
+Le pilote, avec `pilotage.mode` à `suivi` ou `complet` : sa clé dans un Secret à part (clé `PILOTE_CLE`, donné par `pilotage.secret`), ou en fichier depuis le coffre (`pilotage.extraEnv` avec `PILOTE_CLE_FILE`, et `DATABASE_URL_FILE` sans `existingSecret` ; ses propres `pilotage.extraVolumes` et `pilotage.extraVolumeMounts`). Il ne reçoit que sa clé et l'adresse de la base, jamais les clés des modèles ni celles de Meta.
+
 - **Secrets en fichiers** : sans Secret Kubernetes, le coffre du client (pilote CSI de Vault, Key Vault…) monte ses fichiers par `extraVolumes` et `extraVolumeMounts`, et chaque secret se déclare dans `extraEnv` sous la forme `<NOM>_FILE` (par exemple `ANTHROPIC_API_KEY_FILE=/mnt/secrets/anthropic`).
 - **HTTPS** : exigé par Meta. Le chart refuse de s'installer sans `ingress.tlsSecret`, sauf `ingress.tlsAilleurs=true` si un répartiteur de charge l'assure devant l'ingress.
 
@@ -103,4 +111,41 @@ L'agent répond lui-même au défi de Meta et vérifie la signature de chaque we
 - **L'arrêt** (mise à jour, redémarrage) : l'agent finit d'abord ses tours en cours et sa tournée de rappels, 100 secondes au plus ; Compose et le chart attendent 2 minutes avant de le forcer.
 - **La base** : la sienne. Les migrations se jouent au démarrage ; une image démarre aussi sur une base migrée par la version suivante, pour qu'un retour arrière reste possible.
 - **Les sauvegardes** : celles de sa base (Compose : le volume `base`, ou `pg_dump`). L'outil d'export de MEGGA (`noyau/stockage.py`, `exporter` et `importer`) déplace un client entier, par exemple entre deux installations.
-- **Les mises à jour** : à la main pour l'instant (nouvelle empreinte, vérifiée, dans `.env` ou les valeurs Helm). Le conteneur pilote et les mises à jour signées viennent ensuite (lot 6, parties 3 et 4).
+- **La configuration** : avec `PILOTAGE=non`, toujours celle de `client.yaml` (redémarrer l'agent pour qu'il le relise). Avec `suivi` ou `complet`, la dernière version poussée par MEGGA et acceptée, tant qu'il y en a une (`python -m pilote revenir` ramène à `client.yaml`) ; seul `complet` en reçoit de nouvelles.
+- **Les mises à jour de l'image** : à la main pour l'instant (nouvelle empreinte, vérifiée, dans `.env` ou les valeurs Helm). MEGGA peut déjà en proposer une par le pilote, qui la note ; son installation par le pilote viendra avec les mises à jour signées (lot 6, partie 4).
+
+## Le pilotage par MEGGA
+
+Un petit service à côté de l'agent, la même image. Il appelle MEGGA en HTTPS, chaque minute : aucun port n'est ouvert chez le client, rien n'entre. Le client choisit ce qui sort, avec MEGGA, dans `.env` (ou `pilotage.mode` du chart) ; l'agent et le pilote lisent le même réglage :
+
+| `PILOTAGE` | Ce qui sort |
+|---|---|
+| `non` | rien : le pilote ne fait rien, et l'agent sert `client.yaml` (par défaut, et dans les exemples) |
+| `suivi` | l'état de l'agent (version, licence, configuration servie), les volumes, les modèles et leurs jetons, les échecs ; jamais une conversation, un texte ni un numéro |
+| `complet` | le suivi, et MEGGA peut changer la configuration de l'agent ou proposer une version de l'image |
+
+**La clé de l'installation** : créée chez le client (`pilote.env` ci-dessus), elle ne quitte jamais son serveur. Le client remet sa partie publique à MEGGA, qui l'enregistre à la mise en service :
+
+```bash
+docker compose exec pilote python -m pilote cle
+```
+
+Chaque appel du pilote est signé de cette clé, à l'heure près (5 minutes) et jamais deux fois le même. MEGGA peut la révoquer ; le client aussi, en passant `PILOTAGE=non` (puis en retirant `pilote.env`). Une nouvelle clé se remet de la même façon.
+
+**Les ordres de MEGGA** (avec `PILOTAGE=complet`) : une version de la configuration de l'agent, venue de l'atelier, ou une version de l'image proposée. Aucune commande libre. Chaque ordre est signé par MEGGA, vérifié par le pilote (signature, client, zone, configuration valide, une semaine au plus), puis inscrit à son journal, comme chez MEGGA.
+
+**L'accord du client** : avec `PILOTAGE_ACCORD=oui` (le réglage d'exemple), chaque ordre attend son oui.
+
+```bash
+docker compose exec pilote python -m pilote ordres        # les ordres, et ce qui changerait
+docker compose exec pilote python -m pilote accepter 12
+docker compose exec pilote python -m pilote refuser 12
+docker compose exec pilote python -m pilote revenir       # l'agent revient à client.yaml
+docker compose exec pilote python -m pilote journal       # ce qui s'est passé, le plus récent d'abord
+```
+
+Sous Kubernetes, les mêmes commandes : `kubectl exec deploy/<nom>-megga-agent-pilote -- python -m pilote ordres`.
+
+**Comment l'agent change de configuration** : le pilote note la nouvelle version dans la base de l'installation, signature comprise ; `client.yaml` reste en lecture seule et n'est jamais réécrit. Dans la minute, l'agent la voit, finit ses tours en cours et s'arrête ; Compose ou Kubernetes le relancent, et il sert la nouvelle version après en avoir revérifié la signature (une version retouchée dans la base ne sert jamais : l'agent reprend `client.yaml`). S'il ne la sert pas dans les 10 minutes, ou s'il la refuse à la vérification (une autre image, une autre clé), elle est marquée en échec et l'agent revient à la précédente encore valable, sinon à `client.yaml`. Accepter un ordre demande `suivi` ou `complet` : c'est le pilote qui surveille ces 10 minutes. Sous Kubernetes, chaque changement compte comme un redémarrage du conteneur (plusieurs coup sur coup allongent l'attente avant la relance). Le pilote n'a besoin ni de Docker ni de l'API de Kubernetes.
+
+**Une version d'image proposée** est notée et montrée (`python -m pilote ordres`) ; le client peut la refuser. Son installation par le pilote viendra au lot 6.4.

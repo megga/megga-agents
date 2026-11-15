@@ -34,6 +34,8 @@ export const SECRETS_CLIENT = ["DATABASE_URL"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 // L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
 const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
+// Ceux qu'on pose dans l'objet de l'atelier : sa base, et la clé qui signe les ordres de pilotage.
+const SECRETS_POSES_ATELIER = ["DATABASE_URL", "PILOTAGE_CLE"];
 
 /** Un objet qui fait tourner un conteneur de l'image unique, et lui transmet les requêtes. */
 class Conteneur extends DurableObject {
@@ -43,10 +45,15 @@ class Conteneur extends DurableObject {
     if (c?.running) void ctx.blockConcurrencyWhile(() => c.setInactivityTimeout(INACTIVITE_MS));
   }
 
+  /** Les secrets qu'on peut ranger dans cet objet. */
+  secretsPermis() {
+    return SECRETS_CLIENT;
+  }
+
   /** Range les secrets propres à cet objet ; ne rend que leurs noms. */
   async poserSecrets(secrets) {
     const gardes = {};
-    for (const k of SECRETS_CLIENT) if (typeof secrets?.[k] === "string" && secrets[k]) gardes[k] = secrets[k];
+    for (const k of this.secretsPermis()) if (typeof secrets?.[k] === "string" && secrets[k]) gardes[k] = secrets[k];
     if (!Object.keys(gardes).length) throw new Error("aucun secret reconnu");
     const avant = (await this.ctx.storage.get("secrets")) ?? {};
     await this.ctx.storage.put("secrets", { ...avant, ...gardes });
@@ -253,7 +260,10 @@ export class AgentEtatsUnis extends AgentClient {}
 
 /**
  * L'atelier de MEGGA (un seul, en zone Europe) : la même image, en service « atelier ».
- * Sa base (versions des configurations, jetons des clients) se pose comme celle d'un client.
+ * Sa base (versions des configurations, jetons des clients) se pose comme celle d'un client,
+ * de même que la clé de pilotage, qui signe les ordres des installations hors Cloudflare.
+ * Il reçoit aussi les relevés de leurs pilotes (/pilotage/…), chaque minute : piloter une
+ * installation le garde éveillé.
  */
 export class Atelier extends Conteneur {
   /** L'atelier ne s'arrête qu'entre deux requêtes : une mise en service ou un essai en cours va au bout. */
@@ -272,6 +282,10 @@ export class Atelier extends Conteneur {
     }
   }
 
+  secretsPermis() {
+    return SECRETS_POSES_ATELIER;
+  }
+
   async redemarrer() {
     if (!this.ctx.container?.running) return false;
     if (this.enCours) {
@@ -286,6 +300,8 @@ export class Atelier extends Conteneur {
     if (!secrets.DATABASE_URL) throw new Error("secret de l'atelier manquant : DATABASE_URL");
     if (!this.env.ADMIN_TOKEN || !this.env.PORTE_URL) throw new Error("ADMIN_TOKEN et PORTE_URL attendus");
     const env = { MEGGA_SERVICE: "atelier", DATABASE_URL: secrets.DATABASE_URL, ADMIN_TOKEN: this.env.ADMIN_TOKEN, PORTE_URL: this.env.PORTE_URL };
+    // Sans elle, l'atelier sert tout, sauf les ordres de pilotage (scripts/pilotage.py poser).
+    if (secrets.PILOTAGE_CLE) env.PILOTAGE_CLE = secrets.PILOTAGE_CLE;
     for (const k of SECRETS_ATELIER) if (this.env[k]) env[k] = this.env[k];
     return env;
   }

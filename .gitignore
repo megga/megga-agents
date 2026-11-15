@@ -16,3 +16,4 @@ node_modules/
 installation/compose/.env
 installation/compose/secrets.env
 installation/compose/client.yaml
+installation/compose/pilote.env

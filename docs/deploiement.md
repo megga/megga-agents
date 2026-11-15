@@ -68,6 +68,26 @@ scripts/cle_signature.sh
 
 Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de passe vont dans les secrets GitHub du dépôt, rien ne s'affiche ; seule la clé publique reste, dans `socle/cosign.pub`, à commiter. Il faut `cosign` et `gh` (`brew install cosign gh`).
 
+### Une seule fois : la clé de pilotage (Julien)
+
+Elle signe les ordres que l'atelier envoie aux installations hors Cloudflare (lot 6.3), distincte de la clé des licences :
+
+```bash
+.venv/bin/python scripts/pilotage.py cle
+```
+
+La clé privée va dans le trousseau, rien ne s'affiche ; la clé publique dans `noyau/pilotage.pub`, à commiter : elle part dans l'image. Puis, la porte déployée, la remettre à l'atelier (sans l'afficher ; il redémarre) :
+
+```bash
+.venv/bin/python scripts/pilotage.py poser https://megga-agents.api-963.workers.dev
+```
+
+`GET /atelier/installations` dit alors `"cle_pilotage": true`. Une installation se met en service avec la clé publique qu'elle remet (`python -m pilote cle`, chez le client) :
+
+```bash
+.venv/bin/python scripts/pilotage.py installation <id-du-client> https://megga-agents.api-963.workers.dev <clé publique>
+```
+
 ### Publier une version
 
 1. Changer la version dans `pyproject.toml` (une PR, comme le reste). Une version publiée ne se republie jamais.

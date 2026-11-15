@@ -21,6 +21,7 @@ COPY pyproject.toml ./
 COPY noyau ./noyau
 COPY packs ./packs
 COPY atelier ./atelier
+COPY pilote ./pilote
 RUN pip install --no-cache-dir . && useradd --create-home --uid 10001 agent
 USER agent
 

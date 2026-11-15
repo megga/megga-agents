@@ -3,6 +3,8 @@
 import json
 from dataclasses import dataclass, field
 
+import base64
+
 import httpx
 import pytest
 from agno.models.base import Model
@@ -17,6 +19,19 @@ from noyau.config import Config
 
 ADMIN = "admin-essai"
 MEGGA = {"authorization": f"Bearer {ADMIN}"}
+
+
+def cle_jetable() -> tuple[object, str]:
+    """Une clé Ed25519 d'essai et sa forme sur une ligne (base64 de ses 32 octets), jamais gardée."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat
+
+    cle = Ed25519PrivateKey.generate()
+    return cle, base64.b64encode(cle.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode()
+
+
+# La clé de pilotage de l'atelier d'essai : elle signe les ordres des installations hors Cloudflare.
+CLE_PILOTAGE, CLE_PILOTAGE_TEXTE = cle_jetable()
 
 
 def conf_exemple(**autres) -> dict:
@@ -83,8 +98,8 @@ class FaussePorte:
 def atelier(tmp_path):
     porte = FaussePorte()
     modele = FauxModele()
-    app = creer({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db", "ESSAIS_DIR": str(tmp_path / "essais")},
-                porte=porte, principal_essai=modele)
+    app = creer({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db", "ESSAIS_DIR": str(tmp_path / "essais"),
+                 "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE}, porte=porte, principal_essai=modele)
     t = TestClient(app)
     t.porte, t.modele = porte, modele
     return t
@@ -370,6 +385,7 @@ def test_zone_hors_porte_et_version_incomplete(atelier):
     nouveau_client(t, zone="suisse")
     r = t.post("/atelier/clients/exemple/versions/1/activer", headers=MEGGA, json={"forcer": True})
     assert r.status_code == 200 and r.json()["annuaire"] == {"zone": "suisse", "porte": False}
+    assert r.json()["pilotage"] == {"ordre": 1, "installation": False}  # un ordre signé attend l'installation
     assert t.porte.activations == []
     t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"metier": "immobilier", "outils": ["immobilier"]}})
     v = t.get("/atelier/clients/exemple/versions/2", headers=MEGGA).json()

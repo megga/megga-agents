@@ -74,6 +74,24 @@ jobs:
             sleep 1
           done
           docker logs atelier; exit 1
+      - name: La même image en pilote, disque en lecture seule ; sans sa clé, il ne démarre pas
+        run: |
+          CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
+          docker run -d --name pilote --read-only --tmpfs /tmp -e HOME=/tmp -e MEGGA_SERVICE=pilote -e CLIENT_CONFIG="$CONF" megga-agents:essai
+          sleep 5
+          test "$(docker inspect -f '{{.State.Running}}' pilote)" = true
+          docker exec pilote python -m pilote vivant
+          docker logs pilote 2>&1 | grep -q "rien ne sort"
+          if docker run --rm -e MEGGA_SERVICE=pilote -e PILOTAGE=suivi -e CLIENT_CONFIG="$CONF" -e DATABASE_URL=sqlite:////tmp/p.db megga-agents:essai; then exit 1; fi
+
+  pilotage:
+    # De bout en bout : l'installation Compose du guide, son pilote, et un atelier d'essai à côté.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/python tests/compose/essai_pilote.py "$RUNNER_TEMP/essai-pilote"
 
   installation:
     runs-on: ubuntu-latest
@@ -90,13 +108,27 @@ jobs:
           V=installation/helm/megga-agent/exemple-valeurs.yaml
           # la configuration par --set-file, comme dans le guide
           helm template essai installation/helm/megga-agent -f $V --set-file config=clients/exemple.yaml | grep -q "entreprise: Entreprise exemple"
-          # les secrets en fichiers (coffre du client), sans Secret Kubernetes
-          helm template essai installation/helm/megga-agent -f $V --set existingSecret= \
+          # les secrets en fichiers (coffre du client), sans Secret Kubernetes : l'agent seul, puis avec son pilote
+          helm template essai installation/helm/megga-agent -f $V --set existingSecret= --set pilotage.mode=non \
             --set "extraEnv[0].name=ANTHROPIC_API_KEY_FILE" --set "extraEnv[0].value=/mnt/secrets/anthropic" | grep -q ANTHROPIC_API_KEY_FILE
+          helm template essai installation/helm/megga-agent -f $V --set existingSecret= --set pilotage.secret= \
+            --set "extraEnv[0].name=DATABASE_URL_FILE" --set "extraEnv[0].value=/mnt/secrets/base" \
+            --set "pilotage.extraEnv[0].name=PILOTE_CLE_FILE" --set "pilotage.extraEnv[0].value=/mnt/pilote/cle" \
+            --set "pilotage.extraEnv[1].name=DATABASE_URL_FILE" --set "pilotage.extraEnv[1].value=/mnt/pilote/base" > /tmp/fichiers.yaml
+          grep -q "value: /mnt/pilote/cle" /tmp/fichiers.yaml
           # sans les valeurs du client, sans HTTPS ou sans secrets, le chart refuse au lieu d'installer un agent incomplet
           if helm template essai installation/helm/megga-agent > /dev/null 2>&1; then echo "rendu sans valeurs"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set ingress.tlsSecret= > /dev/null 2>&1; then echo "rendu sans HTTPS"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set existingSecret= > /dev/null 2>&1; then echo "rendu sans secrets"; exit 1; fi
+          # le pilote : rendu avec le pilotage, avec ses propres étiquettes ; absent sans ; refusé sans sa clé
+          grep -q "name: essai-megga-agent-pilote" /tmp/rendu.yaml
+          grep -q "app.kubernetes.io/name: megga-pilote" /tmp/rendu.yaml
+          helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=non > /tmp/sans-pilote.yaml
+          if grep -q megga-pilote /tmp/sans-pilote.yaml; then echo "pilote sans pilotage"; exit 1; fi
+          helm template essai installation/helm/megga-agent -f $V --set-string pilotage.accord=non | grep -q 'PILOTAGE_ACCORD, value: "non"'
+          if helm template essai installation/helm/megga-agent -f $V --set-string pilotage.accord=peut-etre > /dev/null 2>&1; then echo "accord inconnu"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.secret= > /dev/null 2>&1; then echo "pilote sans clé"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=tout > /dev/null 2>&1; then echo "pilotage inconnu"; exit 1; fi
       - name: Le Docker Compose
         working-directory: installation/compose
         run: |

@@ -6,6 +6,7 @@ Variables d'environnement (jamais dans le dépôt) :
   PORTE_URL          l'adresse de la porte, pour l'annuaire et les conteneurs
   ANTHROPIC_API_KEY, DEEPSEEK_API_KEY   les modèles, pour le mode d'essai
   ESSAIS_DIR         facultatif : le dossier des bases d'essai
+  PILOTAGE_CLE       la clé privée de pilotage : elle signe les ordres des installations hors Cloudflare
 
 Rôles, par le jeton (Authorization: Bearer …) :
   MEGGA   ADMIN_TOKEN : tous les clients, tous les réglages
@@ -37,6 +38,18 @@ Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/conversations/{personne}  les derniers échanges avec elle
   GET   /clients/{id}/alertes[?jours=7]         échecs, pannes du conteneur, écart avec l'annuaire
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
+
+Installations hors Cloudflare (chez le client, zone suisse), pilotées par un canal sortant et signé :
+  GET   /installations                          MEGGA : les installations et leur dernier état
+  GET   /clients/{id}/installation              l'installation, ses derniers ordres et le journal du pilotage
+  PUT   /clients/{id}/installation              MEGGA : {cle_publique} remise par l'installation (mise en service)
+  DELETE /clients/{id}/installation             MEGGA : révoque sa clé
+  POST  /clients/{id}/installation/image        MEGGA : {version, image} une version d'image proposée
+  Pour ces zones, activer dépose un ordre signé ; le suivi et les alertes viennent du dernier relevé
+  du pilote ; les conversations ne quittent jamais l'installation.
+
+Le pilote d'une installation (requête signée de sa clé, transmise par la porte, sans jeton) :
+  POST  /pilotage/releve                        son état et son suivi ; la réponse porte les ordres à remettre
 """
 
 from __future__ import annotations
@@ -58,6 +71,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
 from noyau.config import Config
@@ -66,6 +80,8 @@ from noyau.suivi import PERSONNE
 from . import gabarits, regles
 from .couts import Tarifs, couts
 from .essai import essayer
+from .pilotage import TAILLE as TAILLE_RELEVE
+from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
 from .regles import Refus
 from .versions import Versions
@@ -105,6 +121,15 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         porte = Porte(env["PORTE_URL"], admin)
     cles = {k: env.get(k, "") for k in CLES}
     essais = Path(env.get("ESSAIS_DIR") or Path(tempfile.gettempdir()) / "megga-essais")
+    # La clé qui signe les ordres des installations hors Cloudflare ; illisible, l'atelier sert le reste.
+    cle_pilotage = None
+    if env.get("PILOTAGE_CLE"):
+        try:
+            cle_pilotage = pilotages.cle_privee(env["PILOTAGE_CLE"])
+        except pilotages.PilotageRefuse:
+            log.error("PILOTAGE_CLE illisible : aucun ordre de pilotage ne sera signé")
+    canal = Pilotage(env["DATABASE_URL"], cle_pilotage)
+    pilote_fenetres = (1, 7, 30)  # les périodes que le pilote calcule (pilote/service.py, FENETRES)
     # Une mise en service à la fois par client (l'atelier est un seul processus).
     verrous: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
@@ -136,7 +161,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(404, "version inconnue")
         return v
 
-    def resume(c: dict, derniere: int | None, etats: dict | None) -> dict:
+    def resume(c: dict, derniere: int | None, etats: dict | None, installation: dict | None = None) -> dict:
         meta = c.get("metadata") or {}
         r = {
             "id": c["component_id"],
@@ -151,7 +176,14 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             r["annuaire"] = a
             # Une mise en service interrompue : la porte sert une autre version que l'atelier.
             r["ecart"] = a is not None and a.get("version") != c.get("current_version")
+        if installation is not None:  # hors Cloudflare : ce que sert l'installation, d'après son dernier relevé
+            r["installation"] = installation
+            r["ecart"] = installation["ecart"]
         return r
+
+    def installation_de(ident: str, courante: int | None) -> dict | None:
+        inst = canal.installations.lire(ident)
+        return canal.bref(inst, courante) if inst else None
 
     async def etats_porte(ident: str | None = None) -> dict | None:
         if porte is None:
@@ -165,6 +197,11 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     def zone_en_service(ident: str) -> str | None:
         v = versions.en_service(ident)
         return (v["config"] or {}).get("zone") if v else None
+
+    def zone_de(ident: str) -> str | None:
+        """La zone du client : celle de sa version en service, sinon de sa dernière version."""
+        v = versions.en_service(ident) or versions.derniere(ident)
+        return ((v or {}).get("config") or {}).get("zone")
 
     def nouvelle(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
         """La configuration d'une nouvelle version, d'après sa base (la dernière par défaut)."""
@@ -201,7 +238,10 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             tous = [c for c in [await bd(versions.client, qui.client)] if c]
             etats = await etats_porte(qui.client)
         dernieres = await bd(versions.dernieres, {c["component_id"] for c in tous}) if tous else {}
-        return {"clients": [resume(c, dernieres.get(c["component_id"]), etats) for c in tous], "porte": etats is not None}
+        courantes = {c["component_id"]: c.get("current_version") for c in tous}
+        installations = {i["client"]: i for i in await bd(canal.toutes, courantes)}
+        return {"clients": [resume(c, dernieres.get(c["component_id"]), etats, installations.get(c["component_id"])) for c in tous],
+                "porte": etats is not None}
 
     @r.get("/gabarits")
     def liste_gabarits(qui: Identite = Depends(identite)):
@@ -225,7 +265,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         courante = c.get("current_version")
         config = (await bd(version_de, ident, courante))["config"] if courante else None
         derniere = (await bd(versions.dernieres, {ident})).get(ident)
-        return {**resume(c, derniere, await etats_porte(ident)), "config": config}
+        if ((config or {}).get("zone") or await bd(zone_de, ident)) in regles.ZONES_PORTE:
+            return {**resume(c, derniere, await etats_porte(ident)), "config": config}
+        return {**resume(c, derniere, None, await bd(installation_de, ident, courante)), "config": config}
 
     @r.get("/clients/{ident}/versions")
     def historique(ident: str, qui: Identite = Depends(identite)):
@@ -291,34 +333,32 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
                 if forcer:
                     raise Refus(403, "forcer : réservé à MEGGA")
             courante = c.get("current_version")
-            if courante == numero:
+            if courante == numero and v["config"].get("zone") in regles.ZONES_PORTE:
                 raise Refus(409, "cette version est déjà en service")
             if v["etat"] == "brouillon" and v["essais"] == 0 and not forcer:
                 raise Refus(409, "essayez d'abord cette version (mode d'essai)")
             conf = config_de(v)
             avant = await bd(version_de, ident, courante) if courante else None
             regles.verifier_zone(conf, (avant["config"] or {}).get("zone") if avant else None)
-            par_porte = conf.zone in regles.ZONES_PORTE
-            if par_porte:
-                if porte is None:
-                    raise Refus(503, "porte non réglée (PORTE_URL)")
-                try:
-                    annuaire = await porte.activer(conf, numero)
-                except PorteErreur as e:
-                    if e.statut == 0:
-                        raise Refus(504, "la porte n'a pas répondu : vérifiez l'écart dans la liste des clients avant de relancer",
-                                    {"texte": e.texte}) from e
-                    raise Refus(502, "la porte a refusé la mise en service", {"statut": e.statut, "texte": e.texte}) from e
-            else:
-                # Suisse et installation chez le client : poussée par le pilotage (lot 6).
-                annuaire = {"zone": conf.zone, "porte": False}
+            if conf.zone not in regles.ZONES_PORTE:
+                # Suisse et installation chez le client : un ordre signé, remis par le pilotage.
+                return await activer_hors_porte(qui, ident, numero, courante, conf, v)
+            if porte is None:
+                raise Refus(503, "porte non réglée (PORTE_URL)")
+            try:
+                annuaire = await porte.activer(conf, numero)
+            except PorteErreur as e:
+                if e.statut == 0:
+                    raise Refus(504, "la porte n'a pas répondu : vérifiez l'écart dans la liste des clients avant de relancer",
+                                {"texte": e.texte}) from e
+                raise Refus(502, "la porte a refusé la mise en service", {"statut": e.statut, "texte": e.texte}) from e
             try:
                 await bd(versions.mettre_en_service, ident, numero, courante)
             except Exception as e:
                 # L'annuaire sert déjà la nouvelle version : on le remet sur celle d'avant.
                 log.error("mise en service de %s v%s interrompue : %s", ident, numero, str(e)[:200])
                 retabli = False
-                if par_porte and avant is not None:
+                if avant is not None:
                     try:
                         await porte.activer(regles.valider(avant["config"]), courante)
                         retabli = True
@@ -326,6 +366,37 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
                         pass
                 raise Refus(500, "mise en service interrompue", {"annuaire_retabli": retabli}) from e
         return {"client": ident, "version_en_service": numero, "retour": v["etat"] == "publiee", "annuaire": annuaire}
+
+    async def activer_hors_porte(qui: Identite, ident: str, numero: int, courante: int | None, conf: Config, v: dict) -> dict:
+        """Hors Cloudflare (chez le client, zone suisse) : la version est mise en service dans l'atelier, puis
+        un ordre signé part à l'installation à son prochain relevé. Une version déjà en service peut être
+        renvoyée si l'installation ne la sert pas (refusée, en échec, expirée)."""
+        if canal.cle is None:
+            raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
+        en_cours = await bd(canal.en_cours, ident, numero)
+        if en_cours is not None:
+            raise Refus(409, f"l'ordre {en_cours} porte déjà cette version à l'installation")
+        if courante == numero:
+            inst = await bd(installation_de, ident, courante)
+            if inst is not None and inst["releve"] is not None and inst["ecart"] is not True:
+                # Servie, ou état inconnu (l'agent n'a pas répondu au dernier relevé) : rien à renvoyer pour l'instant.
+                raise Refus(409, "cette version est déjà en service" if inst["ecart"] is False
+                            else "l'installation n'a pas dit quelle version elle sert : attendez son prochain relevé")
+        else:
+            try:
+                await bd(versions.mettre_en_service, ident, numero, courante)
+            except Exception as e:
+                log.error("mise en service de %s v%s interrompue : %s", ident, numero, str(e)[:200])
+                raise Refus(500, "mise en service interrompue") from e
+        try:
+            ordre = await bd(canal.deposer, ident, "config", {"version": numero, "config": pilotages.config_a_envoyer(conf)}, qui.role)
+        except Exception as e:
+            log.error("ordre de %s v%s non déposé : %s", ident, numero, str(e)[:200])
+            raise Refus(500, "version mise en service dans l'atelier, mais l'ordre n'est pas parti : relancez la mise en service") from e
+        enregistree = await bd(canal.installations.cle, ident) is not None
+        return {"client": ident, "version_en_service": numero, "retour": v["etat"] == "publiee",
+                "annuaire": {"zone": conf.zone, "porte": False},
+                "pilotage": {"ordre": ordre["numero"], "installation": enregistree}}
 
     @r.post("/clients/{ident}/reprise")
     def reprise(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
@@ -364,16 +435,17 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(400, "limite : un nombre de 1 à 200")
         return int(valeur)
 
-    def suivable(qui: Identite, ident: str) -> dict:
-        """Le client, si son suivi passe par la porte (zones Europe et États-Unis)."""
+    def suivable(qui: Identite, ident: str, conversations: bool = False) -> tuple[dict, bool]:
+        """Le client, et si son suivi passe par la porte (zones Europe et États-Unis) ou par le pilotage
+        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations)."""
         c = client_de(qui, ident)
-        v = versions.en_service(ident) or versions.derniere(ident)
-        zone = ((v or {}).get("config") or {}).get("zone")
-        if zone not in regles.ZONES_PORTE:
-            raise Refus(409, "suivi hors porte (zone suisse ou chez le client) : il viendra avec le pilotage, au lot 6")
+        if zone_de(ident) not in regles.ZONES_PORTE:
+            if conversations:
+                raise Refus(409, "les conversations d'une installation hors Cloudflare ne la quittent jamais : elles se lisent chez le client")
+            return c, False
         if porte is None:
             raise Refus(503, "porte non réglée (PORTE_URL)")
-        return c
+        return c, True
 
     def raison(e: PorteErreur) -> str:
         """Ce qui a empêché la lecture, dit simplement."""
@@ -411,19 +483,33 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     @r.get("/clients/{ident}/suivi")
     async def suivi(ident: str, requete: Request, qui: Identite = Depends(identite)):
         jours = jours_de(requete.query_params.get("jours"))
-        c = await bd(suivable, qui, ident)
+        c, par_porte = await bd(suivable, qui, ident)
         derniere = (await bd(versions.dernieres, {ident})).get(ident)
-        etats = await etats_porte(ident)
-        activite = await lire_suivi(ident, depuis=debut(jours))
-        sortie = {**resume(c, derniere, etats), "periode_jours": jours, "activite": activite}
+        if par_porte:
+            activite = await lire_suivi(ident, depuis=debut(jours))
+            sortie = {**resume(c, derniere, await etats_porte(ident)), "periode_jours": jours, "activite": activite}
+        else:
+            if jours not in pilote_fenetres:
+                raise Refus(400, "jours : 1, 7 ou 30 pour une installation hors Cloudflare")
+            try:
+                activite, inst = await bd(canal.suivi, ident, jours)
+            except pilotages.PilotageRefuse as e:
+                raise Refus(409, f"suivi indisponible : {e}") from e
+            sortie = {**resume(c, derniere, None, canal.bref(inst, c.get("current_version"))), "periode_jours": jours,
+                      "activite": activite}
         if qui.role == "megga":
-            sortie["couts"] = couts(activite, await bd(lire_tarifs))
+            try:
+                sortie["couts"] = couts(activite, await bd(lire_tarifs))
+            except (TypeError, ValueError, AttributeError, ArithmeticError):
+                if par_porte:
+                    raise
+                sortie["couts"] = {"erreur": "activité illisible"}  # le relevé d'une installation, pas notre code
         return sortie
 
     @r.get("/clients/{ident}/conversations")
     async def conversations(ident: str, requete: Request, qui: Identite = Depends(identite)):
         limite = limite_de(requete.query_params.get("limite"))
-        await bd(suivable, qui, ident)
+        await bd(suivable, qui, ident, True)
         return await lire_suivi(ident, "/conversations", limite=limite)
 
     @r.get("/clients/{ident}/conversations/{personne}")
@@ -431,15 +517,18 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         limite = limite_de(requete.query_params.get("limite"))
         if not PERSONNE.fullmatch(personne):
             raise Refus(400, "personne : un numéro")
-        await bd(suivable, qui, ident)
+        await bd(suivable, qui, ident, True)
         return await lire_suivi(ident, f"/conversations/{personne}", limite=limite)
 
     @r.get("/clients/{ident}/alertes")
     async def alertes(ident: str, requete: Request, qui: Identite = Depends(identite)):
         jours = jours_de(requete.query_params.get("jours"))
-        c = await bd(suivable, qui, ident)
+        c, par_porte = await bd(suivable, qui, ident)
         maintenant = time.time()
         depuis = debut(jours)
+        if not par_porte:
+            liste = await bd(canal.alertes, ident, depuis, c.get("current_version"))
+            return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"] or 0, reverse=True)}
         liste = []
         etats = await etats_porte(ident)
         if etats is None:
@@ -459,6 +548,60 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         except Refus as e:
             liste.append({"quand": maintenant, "genre": "conteneur_injoignable", "detail": e.message})
         return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"], reverse=True)}
+
+    # Les installations hors Cloudflare
+
+    def hors_porte(qui: Identite, ident: str) -> dict:
+        """Le client, s'il tourne hors Cloudflare (chez lui, zone suisse) : son installation se pilote."""
+        c = client_de(qui, ident)
+        if zone_de(ident) in regles.ZONES_PORTE:
+            raise Refus(409, "ce client est servi par la porte de Cloudflare : il n'a pas d'installation à piloter")
+        return c
+
+    @r.get("/installations")
+    def installations(qui: Identite = Depends(identite)):
+        megga(qui)
+        # cle_pilotage : l'atelier a sa clé et peut signer des ordres (scripts/pilotage.py poser).
+        return {"installations": canal.toutes({c["component_id"]: c.get("current_version") for c in versions.clients()}),
+                "cle_pilotage": canal.cle is not None}
+
+    @r.get("/clients/{ident}/installation")
+    def installation(ident: str, qui: Identite = Depends(identite)):
+        c = hors_porte(qui, ident)
+        return {"client": ident, "version_en_service": c.get("current_version"), **canal.vue(ident, c.get("current_version"))}
+
+    @r.put("/clients/{ident}/installation")
+    def enregistrer_installation(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """La mise en service d'une installation : MEGGA enregistre la clé publique qu'elle lui a remise."""
+        megga(qui)
+        hors_porte(qui, ident)
+        try:
+            empreinte = canal.enregistrer(ident, corps.get("cle_publique"))
+        except pilotages.PilotageRefuse as e:
+            raise Refus(400, str(e)) from e
+        return {"client": ident, "cle": empreinte}
+
+    @r.delete("/clients/{ident}/installation")
+    def revoquer_installation(ident: str, qui: Identite = Depends(identite)):
+        megga(qui)
+        hors_porte(qui, ident)
+        return {"client": ident, "revoquee": canal.revoquer(ident)}
+
+    @r.post("/clients/{ident}/installation/image", status_code=201)
+    async def proposer_image(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """Une version d'image proposée à l'installation : notée chez elle ; son installation viendra au lot 6.4."""
+        megga(qui)
+        await bd(hors_porte, qui, ident)
+        contenu = {"version": corps.get("version"), "image": corps.get("image")}
+        if not (isinstance(contenu["version"], str) and pilotages.VERSION_IMAGE.fullmatch(contenu["version"])):
+            raise Refus(400, "version : celle de l'image, par exemple 0.2.0")
+        if not (isinstance(contenu["image"], str) and pilotages.IMAGE.fullmatch(contenu["image"])):
+            raise Refus(400, "image : ghcr.io/megga/megga-agents@sha256:<empreinte>, l'image signée par MEGGA")
+        if canal.cle is None:
+            raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
+        async with verrous[ident]:
+            ordre = await bd(canal.deposer, ident, "image", contenu, qui.role)
+        return {"client": ident, "ordre": ordre["numero"], **contenu}
 
     @r.get("/tarifs")
     def tarifs(qui: Identite = Depends(identite)):
@@ -490,7 +633,26 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     async def sante():
         from noyau.version import carte
 
-        return {"ok": True, "service": "atelier", **carte()}
+        return {"ok": True, "service": "atelier", **carte(), "pilotage": canal.cle is not None}
+
+    @app.post("/pilotage/releve")
+    async def releve(requete: Request):
+        """Le relevé du pilote d'une installation : pas de jeton, une requête signée de sa clé."""
+        # Lu par morceaux, borné : un corps trop gros est refusé sans être gardé en mémoire.
+        corps = bytearray()
+        async for morceau in requete.stream():
+            corps += morceau
+            if len(corps) > TAILLE_RELEVE:
+                return JSONResponse({"erreur": "relevé trop gros"}, status_code=413)
+        corps = bytes(corps)
+        try:
+            return await bd(canal.releve, "POST", "/pilotage/releve", requete.headers, corps)
+        except pilotages.PilotageRefuse as e:
+            log.warning("relevé refusé : %s", e)
+            # Au pilote, l'heure et le rejeu se disent ; le reste (installation inconnue, révoquée, signature)
+            # reste dans le journal de l'atelier : on ne peut pas sonder quelles installations existent.
+            dicible = str(e) if str(e).startswith(("heure", "requête rejouée", "relevé")) else "installation non reconnue"
+            return JSONResponse({"erreur": dicible}, status_code=401)
 
     app.include_router(r)
     return app

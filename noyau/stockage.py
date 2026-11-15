@@ -17,12 +17,15 @@ import datetime as dt
 import decimal
 import json
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import Column, Float, MetaData, String, Table, Text, and_, create_engine, delete, insert, select, text, update
+from sqlalchemy import (Column, Float, Integer, MetaData, String, Table, Text, and_, create_engine, delete, func, insert,
+                        select, text, update)
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 FORMAT = 1
 # La version de nos tables (préfixe megga_). Chaque migration est additive : une image démarre
@@ -133,9 +136,14 @@ class BaseTropRecente(RuntimeError):
 
 def _table_schema(url: str) -> tuple[Engine, Table]:
     """La version de nos tables (table megga_schema), une ligne."""
-    from sqlalchemy import Integer
-
     return _table(url, "megga_schema", Column("cle", String(20), primary_key=True), Column("version", Integer, nullable=False))
+
+
+def migree(url: str) -> bool:
+    """La base a-t-elle déjà été migrée par un agent ? Le pilote attend ce moment avant d'y créer ses tables."""
+    e, t = _table_schema(url)
+    with e.connect() as c:
+        return c.execute(select(t.c.version).where(t.c.cle == "megga")).scalar() is not None
 
 
 # La version des tables d'avant les migrations (lot 6) : une base qui les a sans megga_schema en est là.
@@ -149,7 +157,6 @@ def migrer(url: str, version: int | None = None, etapes: dict | None = None, _re
     `version` et `etapes` remplacent SCHEMA_VERSION et ETAPES (essais).
     """
     from sqlalchemy import inspect
-    from sqlalchemy.exc import IntegrityError
 
     cible = SCHEMA_VERSION if version is None else version
     etapes = ETAPES if etapes is None else etapes
@@ -192,6 +199,8 @@ def preparer(url: str) -> None:
     Rappels(url)
     Journal(url)
     Fil(url)
+    Ordres(url)
+    JournalPilotage(url)
     _table_schema(url)
 
 
@@ -561,3 +570,301 @@ class Reglages:
         with self._e.begin() as c:
             c.execute(delete(self._t).where(self._t.c.cle == cle))
             c.execute(insert(self._t).values(cle=cle, valeur=donnees))
+
+
+# Le pilotage des installations hors Cloudflare (noyau/pilotage.py, pilote/, atelier/pilotage.py)
+
+
+def _json(v: Any) -> str | None:
+    return None if v is None else json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _de_json(v: Any) -> Any:
+    try:
+        return json.loads(v) if v else None
+    except ValueError:
+        return None
+
+
+class Ordres:
+    """Les ordres de pilotage (table megga_ordres), des deux côtés du canal.
+
+    Chez MEGGA (base de l'atelier) : ceux déposés pour chaque installation, et ce qu'elle en dit.
+    Chez le client : ceux que son pilote a reçus et vérifiés, et ce qu'ils sont devenus.
+
+    états : en_attente (déposé, pas encore remis), remis, attente_accord (le oui du client),
+    a_appliquer, applique, propose (une image, installée au lot 6.4), refuse, echec, remplace
+    (par un ordre plus récent), retire (le client revient à son fichier), expire.
+    """
+
+    SERVIS = ("a_appliquer", "applique")
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_ordres",
+            Column("client", String(63), primary_key=True),
+            Column("numero", Integer, primary_key=True, autoincrement=False),
+            Column("genre", String(10), nullable=False),
+            Column("jeton", Text, nullable=False),
+            Column("etat", String(20), nullable=False),
+            Column("detail", String(200), nullable=False, default=""),
+            Column("cree", Float, nullable=False),
+            Column("expire", Float, nullable=False),
+            Column("maj", Float, nullable=False),
+        )
+
+    def deposer(self, client: str, genre: str, signer, duree: float, maintenant: float | None = None, minimum: int = 0) -> dict:
+        """Un nouvel ordre (chez MEGGA), au numéro suivant (au-delà de `minimum`), signé par `signer(numero, quand)`.
+
+        Les ordres du même genre encore en attente, jamais remis, sont remplacés : ils ne partiront plus.
+        """
+        t = self._t
+        quand = time.time() if maintenant is None else maintenant
+        with self._e.begin() as c:
+            numero = max(c.execute(select(func.max(t.c.numero)).where(t.c.client == client)).scalar() or 0, minimum) + 1
+            remplaces = self._remplacer(c, client, genre, ("en_attente",), numero, quand)
+            c.execute(insert(t).values(client=client, numero=numero, genre=genre, jeton=signer(numero, quand), etat="en_attente",
+                                       detail="", cree=quand, expire=int(quand) + duree, maj=quand))
+        return {"numero": numero, "remplaces": remplaces}
+
+    def ajouter(self, client: str, numero: int, genre: str, jeton: str, etat: str, detail: str, cree: float, expire: float,
+                maintenant: float | None = None) -> bool:
+        """Un ordre reçu (chez le client) ; faux s'il est déjà là."""
+        try:
+            with self._e.begin() as c:
+                c.execute(insert(self._t).values(client=client, numero=numero, genre=genre, jeton=jeton, etat=etat,
+                                                 detail=detail[:200], cree=cree, expire=expire,
+                                                 maj=time.time() if maintenant is None else maintenant))
+            return True
+        except IntegrityError:
+            return False
+
+    def lire(self, client: str, numero: int) -> dict | None:
+        t = self._t
+        with self._e.connect() as c:
+            l = c.execute(select(t).where(t.c.client == client, t.c.numero == numero)).first()
+        return dict(l._mapping) if l else None
+
+    def lister(self, client: str, limite: int = 20, etats: tuple[str, ...] | None = None) -> list[dict]:
+        """Les ordres d'un client, le plus récent d'abord."""
+        t = self._t
+        q = select(t).where(t.c.client == client)
+        if etats:
+            q = q.where(t.c.etat.in_(etats))
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(q.order_by(t.c.numero.desc()).limit(limite))]
+
+    def dernier_numero(self, client: str) -> int:
+        t = self._t
+        with self._e.connect() as c:
+            return int(c.execute(select(func.max(t.c.numero)).where(t.c.client == client)).scalar() or 0)
+
+    def changer(self, client: str, numero: int, etat: str, detail: str = "", depuis: tuple[str, ...] | None = None,
+                maintenant: float | None = None) -> bool:
+        """Change l'état d'un ordre (seulement depuis ces états, si `depuis`) ; vrai s'il a changé."""
+        t = self._t
+        q = update(t).where(t.c.client == client, t.c.numero == numero)
+        if depuis:
+            q = q.where(t.c.etat.in_(depuis))
+        with self._e.begin() as c:
+            r = c.execute(q.values(etat=etat, detail=detail[:200], maj=time.time() if maintenant is None else maintenant))
+            return r.rowcount > 0
+
+    def _remplacer(self, c, client: str, genre: str, depuis: tuple[str, ...], par: int, quand: float) -> list[int]:
+        """Chaque ordre est changé seulement s'il est encore dans l'un de ces états : un changement venu entre-temps
+        (un accord du client, par exemple) n'est jamais écrasé."""
+        t = self._t
+        changes = []
+        for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.genre == genre, t.c.etat.in_(depuis),
+                                                       t.c.numero < par)).all():
+            r = c.execute(update(t).where(t.c.client == client, t.c.numero == n, t.c.etat.in_(depuis))
+                          .values(etat="remplace", detail=f"remplacé par l'ordre {par}", maj=quand))
+            if r.rowcount:
+                changes.append(n)
+        return changes
+
+    def remplacer(self, client: str, genre: str, depuis: tuple[str, ...], par: int, maintenant: float | None = None) -> list[int]:
+        """Les ordres plus anciens de ce genre, dans ces états, remplacés par l'ordre `par` ; rend leurs numéros."""
+        with self._e.begin() as c:
+            return self._remplacer(c, client, genre, depuis, par, time.time() if maintenant is None else maintenant)
+
+    def a_servir(self, client: str) -> dict | None:
+        """La configuration que l'agent doit servir (chez le client) : le dernier ordre « config » à appliquer ou appliqué."""
+        t = self._t
+        with self._e.connect() as c:
+            l = c.execute(select(t).where(t.c.client == client, t.c.genre == "config", t.c.etat.in_(self.SERVIS))
+                          .order_by(t.c.numero.desc()).limit(1)).first()
+        return dict(l._mapping) if l else None
+
+    def expirer(self, client: str, maintenant: float) -> list[int]:
+        """Chez MEGGA : les ordres qui n'ont pas abouti avant leur échéance (pas encore reçus, ou sans accord)
+        expirent ; rend leurs numéros."""
+        t = self._t
+        vivants = ("en_attente", "remis", "attente_accord")  # une fois acceptée, la suite est rapportée par l'installation
+        with self._e.begin() as c:
+            expires = [n for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.etat.in_(vivants),
+                                                                       t.c.expire < maintenant)).all()]
+            for n in expires:
+                c.execute(update(t).where(t.c.client == client, t.c.numero == n, t.c.etat.in_(vivants))
+                          .values(etat="expire", detail="pas abouti dans la semaine", maj=maintenant))
+        return expires
+
+    def a_remettre(self, client: str, apres: int, maintenant: float) -> tuple[list[dict], list[int]]:
+        """Chez MEGGA : les ordres à remettre à l'installation (numéro au-delà du dernier qu'elle a reçu, encore
+        valables). Rend ces ordres et ceux remis pour la première fois."""
+        t = self._t
+        attente = ("en_attente", "remis")
+        valable = (t.c.client == client, t.c.numero > apres, t.c.expire >= maintenant)
+        with self._e.begin() as c:
+            # Marqués d'abord, sous condition ; puis relus : un ordre remplacé entre-temps n'est jamais remis.
+            nouveaux = [n for (n,) in c.execute(select(t.c.numero).where(*valable, t.c.etat == "en_attente")).all()]
+            nouveaux = [n for n in nouveaux if c.execute(update(t).where(t.c.client == client, t.c.numero == n,
+                                                                          t.c.etat == "en_attente")
+                                                         .values(etat="remis", maj=maintenant)).rowcount]
+            lignes = [dict(l._mapping) for l in c.execute(select(t).where(*valable, t.c.etat.in_(attente)).order_by(t.c.numero))]
+        return lignes, nouveaux
+
+    REPORTES = ("attente_accord", "a_appliquer", "applique", "propose", "refuse", "echec", "remplace", "retire", "expire")
+    # Un ordre arrivé là ne change plus : un état rapporté ensuite (rejoué, ou annoncé sans être signé) est ignoré.
+    FINAUX = ("refuse", "echec", "remplace", "retire", "expire")
+
+    def noter_etats(self, client: str, etats: list, maintenant: float) -> list[dict]:
+        """Chez MEGGA : ce que l'installation dit de ses ordres (le dernier mot par ordre) ; rend ceux qui ont changé.
+        Un ordre jamais remis (en_attente) n'a pas d'état chez elle ; un ordre arrivé à un état final n'en change plus."""
+        t = self._t
+        derniers: dict[int, tuple[str, str]] = {}
+        for e in etats[:50]:
+            if not isinstance(e, dict):
+                continue
+            numero, etat = e.get("numero"), e.get("etat")
+            if isinstance(numero, int) and not isinstance(numero, bool) and etat in self.REPORTES:
+                derniers[numero] = (etat, str(e.get("detail") or "")[:200])
+        changes = []
+        with self._e.begin() as c:
+            for numero, (etat, detail) in derniers.items():
+                r = c.execute(update(t).where(t.c.client == client, t.c.numero == numero, t.c.etat != etat,
+                                              t.c.etat.notin_(("en_attente",) + self.FINAUX))
+                              .values(etat=etat, detail=detail, maj=maintenant))
+                if r.rowcount:
+                    changes.append({"numero": numero, "etat": etat, "detail": detail})
+        return changes
+
+
+class JournalPilotage:
+    """Le journal du pilotage (table megga_pilotage), des deux côtés : chaque ordre et ce qu'il devient,
+    chaque clé enregistrée ou révoquée, chaque accord du client. Jamais de conversation."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_pilotage",
+            Column("id", String(32), primary_key=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("client", String(63), nullable=False, index=True),
+            Column("numero", Integer, nullable=True),
+            Column("evenement", String(30), nullable=False),
+            Column("detail", String(300), nullable=False, default=""),
+        )
+
+    def noter(self, client: str, evenement: str, numero: int | None = None, detail: str = "", quand: float | None = None) -> None:
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=uuid.uuid4().hex, quand=time.time() if quand is None else quand, client=client,
+                                             numero=numero, evenement=evenement[:30], detail=str(detail)[:300]))
+
+    def lire(self, client: str, limite: int = 50) -> list[dict]:
+        """Les derniers événements, le plus récent d'abord."""
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.quand, t.c.numero, t.c.evenement, t.c.detail).where(t.c.client == client)
+                               .order_by(t.c.quand.desc(), t.c.id.desc()).limit(limite))
+            return [dict(l._mapping) for l in lignes]
+
+
+class Installations:
+    """Les installations pilotées, vues de MEGGA (table megga_installations, base de l'atelier) : la clé
+    publique enregistrée à la mise en service, et le dernier relevé de leur pilote (état, suivi)."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_installations",
+            Column("client", String(63), primary_key=True),
+            Column("cle", String(200), nullable=False),
+            Column("enregistree", Float, nullable=False),
+            Column("revoquee", Float, nullable=True),
+            Column("releve", Float, nullable=True),
+            Column("etat", Text, nullable=True),
+            Column("suivi", Text, nullable=True),
+        )
+
+    def enregistrer(self, client: str, cle: str, quand: float) -> None:
+        """La clé d'une installation (une nouvelle remplace l'ancienne, et lève une révocation)."""
+        t = self._t
+        with self._e.begin() as c:
+            r = c.execute(update(t).where(t.c.client == client).values(cle=cle, enregistree=quand, revoquee=None))
+            if r.rowcount == 0:
+                c.execute(insert(t).values(client=client, cle=cle, enregistree=quand))
+
+    def client_de_cle(self, cle: str) -> str | None:
+        """Le client dont c'est la clé en service, s'il y en a un : une clé ne sert qu'une installation."""
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(t.c.client).where(t.c.cle == cle, t.c.revoquee.is_(None))).scalar()
+
+    def revoquer(self, client: str, quand: float) -> bool:
+        t = self._t
+        with self._e.begin() as c:
+            return c.execute(update(t).where(t.c.client == client, t.c.revoquee.is_(None)).values(revoquee=quand)).rowcount > 0
+
+    def cle(self, client: str) -> str | None:
+        """La clé en service de cette installation, si elle n'est pas révoquée."""
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(t.c.cle).where(t.c.client == client, t.c.revoquee.is_(None))).scalar()
+
+    def noter_releve(self, client: str, etat: dict, suivi: dict | None, quand: float) -> None:
+        """Le dernier relevé : l'état à chaque fois, le suivi quand il arrive (toutes les quelques minutes)."""
+        valeurs = {"releve": quand, "etat": _json(etat)}
+        if suivi is not None:
+            valeurs["suivi"] = _json(suivi)
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.client == client).values(**valeurs))
+
+    def lire(self, client: str) -> dict | None:
+        with self._e.connect() as c:
+            l = c.execute(select(self._t).where(self._t.c.client == client)).first()
+        if not l:
+            return None
+        d = dict(l._mapping)
+        return {**d, "etat": _de_json(d["etat"]), "suivi": _de_json(d["suivi"])}
+
+    def toutes(self) -> list[dict]:
+        """Toutes les installations et leur dernier état, sans leur suivi."""
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.client, t.c.cle, t.c.enregistree, t.c.revoquee, t.c.releve, t.c.etat).order_by(t.c.client))
+            return [{**dict(l._mapping), "etat": _de_json(l.etat)} for l in lignes]
+
+
+class Nonces:
+    """Les nonces des requêtes signées déjà reçues (table megga_nonces) : une requête rejouée est refusée."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_nonces",
+            Column("nonce", String(32), primary_key=True),
+            Column("client", String(63), nullable=False),
+            Column("quand", Float, nullable=False, index=True),
+        )
+
+    def nouveau(self, client: str, nonce: str, quand: float, garde: float = 900) -> bool:
+        """Vrai la première fois ; les nonces plus vieux que `garde` (au-delà de la fenêtre des requêtes) sont oubliés."""
+        try:
+            with self._e.begin() as c:
+                c.execute(delete(self._t).where(self._t.c.quand < quand - garde))
+                c.execute(insert(self._t).values(nonce=nonce, client=client, quand=quand))
+            return True
+        except IntegrityError:
+            return False

@@ -24,12 +24,12 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["noyau", "atelier", "packs", "packs.immobilier"]
+packages = ["noyau", "atelier", "pilote", "packs", "packs.immobilier"]
 
 [tool.setuptools.package-data]
 "packs.immobilier" = ["demo/*.json"]
-# La clé publique des licences (scripts/licence.py cle), quand elle existe.
-"noyau" = ["licence.pub"]
+# Les clés publiques des licences et du pilotage (scripts/licence.py cle, scripts/pilotage.py cle), quand elles existent.
+"noyau" = ["licence.pub", "pilotage.pub"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -127,6 +127,14 @@ class Config(Strict):
         return v
 
 
+def manques(conf: Config) -> list[str]:
+    """Ce qui empêche une configuration valide de servir (l'atelier et le pilotage la refusent)."""
+    m = []
+    if "immobilier" in conf.outils and not conf.catalogue:
+        m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
+    return m
+
+
 def lire(source: str | Path | dict) -> Config:
     """Une configuration depuis un fichier YAML ou JSON, un texte JSON ou un dict."""
     if isinstance(source, dict):

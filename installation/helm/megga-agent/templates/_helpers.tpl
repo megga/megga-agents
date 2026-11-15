@@ -7,6 +7,12 @@ app.kubernetes.io/name: megga-agent
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{/* Le pilote : d'autres étiquettes, pour que le Service et le Deployment de l'agent ne le prennent jamais pour lui. */}}
+{{- define "megga-agent.etiquettes-pilote" -}}
+app.kubernetes.io/name: megga-pilote
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
 {{- define "megga-agent.image" -}}
 {{- if .Values.image.digest -}}
 {{ .Values.image.repository }}@{{ .Values.image.digest }}

@@ -40,7 +40,7 @@ Une configuration refusée rend, champ par champ, un message en français clair,
 2. `valider` montre la configuration qui résulterait des changements, sans rien garder.
 3. Une nouvelle version part d'une base (la dernière par défaut) : un brouillon. Dans `modeles`, `voix` et `whatsapp`, les changements se fusionnent clé par clé ; partout ailleurs, la valeur donnée remplace l'ancienne en entier (c'est ainsi qu'on retire un modèle Meta ou une voix par langue).
 4. `essai` : l'agent de cette version répond, hors WhatsApp, dans une base d'essai à part. Rien ne part au numéro du client. Chaque version et chaque conversation d'essai est une personne neuve.
-5. `activer` : la porte inscrit la configuration dans l'annuaire, puis le conteneur du client redémarre dès qu'il a fini ses tours en cours, et relit la configuration. La version devient publiée, donc figée, et en service. Un brouillon jamais essayé est refusé (MEGGA peut forcer). Une version d'une autre zone que celle en service est refusée : changer de zone, c'est déménager le client.
+5. `activer` : la porte inscrit la configuration dans l'annuaire, puis le conteneur du client redémarre dès qu'il a fini ses tours en cours, et relit la configuration. La version devient publiée, donc figée, et en service. Un brouillon jamais essayé est refusé (MEGGA peut forcer). Une version d'une autre zone que celle en service est refusée : changer de zone, c'est déménager le client. Hors Cloudflare (chez le client, zone suisse), un ordre signé part à l'installation à la place de l'annuaire (voir « Les installations hors Cloudflare »).
 6. Revenir en arrière : `activer` une version publiée plus ancienne.
 
 Si la mise en service s'interrompt après la porte, l'atelier remet l'annuaire sur la version d'avant. Si la porte ne répond pas (état incertain), la liste des clients signale un `ecart` entre la version que sert l'annuaire et celle de l'atelier : il suffit de relancer la mise en service.
@@ -67,7 +67,7 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `POST /clients/{id}/jetons` | MEGGA | un jeton pour le client |
 | `DELETE /clients/{id}/jetons` | MEGGA | retire ses jetons |
 
-Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets`. Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
 
 ## Le suivi
 
@@ -91,6 +91,27 @@ MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider 
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 
+## Les installations hors Cloudflare (lot 6.3)
+
+Chez le client (puis en zone suisse), aucun accès entrant : le pilote de l'installation appelle la porte chaque minute (`POST /pilotage/releve`), qui transmet à l'atelier sans réveiller personne si la requête n'est pas signée et récente. L'atelier vérifie la signature avec la clé publique enregistrée pour ce client, refuse une requête rejouée, garde le dernier relevé, et répond avec les ordres qui attendent. La signature couvre aussi l'installation que la requête dit être, et une clé ne sert qu'une installation. Un relevé est contrôlé avant d'être gardé (nombres finis, forme de l'état et du suivi) ; la porte refuse un corps sans longueur annoncée ou de plus de 256 Kio. Le pilote : `pilote/` ; le protocole : `noyau/pilotage.py` ; le guide côté client : `docs/installation-client.md`.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /installations` | MEGGA | les installations, leur dernier relevé (silencieuse au-delà de 5 minutes), leur réglage de pilotage, l'écart ; `cle_pilotage` : l'atelier peut signer |
+| `GET /clients/{id}/installation` | tous | l'installation, ses 20 derniers ordres et le journal du pilotage |
+| `PUT /clients/{id}/installation` | MEGGA | `{cle_publique}` : la mise en service, avec la clé que l'installation a remise (`python -m pilote cle`) |
+| `DELETE /clients/{id}/installation` | MEGGA | révoque sa clé : plus aucun relevé accepté |
+| `POST /clients/{id}/installation/image` | MEGGA | `{version, image}` : une version d'image proposée (par son empreinte) ; notée chez le client, installée au lot 6.4 |
+
+**Les ordres** : signés par la clé de pilotage de l'atelier (`PILOTAGE_CLE`, distincte de celle des licences), vérifiés par l'installation avec la clé publique de l'image (`noyau/pilotage.pub`). Une semaine pour aboutir, quel que soit le mode de l'installation. Ils partent seulement si le client a choisi `PILOTAGE=complet`. Une configuration part sans les réglages laissés à leur valeur par défaut : une installation restée sur l'image précédente l'accepte encore quand un réglage facultatif s'ajoute (règle qui va avec : ne jamais changer une valeur par défaut sans changer `VERSION` de la configuration).
+- `activer` d'une version hors Cloudflare : la version est mise en service dans l'atelier, puis un ordre part. Un ordre du même genre qui n'était pas encore parti est remplacé. Renvoyer la version en service est permis tant que l'installation ne la sert pas (ordre refusé, en échec ou expiré).
+- Leurs états : `en_attente`, `remis`, puis ce qu'en dit l'installation : `attente_accord`, `a_appliquer`, `applique`, `propose` (une image), `refuse`, `echec`, `remplace`, `retire` (le client est revenu à son fichier), `expire`.
+- L'écart : l'installation ne sert pas la version en service dans l'atelier, d'après son dernier relevé ; inconnu si l'agent n'a pas répondu à ce relevé (renvoyer la version attend alors le relevé suivant).
+
+**Le suivi** d'une installation vient de son dernier relevé, calculé chez elle toutes les 5 minutes : `jours` vaut 1, 7 ou 30, et la réponse dit quand il a été calculé. Les coûts, pour MEGGA seulement, comme ailleurs. Les alertes y ajoutent l'installation silencieuse ou révoquée, l'agent en panne, la licence expirée, l'écart, et les ordres refusés, en échec ou expirés. Les conversations ne quittent jamais l'installation : `409`, même pour MEGGA.
+
+**Le journal** du pilotage (`megga_pilotage`) garde, des deux côtés, chaque clé enregistrée ou révoquée et chaque ordre : déposé, par qui, remis, puis ce qu'il est devenu.
+
 ## Sur les fondations d'Agno
 
 Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_config`, `upsert_config`, `set_current_version`), vérifiés sur SQLite et Postgres : brouillon modifiable, version publiée figée, numéros jamais réutilisés, retour par `set_current_version`. Les routes HTTP d'AgentOS (`/components`, `/registry`) ne sont pas exposées : elles écrivent des agents Agno sans connaître notre configuration, et leurs droits suivent l'utilisateur du jeton, pas nos rôles.
@@ -101,10 +122,10 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Script d'inscription** : `scripts/inscrire_client.py` reste possible, mais son inscription ne vient d'aucune version : l'atelier montrera un écart jusqu'à la prochaine mise en service. Il demande la migration `0002`.
 - **Redémarrage** : un message arrivé pendant les quelques secondes entre la fin des tours et l'arrêt du conteneur peut rester sans réponse.
 - **Un numéro, un client** : `essai-megga` et `megga-estates` ont le même numéro ; la porte refusera d'activer le second tant que le premier le garde.
-- **Zone suisse et chez le client** : la mise en service y est notée mais pas poussée ; elle passera par le pilotage (lot 6).
+- **Installations hors Cloudflare** : piloter une installation garde l'atelier éveillé (un relevé par minute ; environ 7,5 $ par mois pour le conteneur), et aussi le calcul Neon de sa base, qui ne passe plus en veille : environ 19 $ par mois de plus, et davantage s'il est partagé avec les bases des clients. À régler avant la première installation pilotée : une petite base Neon à part pour l'atelier, ou des relevés absorbés par la porte quand rien ne change. La mise à jour de l'image par le pilote viendra au lot 6.4 ; la zone suisse avec Exoscale.
 - **Inscription d'un client** : créer le compte (identifiant, entreprise, zone, numéro WhatsApp) reste à MEGGA ; le client règle ensuite son agent lui-même.
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.
 - **Agno 3.2** : sous Postgres, la table des versions a une colonne `deleted_at` que SQLite n'a pas ; l'export d'une base qui contient des versions ne se recharge pas encore dans SQLite. À régler avant de déménager la base de l'atelier.
-- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`) ; les zones suisse et client auront leur suivi par le pilotage (lot 6).
+- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`).
 - **Interface** : rien n'est figé côté écrans ; le catalogue et les erreurs (champ et message) sont faits pour qu'une interface les affiche telles quelles.

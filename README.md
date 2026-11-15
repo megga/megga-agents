@@ -10,6 +10,7 @@ Le plan : [docs/plan.md](docs/plan.md).
 |---|---|
 | `noyau/` | le noyau Python, sur Agno : configuration, agent, WhatsApp, base, typographie |
 | `atelier/` | l'API qui construit et pilote les agents des clients ([docs/atelier.md](docs/atelier.md)) |
+| `pilote/` | le pilote d'une installation hors Cloudflare : suivi et ordres signés, toujours sortant ([docs/installation-client.md](docs/installation-client.md)) |
 | `socle/` | l'image Docker unique (Cloudflare, Suisse, chez le client) |
 | `porte/` | le Worker d'entrée des zones Europe et États-Unis, l'objet de chaque client et celui de l'atelier |
 | `installation/` | l'installation chez le client : Docker Compose et chart Helm ([docs/installation-client.md](docs/installation-client.md)) |
