@@ -36,6 +36,11 @@ def _cle_privee():
     return Ed25519PrivateKey.from_private_bytes(base64.b64decode(brut))
 
 
+def _au_trousseau() -> bool:
+    return subprocess.run(["security", "find-generic-password", "-a", "megga-agents", "-s", SERVICE],
+                          capture_output=True).returncode == 0
+
+
 def cle() -> int:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -43,10 +48,19 @@ def cle() -> int:
     if licence.CLE_PUBLIQUE.exists():
         print("noyau/licence.pub existe déjà : une seule paire de clés")
         return 1
+    if _au_trousseau():
+        print("Une clé des licences est déjà au trousseau (megga-agents-licence), sans noyau/licence.pub.\n"
+              "Retrouver sa clé publique plutôt qu'en créer une autre : avec une nouvelle clé, les licences "
+              "déjà remises ne vaudraient plus.")
+        return 1
     privee = Ed25519PrivateKey.generate()
     brut = privee.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw, serialization.NoEncryption())
-    subprocess.run(["security", "add-generic-password", "-a", "megga-agents", "-s", SERVICE,
-                    "-l", "Clé des licences MEGGA", "-w", base64.b64encode(brut).decode()], check=True)
+    # Par l'entrée standard de « security -i », jamais par la ligne de commande (lisible par ps).
+    commande = (f'add-generic-password -a megga-agents -s {SERVICE} -l "Clé des licences MEGGA" '
+                f'-w {base64.b64encode(brut).decode()}\n')
+    if subprocess.run(["security", "-i"], input=commande, text=True, capture_output=True).returncode != 0 or not _au_trousseau():
+        print("La clé n'a pas pu être rangée au trousseau : rien n'est créé.")
+        return 1
     licence.CLE_PUBLIQUE.write_bytes(privee.public_key().public_bytes(
         serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo))
     print("Clé privée : trousseau (megga-agents-licence). Clé publique : noyau/licence.pub, à commiter.")

@@ -16,3 +16,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "image.digest (de préférence) ou image.tag : l'image signée par MEGGA" -}}
 {{- end -}}
 {{- end -}}
+
+{{/* La configuration de l'agent, en texte YAML : donnée en objet (values) ou en texte (--set-file). */}}
+{{- define "megga-agent.config" -}}
+{{- if kindIs "string" .Values.config -}}
+{{ .Values.config }}
+{{- else -}}
+{{ toYaml .Values.config }}
+{{- end -}}
+{{- end -}}

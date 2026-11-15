@@ -8,14 +8,14 @@ C'est la même image signée que chez MEGGA. Deux façons de l'installer :
 
 ## Ce que MEGGA remet au client
 
-1. **L'image**, par son empreinte : `ghcr.io/megga/megga-agents@sha256:…`, et l'accès en lecture au registre. Le client peut vérifier qu'elle vient bien de MEGGA (`scripts/verifier_image.sh`, avec la clé publique `socle/cosign.pub`).
+1. **L'image**, par son empreinte : `ghcr.io/megga/megga-agents@sha256:…`, et un jeton de lecture du registre (privé) de MEGGA. Le client peut vérifier qu'elle vient bien de MEGGA (`scripts/verifier_image.sh`, avec la clé publique `socle/cosign.pub`).
 2. **La licence** de son installation, signée par MEGGA :
 
    ```bash
    .venv/bin/python scripts/licence.py emettre <id-du-client> <AAAA-MM-JJ>
    ```
 
-   Elle n'a rien de secret : elle ne vaut que pour ce client, et seule MEGGA peut en signer une. L'agent la vérifie au démarrage, sans aucun appel au dehors. Expirée, il tourne encore 30 jours et le signale sur `/sante` ; au-delà, ou pour un autre client, il ne démarre pas.
+   Elle n'a rien de secret : elle ne vaut que pour ce client, et seule MEGGA peut en signer une. L'agent la vérifie au démarrage, sans aucun appel au dehors, puis à chaque appel. Expirée, il tourne encore 30 jours et le signale sur `/sante` ; au-delà, un agent déjà lancé cesse de servir (`/sante` et le webhook répondent 503) et il ne redémarre plus. Pour un autre client, il ne démarre pas.
 3. **La configuration** de son agent (`client.yaml`, le format de `noyau/config.py`), avec `zone: client`.
 
 Une seule fois, avant la première licence (Julien) : `.venv/bin/python scripts/licence.py cle`. La clé privée va dans le trousseau, la clé publique dans `noyau/licence.pub`, à commiter : elle part dans l'image.
@@ -38,19 +38,29 @@ Les secrets restent chez lui : en variables, ou en fichiers montés par Docker, 
 | `ELEVENLABS_API_KEY` | facultatif : écouter les vocaux et répondre de vive voix |
 | `DATABASE_URL` | Helm seulement : la base Postgres du client (Compose fournit la sienne) |
 
+## L'accès au registre
+
+L'image est dans le registre privé de MEGGA. Avec le jeton de lecture remis par MEGGA :
+
+```bash
+docker login ghcr.io -u <compte remis par MEGGA> --password-stdin
+```
+
+(le jeton se colle, puis Ctrl-D). Pour Kubernetes, le même accès dans un Secret de type `docker-registry` pour `ghcr.io`, donné au chart par `image.pullSecrets` (`[{name: <ce secret>}]`).
+
 ## Avec Docker Compose
 
 Sur un serveur Linux avec Docker, le DNS du domaine pointé dessus, ports 80 et 443 ouverts :
 
 ```bash
 cd installation/compose
-cp exemple.env .env                    # l'image, le domaine, le mot de passe de la base
+cp exemple.env .env                    # l'image, le domaine, le mot de passe de la base (tous caractères permis)
 cp exemple-secrets.env secrets.env     # les secrets ; chmod 600 secrets.env
 cp <configuration remise par MEGGA> client.yaml
 docker compose up -d
 ```
 
-L'entrée HTTPS (Caddy) obtient seule son certificat, et ne laisse passer que `/whatsapp` : `/sante` et les routes internes de l'agent ne sont jamais exposées. Pour vérifier :
+Sans `client.yaml`, l'installation s'arrête net (« bind source path does not exist ») au lieu de démarrer un agent sans configuration. L'entrée HTTPS (Caddy) obtient seule son certificat, et ne laisse passer que `/whatsapp` : `/sante` et les routes internes de l'agent ne sont jamais exposées. Pour vérifier :
 
 ```bash
 docker compose ps                      # agent « healthy »
@@ -71,7 +81,12 @@ helm install agent installation/helm/megga-agent \
   --set-file config=<client.yaml>
 ```
 
-Ou un fichier de valeurs, sur le modèle de `exemple-valeurs.yaml`. Le chart lance un seul agent (deux répondraient deux fois), le remplace en arrêtant l'ancien d'abord, lui laisse 2 minutes pour finir ses tours, le fait tourner sans droits (utilisateur 10001, disque en lecture seule), et n'expose que `/whatsapp`.
+Ou un fichier de valeurs, sur le modèle de `exemple-valeurs.yaml`.
+
+- **Secrets en fichiers** : sans Secret Kubernetes, le coffre du client (pilote CSI de Vault, Key Vault…) monte ses fichiers par `extraVolumes` et `extraVolumeMounts`, et chaque secret se déclare dans `extraEnv` sous la forme `<NOM>_FILE` (par exemple `ANTHROPIC_API_KEY_FILE=/mnt/secrets/anthropic`).
+- **HTTPS** : exigé par Meta. Le chart refuse de s'installer sans `ingress.tlsSecret`, sauf `ingress.tlsAilleurs=true` si un répartiteur de charge l'assure devant l'ingress.
+
+Le chart lance un seul agent (deux répondraient deux fois), le remplace en arrêtant l'ancien d'abord, le fait tourner sans droits (utilisateur 10001, disque en lecture seule), et n'expose que `/whatsapp`.
 
 ## Le webhook chez Meta
 
@@ -85,6 +100,7 @@ L'agent répond lui-même au défi de Meta et vérifie la signature de chaque we
 ## Ce qui change par rapport à Cloudflare
 
 - **Les rappels** : pas de porte pour réveiller l'agent à l'heure dite ; il veille lui-même, chaque minute.
+- **L'arrêt** (mise à jour, redémarrage) : l'agent finit d'abord ses tours en cours et sa tournée de rappels, 100 secondes au plus ; Compose et le chart attendent 2 minutes avant de le forcer.
 - **La base** : la sienne. Les migrations se jouent au démarrage ; une image démarre aussi sur une base migrée par la version suivante, pour qu'un retour arrière reste possible.
 - **Les sauvegardes** : celles de sa base (Compose : le volume `base`, ou `pg_dump`). L'outil d'export de MEGGA (`noyau/stockage.py`, `exporter` et `importer`) déplace un client entier, par exemple entre deux installations.
 - **Les mises à jour** : à la main pour l'instant (nouvelle empreinte, vérifiée, dans `.env` ou les valeurs Helm). Le conteneur pilote et les mises à jour signées viennent ensuite (lot 6, parties 3 et 4).

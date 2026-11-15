@@ -175,3 +175,139 @@ def test_helm_un_seul_agent_sans_droits():
                     "MEGGA_INSTALLATION, value: client", "path: /sante"):
         assert attendu in d
     assert "path: /whatsapp" in open("installation/helm/megga-agent/templates/ingress.yaml").read()
+
+
+# Corrections de la relecture
+
+
+def test_l_arret_laisse_finir_les_tours_en_cours():
+    """SIGTERM (mise à jour, redémarrage) : la réponse en route part avant que l'agent s'arrête."""
+    from test_app import corps, signe
+
+    class Lent:
+        async def arun(self, texte, user_id=None, session_id=None):
+            await asyncio.sleep(0.3)
+            return type("S", (), {"content": "Voilà.", "status": "COMPLETED"})()
+
+    exp = FauxExpediteur()
+    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": "secret-essai"}, agent=Lent(), expediteur=exp, attente=0.01)
+    with TestClient(app) as t:
+        c = corps()
+        t.post("/whatsapp", content=c, headers=signe(c))
+        assert exp.envois == []  # le tour est en route quand l'arrêt arrive
+    assert [texte for _, texte in exp.envois] == ["Voilà."]
+
+
+def test_l_arret_laisse_la_veille_finir_sa_tournee():
+    """L'arrêt arrive pendant l'envoi d'un rappel : il part en entier, et il est marqué (pas de doublon au redémarrage)."""
+
+    class Rappels:
+        def __init__(self):
+            self.rendu, self.marques = False, []
+
+        def echus(self, maintenant):
+            if self.rendu:
+                return []
+            self.rendu = True
+            return [{"id": "r1", "personne": "+41790000000", "texte": "appeler l'agence", "quand": 0}]
+
+        def marquer(self, ident, etat):
+            self.marques.append((ident, etat))
+
+        def prochain(self):
+            return None
+
+        def differes(self, personne):
+            return []
+
+        def en_attente(self):
+            return 0
+
+    class Ouvert:
+        def dernier(self, personne):
+            return time.time()
+
+        def noter(self, *a):
+            pass
+
+    class EnvoiLent(FauxExpediteur):
+        def __init__(self):
+            super().__init__()
+            self.commence = False
+
+        async def texte(self, vers, texte):
+            self.commence = True
+            await asyncio.sleep(0.3)
+            await super().texte(vers, texte)
+
+    exp, rappels = EnvoiLent(), Rappels()
+    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": "s", "MEGGA_INSTALLATION": "client", "MEGGA_LICENCE": jeton()},
+                agent=FauxAgent(), expediteur=exp, contacts=Ouvert(), rappels=rappels, cle_licence=CLE.public_key())
+    with TestClient(app) as t:
+        for _ in range(50):
+            if exp.commence:
+                break
+            t.portal.call(asyncio.sleep, 0.02)
+        assert exp.commence and exp.envois == []  # l'envoi est en route quand l'arrêt arrive
+    assert exp.envois == [("+41790000000", "Rappel : appeler l'agence")]
+    assert rappels.marques == [("r1", "envoye")]
+
+
+def test_une_licence_hors_delai_arrete_un_agent_deja_lance(monkeypatch):
+    from test_app import corps, signe
+
+    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": "secret-essai", "MEGGA_INSTALLATION": "client", "MEGGA_LICENCE": jeton()},
+                agent=FauxAgent(), expediteur=FauxExpediteur(), cle_licence=CLE.public_key())
+    t = TestClient(app)
+    assert t.get("/sante").status_code == 200
+    # des mois plus tard, le conteneur n'a jamais redémarré
+    monkeypatch.setattr(licence, "etat_du_jour", lambda lic, aujourd_hui=None: {"jusqu_au": lic["jusqu_au"], "etat": "hors_delai"})
+    s = t.get("/sante")
+    assert s.status_code == 503 and s.json()["ok"] is False and s.json()["licence"]["etat"] == "hors_delai"
+    c = corps()
+    assert t.post("/whatsapp", content=c, headers=signe(c)).status_code == 503
+
+
+def test_jetons_non_ascii():
+    t = TestClient(chez_le_client(META_VERIFY_TOKEN="abonnement-été", INTERNE_TOKEN="jeton"))
+    ok = t.get("/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": "abonnement-été", "hub.challenge": "7"})
+    assert ok.status_code == 200 and ok.text == "7"
+    assert t.get("/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": "é", "hub.challenge": "7"}).status_code == 403
+    # un en-tête aux octets non ASCII : refusé, pas d'erreur 500
+    assert t.post("/interne/rappels", headers={"x-megga-interne": "é".encode()}).status_code == 401
+
+
+def test_la_cle_des_licences_ne_passe_jamais_en_ligne_de_commande(tmp_path, monkeypatch, capsys):
+    """scripts/licence.py cle : la clé privée va au trousseau par l'entrée standard, et une clé déjà là est gardée."""
+    import importlib.util
+    import re
+    import types
+
+    spec = importlib.util.spec_from_file_location("script_licence", "scripts/licence.py")
+    script = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(script)
+    monkeypatch.setattr(licence, "CLE_PUBLIQUE", tmp_path / "licence.pub")
+    trousseau, appels = {}, []
+
+    def security(args, input=None, **k):
+        appels.append((args, input))
+        if args[:2] == ["security", "find-generic-password"]:
+            present = script.SERVICE in trousseau
+            return types.SimpleNamespace(returncode=0 if present else 44, stdout=trousseau.get(script.SERVICE, ""))
+        if args == ["security", "-i"]:
+            trousseau[script.SERVICE] = re.search(r"-w (\S+)", input).group(1)
+            return types.SimpleNamespace(returncode=0, stdout="")
+        raise AssertionError(f"appel inattendu : {args}")
+
+    monkeypatch.setattr(script.subprocess, "run", security)
+    assert script.cle() == 0 and licence.CLE_PUBLIQUE.exists()
+    cle_privee = trousseau[script.SERVICE]
+    assert all(cle_privee not in " ".join(a) for a, _ in appels)  # jamais dans une ligne de commande
+    # la clé rangée signe des licences que la clé publique de l'image reconnaît
+    assert script.emettre("exemple", "2099-12-31") == 0
+    assert licence.verifier(capsys.readouterr().out.strip().splitlines()[-1], "exemple")["etat"] == "valide"
+    # une seule paire de clés : ni par-dessus la clé publique, ni par-dessus celle du trousseau
+    assert script.cle() == 1
+    licence.CLE_PUBLIQUE.unlink()
+    assert script.cle() == 1 and trousseau[script.SERVICE] == cle_privee
+    assert "déjà au trousseau" in capsys.readouterr().out

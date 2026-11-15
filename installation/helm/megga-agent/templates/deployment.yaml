@@ -1,4 +1,4 @@
-{{- if not .Values.existingSecret }}{{ fail "existingSecret : le Secret du client (voir values.yaml)" }}{{ end }}
+{{- if not (or .Values.existingSecret .Values.extraEnv) }}{{ fail "existingSecret, ou extraEnv avec des <NOM>_FILE : les secrets du client (voir values.yaml)" }}{{ end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -17,7 +17,7 @@ spec:
       labels: {{- include "megga-agent.etiquettes" . | nindent 8 }}
       annotations:
         # Une configuration changée redémarre l'agent, qui la relit au démarrage.
-        megga.ai/config: {{ toYaml .Values.config | sha256sum | trunc 16 }}
+        megga.ai/config: {{ include "megga-agent.config" . | sha256sum | trunc 16 }}
     spec:
       {{- with .Values.image.pullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
@@ -28,7 +28,8 @@ spec:
         runAsUser: 10001
         fsGroup: 10001
         seccompProfile: {type: RuntimeDefault}
-      # Le temps de finir les tours en cours avant l'arrêt.
+      # À l'arrêt (SIGTERM), l'agent finit ses tours en cours, 100 secondes au plus ;
+      # Kubernetes attend 120 secondes avant de le forcer.
       terminationGracePeriodSeconds: 120
       containers:
         - name: agent
@@ -41,12 +42,20 @@ spec:
             - {name: CLIENT_CONFIG_FILE, value: /config/client.yaml}
             # Le disque de l'image est en lecture seule : le reste s'écrit dans /tmp.
             - {name: HOME, value: /tmp}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.existingSecret }}
           envFrom:
             - secretRef:
-                name: {{ .Values.existingSecret }}
+                name: {{ . }}
+          {{- end }}
           volumeMounts:
             - {name: config, mountPath: /config, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -65,6 +74,9 @@ spec:
             name: {{ include "megga-agent.nom" . }}
         - name: tmp
           emptyDir: {}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{- toYaml . | nindent 8 }}
       {{- end }}

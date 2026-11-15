@@ -46,16 +46,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker build -f socle/Dockerfile --build-arg MEGGA_REVISION=${{ github.sha }} -t megga-agents:essai .
-      - name: Le conteneur démarre et répond à /sante
+      - name: Le conteneur démarre et répond à /sante, disque en lecture seule (comme le chart Helm)
         run: |
           CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
-          docker run -d --name essai -p 8080:8080 -e CLIENT_CONFIG="$CONF" \
+          docker run -d --name essai -p 8080:8080 --read-only --tmpfs /tmp -e HOME=/tmp -e CLIENT_CONFIG="$CONF" \
             -e DATABASE_URL=sqlite:////tmp/essai.db -e META_APP_SECRET=essai megga-agents:essai
           for i in $(seq 1 30); do curl -sf localhost:8080/sante && exit 0; sleep 1; done
           docker logs essai; exit 1
+      - name: Un tour complet sur disque en lecture seule (base, journal, fil)
+        run: |
+          CORPS=$(python3 -c "import json,time;print(json.dumps({'object':'whatsapp_business_account','entry':[{'changes':[{'field':'messages','value':{'metadata':{'phone_number_id':'100000000000001'},'messages':[{'from':'41790000000','id':'w1','type':'text','timestamp':str(int(time.time())),'text':{'body':'Bonjour'}}]}}]}]}))")
+          SIG=$(printf %s "$CORPS" | openssl dgst -sha256 -hmac essai | sed 's/^.* //')
+          curl -sf -X POST localhost:8080/whatsapp -H "x-hub-signature-256: sha256=$SIG" -H "content-type: application/json" --data-binary "$CORPS"
+          sleep 10
+          docker logs essai 2>&1 | tail -20
+          # le tour échoue faute de clé de modèle, mais rien ne doit avoir voulu écrire sur le disque
+          if docker logs essai 2>&1 | grep -qi "read-only file system"; then exit 1; fi
+          test "$(docker inspect -f '{{.State.Running}}' essai)" = true
       - name: La même image démarre en atelier
         run: |
-          docker run -d --name atelier -p 8081:8080 -e MEGGA_SERVICE=atelier \
+          docker run -d --name atelier -p 8081:8080 --read-only --tmpfs /tmp -e HOME=/tmp -e MEGGA_SERVICE=atelier \
             -e DATABASE_URL=sqlite:////tmp/atelier.db -e ADMIN_TOKEN=essai megga-agents:essai
           for i in $(seq 1 30); do
             if curl -sf localhost:8081/sante | grep -q '"revision":"${{ github.sha }}"'; then
@@ -77,8 +87,16 @@ jobs:
           helm lint installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml
           helm template essai installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml > /tmp/rendu.yaml
           grep -q "path: /whatsapp" /tmp/rendu.yaml
-          # sans les valeurs du client, le chart refuse au lieu d'installer un agent incomplet
+          V=installation/helm/megga-agent/exemple-valeurs.yaml
+          # la configuration par --set-file, comme dans le guide
+          helm template essai installation/helm/megga-agent -f $V --set-file config=clients/exemple.yaml | grep -q "entreprise: Entreprise exemple"
+          # les secrets en fichiers (coffre du client), sans Secret Kubernetes
+          helm template essai installation/helm/megga-agent -f $V --set existingSecret= \
+            --set "extraEnv[0].name=ANTHROPIC_API_KEY_FILE" --set "extraEnv[0].value=/mnt/secrets/anthropic" | grep -q ANTHROPIC_API_KEY_FILE
+          # sans les valeurs du client, sans HTTPS ou sans secrets, le chart refuse au lieu d'installer un agent incomplet
           if helm template essai installation/helm/megga-agent > /dev/null 2>&1; then echo "rendu sans valeurs"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set ingress.tlsSecret= > /dev/null 2>&1; then echo "rendu sans HTTPS"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set existingSecret= > /dev/null 2>&1; then echo "rendu sans secrets"; exit 1; fi
       - name: Le Docker Compose
         working-directory: installation/compose
         run: |

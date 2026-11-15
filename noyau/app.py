@@ -40,6 +40,7 @@ import time
 from collections import OrderedDict
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 from . import config as configuration
 from . import licence as licences
@@ -140,22 +141,43 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     secret = env.get("META_APP_SECRET")
     deja = Deja()
 
+    def licence_echue() -> bool:
+        """Au-delà du délai de grâce, même un agent lancé avant cesse de servir (vérifié à chaque appel)."""
+        return bool(licence) and licences.etat_du_jour(licence)["etat"] == "hors_delai"
+
+    async def finir_les_tours(delai: float) -> int:
+        """Attend la fin des tours en cours (un tour peut en lancer un autre) ; rend ceux qui restent."""
+        fin = time.monotonic() + delai
+        while conversations.taches and time.monotonic() < fin:
+            await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
+        return len(conversations.taches)
+
     @contextlib.asynccontextmanager
     async def vie(_):
+        arret = asyncio.Event()
         # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel : il veille lui-même.
-        tache = asyncio.create_task(veiller_rappels()) if chez_le_client and rappels is not None else None
+        veille = asyncio.create_task(veiller_rappels(arret)) if chez_le_client and rappels is not None else None
         yield
-        if tache:
-            tache.cancel()
+        # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
+        # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
+        arret.set()
+        if veille:
+            await asyncio.wait({veille}, timeout=delai_vider)
+        restantes = await finir_les_tours(delai_vider)
+        if restantes:
+            log.warning("arrêt avec %d tour(s) inachevé(s)", restantes)
 
-    async def veiller_rappels():
-        while True:
+    async def veiller_rappels(arret: asyncio.Event):
+        while not arret.is_set():
             prochain = None
-            try:
-                prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
-            except Exception as e:
-                log.error("rappels en échec : %s", str(e)[:200])
-            await asyncio.sleep(min(60.0, max(1.0, (prochain - time.time()) if prochain else 60.0)))
+            if not licence_echue():
+                try:
+                    prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
+                except Exception as e:
+                    log.error("rappels en échec : %s", str(e)[:200])
+            attente = min(60.0, max(1.0, (prochain - time.time()) if prochain else 60.0))
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(arret.wait(), timeout=attente)
 
     app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None, lifespan=vie)
     app.state.config = conf
@@ -168,6 +190,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 "installation": "client" if chez_le_client else "megga"}
         if licence:
             etat["licence"] = licences.etat_du_jour(licence)
+        if licence_echue():  # les sondes le voient : l'agent n'est plus en service
+            return JSONResponse({**etat, "ok": False}, status_code=503)
         return etat
 
     @app.get("/whatsapp")
@@ -175,12 +199,15 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         """Meta vérifie l'adresse du webhook : le défi est rendu si le jeton correspond."""
         p = requete.query_params
         jeton = env.get("META_VERIFY_TOKEN", "")
-        if jeton and p.get("hub.mode") == "subscribe" and hmac.compare_digest(p.get("hub.verify_token", ""), jeton):
+        # En octets : un jeton accentué se compare aussi (sur des textes, compare_digest n'accepte que l'ASCII).
+        if jeton and p.get("hub.mode") == "subscribe" and hmac.compare_digest(p.get("hub.verify_token", "").encode(), jeton.encode()):
             return Response(p.get("hub.challenge", ""), media_type="text/plain")
         return Response("refusé", status_code=403)
 
     @app.post("/whatsapp")
     async def whatsapp(requete: Request):
+        if licence_echue():
+            return Response("licence échue", status_code=503)
         corps = await requete.body()
         if not signature_valide(corps, requete.headers.get("x-hub-signature-256"), secret):
             return Response("signature", status_code=401)
@@ -202,7 +229,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")
-        return bool(jeton_interne) and hmac.compare_digest(jeton, jeton_interne)
+        return bool(jeton_interne) and hmac.compare_digest(jeton.encode(), jeton_interne.encode())
 
     @app.post("/interne/rappels")
     async def interne_rappels(requete: Request):
@@ -214,11 +241,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     async def interne_vider(requete: Request):
         if not interne(requete):
             return Response("refusé", status_code=401)
-        fin = time.monotonic() + delai_vider
-        # Un tour peut en lancer un autre (regroupement, réponse) : on attend jusqu'à ce qu'il n'y en ait plus.
-        while conversations.taches and time.monotonic() < fin:
-            await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
-        return {"restantes": len(conversations.taches)}
+        return {"restantes": await finir_les_tours(delai_vider)}
 
     def lisible(requete: Request) -> Response | None:
         if not interne(requete):

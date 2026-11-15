@@ -12,9 +12,17 @@ services:
     environment:
       MEGGA_INSTALLATION: client
       CLIENT_CONFIG_FILE: /config/client.yaml
-      DATABASE_URL: postgresql://megga:${POSTGRES_PASSWORD:?mot de passe de la base}@base:5432/megga
+      # Le mot de passe hors de l'adresse : il peut contenir n'importe quel caractère (@, %, /…).
+      DATABASE_URL: postgresql://megga@base:5432/megga
+      PGPASSWORD: ${POSTGRES_PASSWORD:?mot de passe de la base}
     volumes:
-      - ./client.yaml:/config/client.yaml:ro
+      # Sans client.yaml, l'installation s'arrête net au lieu de monter un dossier vide à sa place.
+      - type: bind
+        source: ./client.yaml
+        target: /config/client.yaml
+        read_only: true
+        bind:
+          create_host_path: false
     depends_on:
       base:
         condition: service_healthy
@@ -26,6 +34,8 @@ services:
       start_period: 60s
     # Aucun port publié : seule l'entrée HTTPS lui parle, et seulement pour /whatsapp.
     expose: ["8080"]
+    # À l'arrêt (mise à jour, redémarrage), l'agent finit ses tours en cours (100 secondes au plus).
+    stop_grace_period: 2m
 
   base:
     image: postgres:17
