@@ -1,0 +1,230 @@
+{
+ "agence": "MEGGA Estates",
+ "fictif": true,
+ "biens": [
+  {
+   "ref": "ME-101",
+   "titre": "Villa contemporaine avec vue sur le lac",
+   "type": "villa",
+   "transaction": "vente",
+   "prix": 6850000,
+   "commune": "Lutry",
+   "region": "Lavaux",
+   "chambres": 5,
+   "salles_de_bain": 4,
+   "surface": 380,
+   "terrain": 1450,
+   "atouts": [
+    "vue lac",
+    "piscine",
+    "jardin",
+    "garage double"
+   ],
+   "description": "Villa lumineuse sur les hauts de Lutry, grandes baies vitrées, piscine à débordement face au Léman. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-102",
+   "titre": "Attique avec terrasse panoramique",
+   "type": "attique",
+   "transaction": "vente",
+   "prix": 3450000,
+   "commune": "Lausanne",
+   "region": "Ouchy",
+   "chambres": 3,
+   "salles_de_bain": 2,
+   "surface": 210,
+   "atouts": [
+    "vue lac",
+    "terrasse",
+    "ascenseur privatif"
+   ],
+   "description": "Dernier étage d'un immeuble de standing, terrasse de 90 m² et vue dégagée sur les Alpes. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-103",
+   "titre": "Chalet de prestige au pied des pistes",
+   "type": "chalet",
+   "transaction": "vente",
+   "prix": null,
+   "commune": "Verbier",
+   "region": "Valais",
+   "chambres": 6,
+   "salles_de_bain": 6,
+   "surface": 520,
+   "terrain": 900,
+   "atouts": [
+    "ski aux pieds",
+    "spa",
+    "cinéma",
+    "vue montagne"
+   ],
+   "description": "Chalet en vieux bois et pierre, spa privatif, accès direct aux pistes. Prix sur demande. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-104",
+   "titre": "Appartement Belle Époque rénové",
+   "type": "appartement",
+   "transaction": "vente",
+   "prix": 1890000,
+   "commune": "Montreux",
+   "region": "Riviera",
+   "chambres": 3,
+   "salles_de_bain": 2,
+   "surface": 165,
+   "atouts": [
+    "vue lac",
+    "moulures",
+    "balcon"
+   ],
+   "description": "Bel appartement dans un immeuble de 1905, hauteur sous plafond, parquet d'origine. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-105",
+   "titre": "Maison de maître avec parc",
+   "type": "maison",
+   "transaction": "vente",
+   "prix": 9200000,
+   "commune": "Nyon",
+   "region": "La Côte",
+   "chambres": 7,
+   "salles_de_bain": 5,
+   "surface": 640,
+   "terrain": 5200,
+   "atouts": [
+    "parc arboré",
+    "dépendance",
+    "accès lac"
+   ],
+   "description": "Demeure du XIXe siècle entièrement rénovée, parc centenaire et accès privé au lac. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-106",
+   "titre": "Chalet familial lumineux",
+   "type": "chalet",
+   "transaction": "location",
+   "prix": 28000,
+   "periode": "semaine",
+   "devise": "CHF",
+   "commune": "Gstaad",
+   "region": "Saanenland",
+   "chambres": 5,
+   "salles_de_bain": 5,
+   "surface": 350,
+   "atouts": [
+    "cheminée",
+    "sauna",
+    "navette ski"
+   ],
+   "description": "Location saisonnière, service de conciergerie inclus. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-107",
+   "titre": "Duplex moderne près du lac",
+   "type": "appartement",
+   "transaction": "location",
+   "prix": 7800,
+   "periode": "mois",
+   "commune": "Küsnacht",
+   "region": "Zurich",
+   "chambres": 3,
+   "salles_de_bain": 2,
+   "surface": 170,
+   "atouts": [
+    "vue lac",
+    "domotique",
+    "2 places de parc"
+   ],
+   "description": "Duplex récent, cuisine équipée, à cinq minutes à pied du lac de Zurich. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-108",
+   "titre": "Villa avec jardin méditerranéen",
+   "type": "villa",
+   "transaction": "vente",
+   "prix": 4750000,
+   "commune": "Lugano",
+   "region": "Tessin",
+   "chambres": 4,
+   "salles_de_bain": 4,
+   "surface": 310,
+   "terrain": 1100,
+   "atouts": [
+    "vue lac",
+    "piscine",
+    "jardin"
+   ],
+   "description": "Villa sur la colline de Lugano, jardin méditerranéen et vue sur le lac Ceresio. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-109",
+   "titre": "Appartement de montagne avec vue",
+   "type": "appartement",
+   "transaction": "vente",
+   "prix": 2350000,
+   "commune": "Crans-Montana",
+   "region": "Valais",
+   "chambres": 3,
+   "salles_de_bain": 3,
+   "surface": 140,
+   "atouts": [
+    "vue montagne",
+    "golf",
+    "cheminée"
+   ],
+   "description": "Appartement chaleureux, à deux pas du golf et des remontées. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-110",
+   "titre": "Penthouse au cœur de la station",
+   "type": "attique",
+   "transaction": "location",
+   "prix": 45000,
+   "periode": "semaine",
+   "commune": "Saint-Moritz",
+   "region": "Engadine",
+   "chambres": 4,
+   "salles_de_bain": 4,
+   "surface": 260,
+   "atouts": [
+    "vue lac",
+    "spa",
+    "conciergerie"
+   ],
+   "description": "Penthouse de standing pour la saison d'hiver. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-111",
+   "titre": "Terrain constructible avec vue",
+   "type": "terrain",
+   "transaction": "vente",
+   "prix": 1650000,
+   "commune": "Vevey",
+   "region": "Riviera",
+   "terrain": 1800,
+   "atouts": [
+    "vue lac",
+    "permis possible"
+   ],
+   "description": "Parcelle en pente douce avec vue sur le Léman, zone villas. Bien fictif de démonstration."
+  },
+  {
+   "ref": "ME-112",
+   "titre": "Appartement familial près des écoles",
+   "type": "appartement",
+   "transaction": "location",
+   "prix": 4200,
+   "periode": "mois",
+   "commune": "Neuchâtel",
+   "region": "Littoral",
+   "chambres": 4,
+   "salles_de_bain": 2,
+   "surface": 135,
+   "atouts": [
+    "balcon",
+    "proche écoles",
+    "cave"
+   ],
+   "description": "Appartement traversant, quartier calme et bien desservi. Bien fictif de démonstration."
+  }
+ ]
+}
