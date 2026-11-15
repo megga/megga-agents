@@ -1,6 +1,6 @@
 # Une installation chez le client : l'agent, sa base Postgres, l'entrée HTTPS du webhook WhatsApp,
 # et le pilote (le pilotage par MEGGA, toujours sortant).
-# Guide : docs/installation-client.md. Rien de secret ici : les réglages sont dans .env, les secrets
+# Guide : docs/installation-client.md. Docker Compose 2.24 ou plus récent. Rien de secret ici : les réglages sont dans .env, les secrets
 # dans secrets.env et pilote.env (ou en fichiers, <NOM>_FILE), la configuration de l'agent dans client.yaml.
 name: megga-agent
 
@@ -13,6 +13,8 @@ services:
     environment:
       MEGGA_INSTALLATION: client
       CLIENT_CONFIG_FILE: /config/client.yaml
+      # Le même réglage que le pilote : avec « non », l'agent sert toujours client.yaml.
+      PILOTAGE: ${PILOTAGE:-non}
       # Le mot de passe hors de l'adresse : il peut contenir n'importe quel caractère (@, %, /…).
       DATABASE_URL: postgresql://megga@base:5432/megga
       PGPASSWORD: ${POSTGRES_PASSWORD:?mot de passe de la base}

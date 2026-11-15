@@ -34,7 +34,14 @@ function env(journal) {
 }
 
 const releve = (e, h = entetes(), corps = '{"pilotage":"suivi"}', methode = "POST") =>
-  recevoir(new Request("https://porte/pilotage/releve", { method: methode, headers: h, body: methode === "POST" ? corps : undefined }), e);
+  recevoir(
+    new Request("https://porte/pilotage/releve", {
+      method: methode,
+      headers: methode === "POST" ? { "content-length": String(new TextEncoder().encode(corps).length), ...h } : h,
+      body: methode === "POST" ? corps : undefined,
+    }),
+    e,
+  );
 
 test("un relevé signé et récent est transmis tel quel à l'atelier, qui vérifie la signature", async () => {
   const journal = [];
@@ -59,6 +66,10 @@ test("sans requête signée, récente et bien formée, l'atelier n'est pas réve
   for (const m of mauvaises) assert.equal((await releve(e, entetes(m))).status, 401, JSON.stringify(m));
   assert.equal((await releve(e, entetes(), undefined, "GET")).status, 405);
   assert.equal((await releve(e, entetes({ "content-length": String(300 * 1024) }), "x".repeat(300 * 1024))).status, 413);
+  // un corps en flux, sans longueur annoncée : refusé avant l'atelier
+  const flux = new ReadableStream({ start: (c) => (c.enqueue(new TextEncoder().encode("x".repeat(1024))), c.close()) });
+  const r = await recevoir(new Request("https://porte/pilotage/releve", { method: "POST", headers: entetes(), body: flux, duplex: "half" }), e);
+  assert.equal(r.status, 411);
   assert.equal((await releve({ ...e, ATELIER: undefined })).status, 503);
   assert.deepEqual(journal, []);
   // à 5 minutes près

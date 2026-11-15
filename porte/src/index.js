@@ -74,11 +74,14 @@ export function pilotageBienForme(entetes, maintenant = Date.now()) {
   );
 }
 
-/** Le pilote d'une installation : sans requête signée et récente, rien ne réveille l'atelier. */
+/** Le pilote d'une installation : sans requête bien formée, récente et de taille bornée, rien ne réveille l'atelier. */
 async function pilote(requete, env) {
   if (requete.method !== "POST") return texte("méthode", 405);
   if (!pilotageBienForme(requete.headers)) return texte("requête signée attendue", 401);
-  if (Number(requete.headers.get("content-length") ?? 0) > TAILLE_PILOTAGE) return texte("relevé trop gros", 413);
+  // Une longueur annoncée, et bornée : sans elle (corps en flux), le relevé n'est pas transmis.
+  const longueur = requete.headers.get("content-length") ?? "";
+  if (!/^[0-9]{1,9}$/.test(longueur)) return texte("longueur attendue", 411);
+  if (Number(longueur) > TAILLE_PILOTAGE) return texte("relevé trop gros", 413);
   const atelier = atelierDe(env);
   return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
 }

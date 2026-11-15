@@ -36,7 +36,7 @@ ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 NONCE = re.compile(r"^[0-9a-f]{32}$")
 HEURE = re.compile(r"^[0-9]{1,12}$")
 IMAGE = re.compile(r"^ghcr\.io/megga/megga-agents@sha256:[0-9a-f]{64}$")
-VERSION_IMAGE = re.compile(r"^\d{1,4}\.\d{1,4}\.\d{1,4}$")
+VERSION_IMAGE = re.compile(r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,4}$")
 
 
 class PilotageRefuse(ValueError):
@@ -109,11 +109,19 @@ def cle_megga(pem: bytes | None = None):
     """La clé publique de pilotage de MEGGA, dans l'image ; sans elle, aucun ordre n'est accepté."""
     from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
     if pem is None:
         if not CLE_PUBLIQUE.exists():
             raise PilotageRefuse("clé publique de pilotage absente de l'image (scripts/pilotage.py cle)")
         pem = CLE_PUBLIQUE.read_bytes()
-    return load_pem_public_key(pem)
+    try:
+        cle = load_pem_public_key(pem)
+    except ValueError as e:
+        raise PilotageRefuse("clé publique de pilotage illisible") from e
+    if not isinstance(cle, Ed25519PublicKey):
+        raise PilotageRefuse("clé publique de pilotage : une clé Ed25519 est attendue")
+    return cle
 
 
 # Les ordres de MEGGA
@@ -210,6 +218,13 @@ def config_de(ordre: dict, base: Config) -> tuple[int, Config]:
     return version, conf
 
 
+def config_a_envoyer(conf: Config) -> dict:
+    """La configuration d'un ordre : sans les réglages laissés à leur valeur par défaut, pour qu'une installation
+    restée sur l'image précédente l'accepte encore quand un réglage facultatif s'ajoute (deux versions soutenues).
+    Règle qui va avec : ne jamais changer une valeur par défaut sans changer VERSION."""
+    return {"version": conf.version, **conf.model_dump(mode="json", exclude_defaults=True)}
+
+
 def configuration_servie(base: Config, servie: dict | None, cle=None) -> tuple[Config, dict | None, str | None]:
     """La configuration que l'agent sert : la dernière poussée par MEGGA et acceptée, revérifiée, sinon le
     fichier du client. Rend aussi sa source ({version, ordre}, ou None pour le fichier) et, si l'ordre
@@ -229,8 +244,9 @@ def configuration_servie(base: Config, servie: dict | None, cle=None) -> tuple[C
 # Les requêtes signées de l'installation
 
 
-def _a_signer(methode: str, chemin: str, heure: str, nonce: str, corps: bytes) -> bytes:
-    return "\n".join((methode.upper(), chemin, heure, nonce, hashlib.sha256(corps).hexdigest())).encode()
+def _a_signer(methode: str, chemin: str, client: str, heure: str, nonce: str, corps: bytes) -> bytes:
+    """Ce que signe l'installation : la requête, l'installation qu'elle dit être, l'heure, le nonce et le corps."""
+    return "\n".join((methode.upper(), chemin, client, heure, nonce, hashlib.sha256(corps).hexdigest())).encode()
 
 
 def entetes(client: str, cle, methode: str, chemin: str, corps: bytes, maintenant: float | None = None) -> dict[str, str]:
@@ -238,7 +254,7 @@ def entetes(client: str, cle, methode: str, chemin: str, corps: bytes, maintenan
     heure = str(int(time.time() if maintenant is None else maintenant))
     nonce = secrets.token_hex(16)
     return {"x-megga-installation": client, "x-megga-heure": heure, "x-megga-nonce": nonce,
-            "x-megga-signature": _b64(cle.sign(_a_signer(methode, chemin, heure, nonce, corps)))}
+            "x-megga-signature": _b64(cle.sign(_a_signer(methode, chemin, client, heure, nonce, corps)))}
 
 
 def verifier_requete(en_tetes: Mapping[str, str], methode: str, chemin: str, corps: bytes,
@@ -261,7 +277,7 @@ def verifier_requete(en_tetes: Mapping[str, str], methode: str, chemin: str, cor
     if cle is None:
         raise PilotageRefuse("installation inconnue ou révoquée")
     try:
-        cle.verify(_de_b64(signature), _a_signer(methode, chemin, heure, nonce, corps))
+        cle.verify(_de_b64(signature), _a_signer(methode, chemin, client, heure, nonce, corps))
     except (InvalidSignature, ValueError) as e:
         raise PilotageRefuse("signature refusée") from e
     return client, nonce

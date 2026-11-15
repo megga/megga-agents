@@ -123,7 +123,10 @@ jobs:
           # le pilote : rendu avec le pilotage, avec ses propres étiquettes ; absent sans ; refusé sans sa clé
           grep -q "name: essai-megga-agent-pilote" /tmp/rendu.yaml
           grep -q "app.kubernetes.io/name: megga-pilote" /tmp/rendu.yaml
-          if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=non | grep -q megga-pilote; then echo "pilote sans pilotage"; exit 1; fi
+          helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=non > /tmp/sans-pilote.yaml
+          if grep -q megga-pilote /tmp/sans-pilote.yaml; then echo "pilote sans pilotage"; exit 1; fi
+          helm template essai installation/helm/megga-agent -f $V --set-string pilotage.accord=non | grep -q 'PILOTAGE_ACCORD, value: "non"'
+          if helm template essai installation/helm/megga-agent -f $V --set-string pilotage.accord=peut-etre > /dev/null 2>&1; then echo "accord inconnu"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set pilotage.secret= > /dev/null 2>&1; then echo "pilote sans clé"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=tout > /dev/null 2>&1; then echo "pilotage inconnu"; exit 1; fi
       - name: Le Docker Compose

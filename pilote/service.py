@@ -33,6 +33,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import signal
 import tempfile
 import time
@@ -48,6 +49,8 @@ from noyau.config import Config
 from noyau.environnement import charger
 from noyau.version import revision, version
 
+from .sonde import en_vie, vivant  # noqa: F401 (en_vie réexporté)
+
 log = logging.getLogger("megga.pilote")
 
 MODES = ("non", "suivi", "complet")
@@ -55,7 +58,6 @@ PROTOCOLE = 1
 PERIODE_SUIVI = 300  # le suivi (volumes, modèles, alertes) part toutes les 5 minutes ; l'état, à chaque relevé
 DELAI_APPLICATION = 600  # l'agent a 10 minutes pour servir une nouvelle configuration, sinon retour à la précédente
 FENETRES = (1, 7, 30)  # les périodes du suivi, en jours
-VIVANT = Path(tempfile.gettempdir()) / "megga-pilote-vivant"
 # Ce que le pilote retient de /sante (rien de privé n'y est ; on ne garde que ce qu'on connaît).
 SANTE = ("ok", "version", "revision", "config", "schema", "installation", "zone", "licence", "configuration")
 
@@ -78,23 +80,19 @@ def oui(valeur: str | None, nom: str, defaut: bool) -> bool:
 def adresse(url: str) -> str:
     """L'adresse de MEGGA : https ; http seulement vers un nom local, pour les essais (http://atelier:8080)."""
     u = urlsplit((url or "").strip())
-    local = bool(u.hostname) and ("." not in u.hostname or u.hostname == "127.0.0.1")
+    # Un nom de service du réseau local (atelier, localhost), jamais une adresse qui mènerait au dehors.
+    local = u.hostname == "127.0.0.1" or bool(re.fullmatch(r"[a-z][a-z0-9-]{0,62}", u.hostname or ""))
     if (u.scheme == "https" and u.hostname) or (u.scheme == "http" and local):
         return url.strip().rstrip("/")
     raise RuntimeError("PILOTAGE_URL : l'adresse https de MEGGA")
 
 
-def vivant() -> None:
-    """Le pilote tourne : la sonde de santé (python -m pilote vivant) regarde l'heure de ce fichier."""
-    with contextlib.suppress(OSError):
-        VIVANT.touch()
-
-
-def en_vie(intervalle: float) -> bool:
-    try:
-        return time.time() - VIVANT.stat().st_mtime < 3 * intervalle + 60
-    except OSError:
-        return False
+def source_config(env: dict) -> str:
+    """La configuration de départ, lue comme l'agent la lit (noyau/app.py) : CLIENT_CONFIG, sinon CLIENT_CONFIG_FILE."""
+    source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
+    if not source:
+        raise RuntimeError("CLIENT_CONFIG_FILE manquante")
+    return source
 
 
 class Installation:
@@ -157,7 +155,9 @@ class Installation:
             o = pilotage.ouvrir_ordre(jeton, self.client, self.cle_megga)
         except pilotage.PilotageRefuse as e:
             numero = pilotage.contenu(jeton).get("numero")
-            if isinstance(numero, int) and not isinstance(numero, bool) and numero not in self.refus:
+            # Un numéro non signé ne vaut que pour un ordre jamais vu : il ne doit rien dire d'un ordre réel.
+            if (isinstance(numero, int) and not isinstance(numero, bool) and numero not in self.refus
+                    and numero > self.ordres.dernier_numero(self.client) and len(self.refus) < 20):
                 self.refus[numero] = {"numero": numero, "etat": "refuse", "detail": str(e)}
                 self.noter("refuse", None, f"ordre {numero} annoncé : {e}")
             return "refuse"
@@ -171,16 +171,17 @@ class Installation:
             pilotage.valider_ordre(o, self.base, maintenant)
         except pilotage.PilotageRefuse as e:
             etat, detail = "refuse", str(e)
+        genre = o.get("genre") if o.get("genre") in pilotage.GENRES else "inconnu"
         if not etat:
-            etat = ("attente_accord" if accord else "a_appliquer") if o["genre"] == "config" else "propose"
-        if not self.ordres.ajouter(self.client, numero, o["genre"], jeton, etat, detail, o["cree"], o["expire"], maintenant):
+            etat = ("attente_accord" if accord else "a_appliquer") if genre == "config" else "propose"
+        if not self.ordres.ajouter(self.client, numero, genre, jeton, etat, detail, o["cree"], o["expire"], maintenant):
             return None
         if etat != "refuse":
             # Un ordre plus récent remplace ceux du même genre qui attendent encore ; jamais une configuration
             # déjà acceptée par une autre qui attend l'accord du client.
             depuis = {"attente_accord": ("attente_accord",), "a_appliquer": ("attente_accord", "a_appliquer"),
                       "propose": ("propose",)}[etat]
-            for n in self.ordres.remplacer(self.client, o["genre"], depuis, numero, maintenant):
+            for n in self.ordres.remplacer(self.client, genre, depuis, numero, maintenant):
                 self.noter("remplace", n, f"remplacé par l'ordre {numero}")
         self.noter(etat, numero, detail or self.decrire(o))
         return etat
@@ -188,7 +189,9 @@ class Installation:
     def statuts(self, limite: int = 20) -> list[dict]:
         """Ce que sont devenus les derniers ordres, pour MEGGA (sans leur contenu)."""
         lignes = self.ordres.lister(self.client, limite)
-        return [{"numero": l["numero"], "etat": l["etat"], "detail": l["detail"]} for l in lignes] + list(self.refus.values())
+        vus = {l["numero"] for l in lignes}
+        return ([{"numero": l["numero"], "etat": l["etat"], "detail": l["detail"]} for l in lignes]
+                + [r for n, r in self.refus.items() if n not in vus])
 
     # Le client répond
 
@@ -221,8 +224,9 @@ class Installation:
 
     def refuser(self, numero: int, maintenant: float | None = None) -> str:
         self._attendu(numero, ("attente_accord", "propose"))
-        self.ordres.changer(self.client, numero, "refuse", "refusé par le client", ("attente_accord", "propose"),
-                            self.horloge() if maintenant is None else maintenant)
+        if not self.ordres.changer(self.client, numero, "refuse", "refusé par le client", ("attente_accord", "propose"),
+                                   self.horloge() if maintenant is None else maintenant):
+            raise pilotage.PilotageRefuse(f"l'ordre {numero} vient de changer : python -m pilote ordres")
         self.noter("refuse", numero, "refusé par le client")
         return f"Ordre {numero} refusé."
 
@@ -249,9 +253,18 @@ class Installation:
                                                                 ("attente_accord",), maintenant):
                 self.noter("expire", l["numero"], "plus d'une semaine sans accord")
         servie = self.ordres.a_servir(self.client)
-        if not servie or servie["etat"] != "a_appliquer":
+        if not servie:
             return
         numero = servie["numero"]
+        # L'agent revérifie l'ordre qu'il sert ; s'il ne passe plus (autre image, autre clé), l'agent sert son
+        # fichier : l'ordre est en échec, et le suivant le plus récent reprend la main.
+        _, _, refus = pilotage.configuration_servie(self.base, servie, self.cle_megga)
+        if refus:
+            if self.ordres.changer(self.client, numero, "echec", f"refusé par l'agent : {refus}", ("a_appliquer", "applique"), maintenant):
+                self.noter("echec", numero, f"refusé par l'agent : {refus}")
+            return
+        if servie["etat"] != "a_appliquer":
+            return
         if (sante.get("configuration") or {}).get("ordre") == numero:
             if self.ordres.changer(self.client, numero, "applique", "servie par l'agent", ("a_appliquer",), maintenant):
                 for n in self.ordres.remplacer(self.client, "config", ("applique",), numero, maintenant):
@@ -298,7 +311,7 @@ class Pilote:
         if self.mode not in MODES:
             raise RuntimeError("PILOTAGE : non, suivi ou complet")
         self.accord = oui(env.get("PILOTAGE_ACCORD"), "PILOTAGE_ACCORD", True)
-        source = env.get("CLIENT_CONFIG_FILE") or env.get("CLIENT_CONFIG")
+        source = source_config(env)
         if not source:
             raise RuntimeError("CLIENT_CONFIG_FILE manquante")
         self.base = configuration.lire(source)
@@ -310,6 +323,7 @@ class Pilote:
         self.url_agent = (env.get("AGENT_URL") or "http://agent:8080").rstrip("/")
         self.transport, self.transport_agent = transport, transport_agent
         self.dernier_suivi = 0.0
+        self.suivi_a_envoyer: dict | None = None
         self.annonce = False
         self.installation: Installation | None = None
         self.cle, self.url = None, ""
@@ -326,7 +340,8 @@ class Pilote:
     async def sante_agent(self) -> dict:
         """L'état de l'agent, par son /sante (réseau de l'installation) ; « injoignable » s'il ne répond pas."""
         try:
-            async with httpx.AsyncClient(timeout=5, transport=self.transport_agent) as c:
+            # Le réseau de l'installation, jamais par un proxy (HTTP_PROXY est souvent réglé pour joindre MEGGA).
+            async with httpx.AsyncClient(timeout=5, transport=self.transport_agent, trust_env=False) as c:
                 r = await c.get(f"{self.url_agent}/sante")
             d = r.json()
         except (httpx.HTTPError, ValueError):
@@ -362,31 +377,45 @@ class Pilote:
         inst = self.installation
         maintenant = self.horloge()
         sante = await self.sante_agent()
-        prete = await asyncio.to_thread(inst.prete)
-        statuts, dernier, suivi = [], None, None
-        if prete:
-            if not self.annonce:
-                await asyncio.to_thread(inst.noter, "demarrage", None, f"pilotage {self.mode}, accord du client "
-                                        f"{'demandé' if self.accord else 'non demandé'}, pilote {version()}")
-                self.annonce = True
-            await asyncio.to_thread(inst.suivre_application, sante, maintenant)
-            statuts = await asyncio.to_thread(inst.statuts)
-            dernier = await asyncio.to_thread(inst.ordres.dernier_numero, inst.client)
-            if maintenant - self.dernier_suivi >= PERIODE_SUIVI:
-                suivi = await asyncio.to_thread(inst.suivi, maintenant)
-        corps = {"protocole": PROTOCOLE, "pilotage": self.mode, "accord": self.accord,
-                 "etat": {"agent": sante, "pilote": {"version": version(), "revision": revision()}, "base": prete},
-                 "ordres": statuts, "dernier_ordre": dernier}
-        if suivi is not None:
-            corps["suivi"] = suivi
-        reponse = await self.appeler("/pilotage/releve", corps)
-        if suivi is not None:
+        # La base en panne, ou une erreur dans le suivi, n'empêche pas le relevé : MEGGA voit au moins l'état
+        # de l'agent, et que la base ne répond pas.
+        prete, statuts, dernier, erreur = False, [], None, None
+        try:
+            prete = await asyncio.to_thread(inst.prete)
+            if prete:
+                if not self.annonce:
+                    await asyncio.to_thread(inst.noter, "demarrage", None, f"pilotage {self.mode}, accord du client "
+                                            f"{'demandé' if self.accord else 'non demandé'}, pilote {version()}")
+                    self.annonce = True
+                await asyncio.to_thread(inst.suivre_application, sante, maintenant)
+                statuts = await asyncio.to_thread(inst.statuts)
+                dernier = await asyncio.to_thread(inst.ordres.dernier_numero, inst.client)
+        except Exception as e:
+            prete, statuts, dernier, erreur = False, [], None, type(e).__name__
+            log.warning("base de l'installation en échec : %s", str(e)[:200])
+        if prete and maintenant - self.dernier_suivi >= PERIODE_SUIVI:
+            # Calculé toutes les 5 minutes au plus, même si l'envoi échoue : gardé et renvoyé jusqu'à ce que MEGGA le prenne.
             self.dernier_suivi = maintenant
+            try:
+                self.suivi_a_envoyer = await asyncio.to_thread(inst.suivi, maintenant)
+            except Exception as e:
+                log.warning("suivi en échec : %s", str(e)[:200])
+        corps = {"protocole": PROTOCOLE, "pilotage": self.mode, "accord": self.accord,
+                 "etat": {"agent": sante, "pilote": {"version": version(), "revision": revision()}, "base": prete,
+                          **({"base_erreur": erreur} if erreur else {})},
+                 "ordres": statuts, "dernier_ordre": dernier}
+        if self.suivi_a_envoyer is not None:
+            corps["suivi"] = self.suivi_a_envoyer
+        reponse = await self.appeler("/pilotage/releve", corps)
+        self.suivi_a_envoyer = None
         # Sous « suivi », aucun ordre n'est pris, même si MEGGA en remettait un : c'est le réglage du client qui décide.
         if prete and self.mode == "complet":
             for jeton in (reponse.get("ordres") or [])[:20]:
                 if isinstance(jeton, str):
-                    await asyncio.to_thread(inst.recevoir, jeton, self.accord, maintenant)
+                    try:  # un ordre qui ne passe pas n'empêche pas les suivants
+                        await asyncio.to_thread(inst.recevoir, jeton, self.accord, maintenant)
+                    except Exception as e:
+                        log.warning("ordre illisible : %s", str(e)[:200])
         return reponse
 
     async def tourner(self, arret: asyncio.Event) -> None:

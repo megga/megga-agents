@@ -80,6 +80,7 @@ from noyau.suivi import PERSONNE
 from . import gabarits, regles
 from .couts import Tarifs, couts
 from .essai import essayer
+from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
 from .regles import Refus
@@ -377,8 +378,10 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(409, f"l'ordre {en_cours} porte déjà cette version à l'installation")
         if courante == numero:
             inst = await bd(installation_de, ident, courante)
-            if inst is not None and inst["ecart"] is False:
-                raise Refus(409, "cette version est déjà en service")
+            if inst is not None and inst["releve"] is not None and inst["ecart"] is not True:
+                # Servie, ou état inconnu (l'agent n'a pas répondu au dernier relevé) : rien à renvoyer pour l'instant.
+                raise Refus(409, "cette version est déjà en service" if inst["ecart"] is False
+                            else "l'installation n'a pas dit quelle version elle sert : attendez son prochain relevé")
         else:
             try:
                 await bd(versions.mettre_en_service, ident, numero, courante)
@@ -386,7 +389,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
                 log.error("mise en service de %s v%s interrompue : %s", ident, numero, str(e)[:200])
                 raise Refus(500, "mise en service interrompue") from e
         try:
-            ordre = await bd(canal.deposer, ident, "config", {"version": numero, "config": conf.model_dump(mode="json")}, qui.role)
+            ordre = await bd(canal.deposer, ident, "config", {"version": numero, "config": pilotages.config_a_envoyer(conf)}, qui.role)
         except Exception as e:
             log.error("ordre de %s v%s non déposé : %s", ident, numero, str(e)[:200])
             raise Refus(500, "version mise en service dans l'atelier, mais l'ordre n'est pas parti : relancez la mise en service") from e
@@ -497,8 +500,10 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if qui.role == "megga":
             try:
                 sortie["couts"] = couts(activite, await bd(lire_tarifs))
-            except (TypeError, ValueError, AttributeError):  # un relevé mal formé ne casse pas la lecture
-                sortie["couts"] = {"erreur": "activité illisible"}
+            except (TypeError, ValueError, AttributeError, ArithmeticError):
+                if par_porte:
+                    raise
+                sortie["couts"] = {"erreur": "activité illisible"}  # le relevé d'une installation, pas notre code
         return sortie
 
     @r.get("/clients/{ident}/conversations")
@@ -633,12 +638,21 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     @app.post("/pilotage/releve")
     async def releve(requete: Request):
         """Le relevé du pilote d'une installation : pas de jeton, une requête signée de sa clé."""
-        corps = await requete.body()
+        # Lu par morceaux, borné : un corps trop gros est refusé sans être gardé en mémoire.
+        corps = bytearray()
+        async for morceau in requete.stream():
+            corps += morceau
+            if len(corps) > TAILLE_RELEVE:
+                return JSONResponse({"erreur": "relevé trop gros"}, status_code=413)
+        corps = bytes(corps)
         try:
             return await bd(canal.releve, "POST", "/pilotage/releve", requete.headers, corps)
         except pilotages.PilotageRefuse as e:
             log.warning("relevé refusé : %s", e)
-            return JSONResponse({"erreur": str(e)}, status_code=401)
+            # Au pilote, l'heure et le rejeu se disent ; le reste (installation inconnue, révoquée, signature)
+            # reste dans le journal de l'atelier : on ne peut pas sonder quelles installations existent.
+            dicible = str(e) if str(e).startswith(("heure", "requête rejouée", "relevé")) else "installation non reconnue"
+            return JSONResponse({"erreur": dicible}, status_code=401)
 
     app.include_router(r)
     return app

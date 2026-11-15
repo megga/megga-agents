@@ -16,9 +16,12 @@ Variables d'environnement (jamais dans le dépôt) :
   MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
 Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
-Chez le client, la configuration servie est la dernière poussée par MEGGA et acceptée (pilotage,
-noyau/pilotage.py), revérifiée au démarrage, sinon CLIENT_CONFIG. Quand le pilote en note une autre,
-l'agent finit ses tours et s'arrête : Compose ou Kubernetes le relancent, et il la relit.
+  PILOTAGE             le réglage du pilotage chez le client (non, suivi, complet), le même que celui du pilote
+
+Avec PILOTAGE à suivi ou complet, la configuration servie est la dernière poussée par MEGGA et acceptée
+(noyau/pilotage.py), revérifiée au démarrage, sinon CLIENT_CONFIG ; avec non, toujours CLIENT_CONFIG.
+Quand le pilote en note une autre, l'agent finit ses tours et s'arrête : Compose ou Kubernetes le
+relancent, et il la relit.
 
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
@@ -124,20 +127,23 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         raise RuntimeError("CLIENT_CONFIG manquante")
     fichier = configuration.lire(source)
     chez_le_client = env.get("MEGGA_INSTALLATION") == "client"
+    # Le pilotage est le choix du client : avec « non », MEGGA ne change rien, même ce qu'il avait poussé.
+    pilotage_actif = (env.get("PILOTAGE") or "non").strip().lower() in ("suivi", "complet")
     url = env.get("DATABASE_URL", "")
+    # Chez le client, pas de licence valide, pas de démarrage (vérifiée sans appel extérieur), avant de toucher
+    # à la base ; une configuration poussée garde l'identifiant du fichier (noyau/pilotage.py, config_de).
+    licence = licences.verifier(env.get("MEGGA_LICENCE", ""), fichier.id, cle=cle_licence) if chez_le_client else None
     if agent is None:
         if not url:
             raise RuntimeError("DATABASE_URL manquante")
         stockage.migrer(url)  # avant toute table : une base neuve se reconnaît à ce qu'elle n'en a aucune
-    # Chez le client, la dernière configuration poussée par MEGGA et acceptée, revérifiée ; sinon son fichier.
-    ordres = stockage.Ordres(url) if chez_le_client and url else None
+    # La dernière configuration poussée par MEGGA et acceptée, revérifiée ; sinon le fichier.
+    ordres = stockage.Ordres(url) if pilotage_actif and url else None
     conf, pilotee, refus = fichier, None, None
     if ordres is not None:
         conf, pilotee, refus = pilotages.configuration_servie(fichier, ordres.a_servir(fichier.id), cle_pilotage)
         if refus:
             log.error("configuration poussée refusée (%s) : l'agent sert son fichier", refus)
-    # Chez le client, pas de licence valide, pas de démarrage (vérifiée sans appel extérieur).
-    licence = licences.verifier(env.get("MEGGA_LICENCE", ""), conf.id, cle=cle_licence) if chez_le_client else None
     cles = {k: env.get(k, "") for k in CLES}
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     if agent is None:
@@ -175,7 +181,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         arret = asyncio.Event()
         # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel ni pour le relancer
         # sur une nouvelle configuration : il veille lui-même.
-        veille = asyncio.create_task(veiller(arret)) if chez_le_client and (rappels is not None or ordres is not None) else None
+        veille = asyncio.create_task(veiller(arret)) if (chez_le_client and rappels is not None) or ordres is not None else None
         yield
         # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
         # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
@@ -196,7 +202,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         verifier_le = 0.0
         while not arret.is_set():
             prochain = None
-            if rappels is not None and not licence_echue():
+            if chez_le_client and rappels is not None and not licence_echue():
                 try:
                     prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
                 except Exception as e:
@@ -227,7 +233,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 "installation": "client" if chez_le_client else "megga"}
         if licence:
             etat["licence"] = licences.etat_du_jour(licence)
-        if chez_le_client:  # d'où vient la configuration servie : poussée par MEGGA (version, ordre), ou le fichier
+        if chez_le_client or ordres is not None:  # d'où vient la configuration servie : poussée par MEGGA (version, ordre), ou le fichier
             etat["configuration"] = {"source": "pilotage", **pilotee} if pilotee else {"source": "fichier"}
         if licence_echue():  # les sondes le voient : l'agent n'est plus en service
             return JSONResponse({**etat, "ok": False}, status_code=503)

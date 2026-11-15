@@ -133,7 +133,8 @@ def test_aucun_numero_ni_secret_ne_sort_d_un_detail():
 def test_l_adresse_de_megga_est_en_https():
     assert adresse("https://megga-agents.api-963.workers.dev/") == "https://megga-agents.api-963.workers.dev"
     assert adresse("http://atelier:8080") == "http://atelier:8080"  # un nom local, pour les essais
-    for mauvaise in ("http://megga-agents.api-963.workers.dev", "", "ftp://x"):
+    for mauvaise in ("http://megga-agents.api-963.workers.dev", "", "ftp://x", "http://[2001:db8::1]", "http://134744072",
+                     "http://0x08080808"):
         with pytest.raises(RuntimeError):
             adresse(mauvaise)
 
@@ -162,18 +163,25 @@ def test_les_ordres_cote_megga(url):
     # une configuration plus récente remplace celle qui n'est pas encore partie ; l'image reste
     assert o.deposer(client, "config", signer, 100, 1002.0) == {"numero": 3, "remplaces": [1]}
     assert signes == [1, 2, 3]
-    lignes, nouveaux, expires = o.a_remettre(client, 0, 1010.0)
-    assert [l["numero"] for l in lignes] == [2, 3] and nouveaux == [2, 3] and expires == []
-    lignes, nouveaux, _ = o.a_remettre(client, 2, 1011.0)  # l'installation a déjà le 2
+    lignes, nouveaux = o.a_remettre(client, 0, 1010.0)
+    assert [l["numero"] for l in lignes] == [2, 3] and nouveaux == [2, 3]
+    lignes, nouveaux = o.a_remettre(client, 2, 1011.0)  # l'installation a déjà le 2
     assert [l["numero"] for l in lignes] == [3] and nouveaux == []
-    assert o.noter_etats(client, [{"numero": 3, "etat": "applique", "detail": "ok"}, {"numero": 2, "etat": "inconnu"},
-                                  {"numero": "3", "etat": "refuse"}, "x"], 1012.0) == [{"numero": 3, "etat": "applique", "detail": "ok"}]
+    assert o.noter_etats(client, [{"numero": 3, "etat": "refuse"}, {"numero": 3, "etat": "applique", "detail": "ok"},
+                                  {"numero": 2, "etat": "inconnu"}, {"numero": "3", "etat": "refuse"}, "x"],
+                         1012.0) == [{"numero": 3, "etat": "applique", "detail": "ok"}]  # le dernier mot par ordre
     assert o.noter_etats(client, [{"numero": 3, "etat": "applique"}], 1013.0) == []  # rien de neuf
     assert o.lire(client, 3)["etat"] == "applique"
     o.deposer(client, "config", signer, 100, 1020.0)
-    _, _, expires = o.a_remettre(client, 3, 2000.0)
-    assert expires == [2, 4] and o.lire(client, 4)["etat"] == "expire"  # l'image remise mais jamais reçue aussi
+    # un ordre jamais remis n'a pas d'état chez l'installation ; un ordre fini n'en change plus
+    assert o.noter_etats(client, [{"numero": 4, "etat": "applique"}], 1021.0) == []
+    o.changer(client, 3, "remplace")
+    assert o.noter_etats(client, [{"numero": 3, "etat": "applique"}], 1022.0) == []
+    assert o.expirer(client, 2000.0) == [2, 4] and o.lire(client, 4)["etat"] == "expire"  # l'image remise mais jamais reçue aussi
+    assert o.a_remettre(client, 0, 2000.0) == ([], [])
     assert o.dernier_numero(client) == 4 and o.dernier_numero("personne") == 0
+    # jamais en dessous du dernier numéro reçu par l'installation (base de l'atelier restaurée)
+    assert o.deposer(client, "config", signer, 100, 2001.0, minimum=9)["numero"] == 10
 
 
 def test_les_ordres_cote_installation(url):
@@ -247,10 +255,12 @@ def test_l_export_d_un_client_garde_son_pilotage(tmp_path):
 # L'agent chez le client : la configuration poussée
 
 
-def agent_client(url, **k):
+def agent_client(url, pilotage_mode="complet", quitter=lambda: None, **k):
+    """L'agent chez le client ; `quitter` ne tue jamais le processus des essais."""
     return creer_agent({"CLIENT_CONFIG": CONF_CLIENT, "META_APP_SECRET": "s", "MEGGA_INSTALLATION": "client",
-                        "MEGGA_LICENCE": licence(), "DATABASE_URL": url},
-                       agent=FauxAgent(), expediteur=FauxExpediteur(), cle_licence=CLE_LICENCE.public_key(), cle_pilotage=PUB, **k)
+                        "MEGGA_LICENCE": licence(), "DATABASE_URL": url, "PILOTAGE": pilotage_mode},
+                       agent=FauxAgent(), expediteur=FauxExpediteur(), cle_licence=CLE_LICENCE.public_key(), cle_pilotage=PUB,
+                       quitter=quitter, **k)
 
 
 def base_client(tmp_path) -> str:
@@ -400,7 +410,7 @@ def test_avec_l_accord_du_client(canal):
     c.tour(p)
     inst = Installation(c.url, BASE, PUB)
     assert inst.ordres.lire("exemple", 1)["etat"] == "attente_accord"
-    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url}
+    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url, "PILOTAGE": "complet"}
     sortie = []
     assert commande(["ordres"], env, sortie.append, cle_megga=PUB) == 0
     texte = "\n".join(sortie)
@@ -499,7 +509,7 @@ def test_le_client_revient_a_son_fichier(canal):
     p = c.pilote()
     activer(c.t, nouvelle_version(c.t, nom_agent="Lea"))
     c.tour(p)
-    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url}
+    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url, "PILOTAGE": "complet"}
     sortie = []
     assert commande(["revenir"], env, sortie.append) == 0
     assert "client.yaml" in sortie[-1]
@@ -522,7 +532,7 @@ def test_une_image_proposee_est_notee_seulement(canal):
     c.tour(p)
     inst = Installation(c.url, BASE, PUB)
     assert inst.ordres.lire("exemple", 1)["etat"] == "propose"
-    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url}
+    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url, "PILOTAGE": "complet"}
     sortie = []
     assert commande(["accepter", "1"], env, sortie.append, cle_megga=PUB) == 1 and "6.4" in sortie[-1]
     assert commande(["refuser", "1"], env, sortie.append, cle_megga=PUB) == 0
@@ -570,7 +580,10 @@ def test_l_atelier_ne_croit_que_les_releves_signes(canal):
     # révoquée par MEGGA : plus rien n'est accepté de cette clé
     assert c.t.delete("/atelier/clients/exemple/installation", headers=MEGGA).json() == {"client": "exemple", "revoquee": True}
     r = envoyer(pilotage.entetes("exemple", CLE_INSTALLATION, "POST", "/pilotage/releve", corps))
-    assert r.status_code == 401 and "révoquée" in r.json()["erreur"]
+    # au pilote, une réponse unique : on ne sonde pas quelles installations existent
+    assert r.status_code == 401 and r.json() == {"erreur": "installation non reconnue"}
+    inconnue = envoyer(pilotage.entetes("inconnu", CLE_INSTALLATION, "POST", "/pilotage/releve", corps))
+    assert inconnue.json() == {"erreur": "installation non reconnue"}
     assert "installation_revoquee" in [a["genre"] for a in c.t.get("/atelier/clients/exemple/alertes", headers=MEGGA).json()["alertes"]]
 
 
@@ -645,7 +658,11 @@ def test_le_pilote_se_regle_chez_le_client(tmp_path):
     assert commande(["inconnue"], {}, sortie.append) == 2
 
 
-def test_un_releve_en_echec_n_arrete_pas_le_pilote(canal):
+def test_un_releve_en_echec_n_arrete_pas_le_pilote(canal, monkeypatch, tmp_path):
+    from pilote import sonde
+
+    monkeypatch.setattr(sonde, "VIVANT", tmp_path / "vivant")  # pas le /tmp de la machine
+    assert commande(["vivant"], {}, print) == 1
     c = canal
     p = c.pilote(PILOTAGE_INTERVALLE="1")
     p.transport = httpx.MockTransport(lambda r: httpx.Response(502, text="porte en panne"))
@@ -681,3 +698,140 @@ def test_helm_le_pilote_a_ses_propres_etiquettes():
     assert "key: PILOTE_CLE" in gabarit and "envFrom" not in gabarit  # seulement sa clé et la base
     aides = open("installation/helm/megga-agent/templates/_helpers.tpl").read()
     assert "app.kubernetes.io/name: megga-pilote" in aides
+
+
+# Corrections de la relecture
+
+
+def releve_signe(c, corps: dict | bytes, cle=CLE_INSTALLATION, client="exemple", en_tete=None):
+    brut = corps if isinstance(corps, bytes) else json.dumps(corps).encode()
+    h = pilotage.entetes(client, cle, "POST", "/pilotage/releve", brut)
+    if en_tete:
+        h["x-megga-installation"] = en_tete
+    return c.t.post("/pilotage/releve", content=brut, headers={**h, "content-type": "application/json"})
+
+
+def test_un_releve_mal_forme_est_refuse_sans_rien_casser(canal):
+    c = canal
+    activer(c.t, 1)
+    for mauvais in (b'{"pilotage":"suivi","etat":{"agent":{"ok":NaN}}}', b'{"pilotage":"suivi","etat":{"x":Infinity}}',
+                    json.dumps({"pilotage": "suivi", "etat": {"x": 10 ** 400}}).encode(),
+                    json.dumps({"pilotage": "suivi", "suivi": {"fenetres": {}, "alertes": 5}}).encode(),
+                    json.dumps({"pilotage": "suivi", "etat": {"agent": "panne"}}).encode()):
+        r = releve_signe(c, mauvais)
+        assert r.status_code == 401 and r.json()["erreur"].startswith("relevé"), r.text
+    # rien n'a été gardé : les listes de MEGGA répondent
+    for chemin in ("/atelier/clients", "/atelier/installations", "/atelier/clients/exemple", "/atelier/clients/exemple/alertes"):
+        assert c.t.get(chemin, headers=MEGGA).status_code == 200
+
+
+def test_la_signature_couvre_l_installation_et_une_cle_ne_sert_qu_une_fois(canal):
+    c = canal
+    c.t.post("/atelier/clients", headers=MEGGA, json={"config": {**conf_client(id="autre"), "whatsapp": {"numero_id": "100000000000002"}}})
+    r = c.t.put("/atelier/clients/autre/installation", headers=MEGGA, json={"cle_publique": CLE_PUBLIQUE_INSTALLATION})
+    assert r.status_code == 400 and "autre installation" in r.json()["erreur"]
+    # signée pour « exemple », présentée comme « autre » : refusée
+    _, texte = cle_jetable()
+    c.t.put("/atelier/clients/autre/installation", headers=MEGGA,
+            json={"cle_publique": pilotage.en_texte(pilotage.cle_privee(texte).public_key())})
+    assert releve_signe(c, {"pilotage": "suivi"}, en_tete="autre").status_code == 401
+
+
+def test_l_ecart_est_inconnu_quand_l_agent_ne_repond_pas(canal):
+    c = canal
+    activer(c.t, 1)
+    p = c.pilote()
+    c.tour(p)
+    p.transport_agent = httpx.ASGITransport(app=c.relancer_agent())
+    c.tour(p)
+    c.tour(p)
+    assert c.ordres() == {1: "applique"}
+    p.transport_agent = httpx.MockTransport(lambda r: httpx.Response(503, text="redémarre"))
+    c.tour(p)
+    assert c.t.get("/atelier/clients/exemple", headers=MEGGA).json()["ecart"] is None
+    r = activer(c.t, 1)  # pas de doublon pendant qu'il redémarre
+    assert r.status_code == 409 and "prochain relevé" in r.json()["erreur"]
+
+
+def test_les_ordres_expirent_meme_sous_suivi(tmp_path):
+    from atelier.pilotage import Pilotage
+
+    h = Horloge()
+    canal_ = Pilotage(f"sqlite:///{tmp_path}/a.db", CLE_PILOTAGE, horloge=h)
+    canal_.deposer("exemple", "config", {"version": 1, "config": pilotage.config_a_envoyer(BASE)}, "megga")
+    assert canal_.en_cours("exemple", 1) == 1
+    h.t += pilotage.DUREE_ORDRE + 1
+    assert canal_.en_cours("exemple", 1) is None  # expiré sans relevé « complet » : la version peut repartir
+    assert canal_.ordres.lire("exemple", 1)["etat"] == "expire"
+    assert "ordre_expire" in [a["genre"] for a in canal_.alertes("exemple", 0, 1)]
+
+
+def test_une_configuration_part_sans_ses_valeurs_par_defaut():
+    envoyee = pilotage.config_a_envoyer(BASE)
+    assert envoyee["version"] == 1 and "reactions" not in envoyee and "voix" not in envoyee
+    # une installation dont la configuration ne connaît pas encore un réglage facultatif l'accepte quand même
+    o = pilotage.ordre("exemple", 1, "config", {"version": 2, "config": envoyee}, CLE_PILOTAGE, time.time())
+    assert pilotage.config_de(pilotage.lire_ordre(o, BASE, PUB), BASE)[1] == BASE
+
+
+def test_sous_pilotage_non_l_agent_sert_son_fichier(tmp_path):
+    url = base_client(tmp_path)
+    stockage.Ordres(url).ajouter("exemple", 1, "config", ordre_config(nom_agent="Lea"), "applique", "", 1, 2)
+    assert agent_client(url).state.config.nom_agent == "Lea"
+    app = agent_client(url, pilotage_mode="non")
+    assert app.state.config.nom_agent == "Alix" and TestClient(app).get("/sante").json()["configuration"] == {"source": "fichier"}
+    sortie = []
+    env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": url, "PILOTAGE": "non"}
+    assert commande(["accepter", "1"], env, sortie.append) == 1 and "PILOTAGE" in sortie[-1]
+
+
+def test_la_licence_est_verifiee_avant_la_base(tmp_path):
+    from noyau import licence as licences
+
+    url = f"sqlite:///{tmp_path}/jamais.db"
+    with pytest.raises(licences.LicenceRefusee):
+        creer_agent({"CLIENT_CONFIG": CONF_CLIENT, "MEGGA_INSTALLATION": "client", "MEGGA_LICENCE": "", "DATABASE_URL": url},
+                    cle_licence=CLE_LICENCE.public_key())
+    assert not (tmp_path / "jamais.db").exists()
+
+
+def test_base_en_panne_ou_ordre_illisible_n_arretent_pas_le_releve(canal):
+    c = canal
+    p = c.pilote()
+    vus = []
+
+    class Note(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, requete):
+            vus.append(json.loads(requete.content))
+            return await httpx.ASGITransport(app=c.atelier).handle_async_request(requete)
+
+    p.transport = Note()
+    p.installation.prete = lambda: (_ for _ in ()).throw(RuntimeError("base injoignable"))
+    c.tour(p)
+    assert vus[-1]["etat"]["base"] is False and vus[-1]["etat"]["base_erreur"] == "RuntimeError"
+    assert vus[-1]["etat"]["agent"]["ok"] is True  # MEGGA voit au moins l'agent
+    # un ordre d'un genre inconnu de cette image est refusé, et le suivant passe quand même
+    del p.installation.prete
+    inconnu = pilotage.signer({"format": 1, "client": "exemple", "numero": 1, "genre": "mise_a_jour_lointaine", "cree": 1,
+                               "expire": 2 ** 40, "contenu": {}}, CLE_PILOTAGE)
+
+    class Deux(httpx.AsyncBaseTransport):
+        async def handle_async_request(self, requete):
+            await httpx.ASGITransport(app=c.atelier).handle_async_request(requete)
+            return httpx.Response(200, json={"ordres": [inconnu, ordre_config(numero=2, nom_agent="Lea")]})
+
+    p.transport = Deux()
+    c.tour(p)
+    o = p.installation.ordres
+    assert (o.lire("exemple", 1)["etat"], o.lire("exemple", 1)["genre"]) == ("refuse", "inconnu")
+    assert o.lire("exemple", 2)["etat"] == "a_appliquer"
+
+
+def test_un_ordre_applique_que_l_agent_refuse_passe_en_echec(canal):
+    c = canal
+    url = c.url
+    stockage.Ordres(url).ajouter("exemple", 1, "config", ordre_config(nom_agent="Lea"), "applique", "", 1, 2)
+    autre_image = Installation(url, BASE, AUTRE_CLE.public_key())  # une image qui ne connaît pas cette clé
+    autre_image.suivre_application({"ok": True, "configuration": {"source": "fichier"}})
+    assert autre_image.ordres.lire("exemple", 1)["etat"] == "echec"
+    assert "refusé par l'agent" in autre_image.journal.lire("exemple")[0]["detail"]

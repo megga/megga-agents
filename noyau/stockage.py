@@ -614,20 +614,16 @@ class Ordres:
             Column("maj", Float, nullable=False),
         )
 
-    def deposer(self, client: str, genre: str, signer, duree: float, maintenant: float | None = None) -> dict:
-        """Un nouvel ordre (chez MEGGA), au numéro suivant, signé par `signer(numero, quand)`.
+    def deposer(self, client: str, genre: str, signer, duree: float, maintenant: float | None = None, minimum: int = 0) -> dict:
+        """Un nouvel ordre (chez MEGGA), au numéro suivant (au-delà de `minimum`), signé par `signer(numero, quand)`.
 
         Les ordres du même genre encore en attente, jamais remis, sont remplacés : ils ne partiront plus.
         """
         t = self._t
         quand = time.time() if maintenant is None else maintenant
         with self._e.begin() as c:
-            numero = (c.execute(select(func.max(t.c.numero)).where(t.c.client == client)).scalar() or 0) + 1
-            remplaces = [n for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.genre == genre,
-                                                                            t.c.etat == "en_attente"))]
-            if remplaces:
-                c.execute(update(t).where(t.c.client == client, t.c.numero.in_(remplaces))
-                          .values(etat="remplace", detail=f"remplacé par l'ordre {numero}", maj=quand))
+            numero = max(c.execute(select(func.max(t.c.numero)).where(t.c.client == client)).scalar() or 0, minimum) + 1
+            remplaces = self._remplacer(c, client, genre, ("en_attente",), numero, quand)
             c.execute(insert(t).values(client=client, numero=numero, genre=genre, jeton=signer(numero, quand), etat="en_attente",
                                        detail="", cree=quand, expire=int(quand) + duree, maj=quand))
         return {"numero": numero, "remplaces": remplaces}
@@ -675,17 +671,23 @@ class Ordres:
             r = c.execute(q.values(etat=etat, detail=detail[:200], maj=time.time() if maintenant is None else maintenant))
             return r.rowcount > 0
 
+    def _remplacer(self, c, client: str, genre: str, depuis: tuple[str, ...], par: int, quand: float) -> list[int]:
+        """Chaque ordre est changé seulement s'il est encore dans l'un de ces états : un changement venu entre-temps
+        (un accord du client, par exemple) n'est jamais écrasé."""
+        t = self._t
+        changes = []
+        for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.genre == genre, t.c.etat.in_(depuis),
+                                                       t.c.numero < par)).all():
+            r = c.execute(update(t).where(t.c.client == client, t.c.numero == n, t.c.etat.in_(depuis))
+                          .values(etat="remplace", detail=f"remplacé par l'ordre {par}", maj=quand))
+            if r.rowcount:
+                changes.append(n)
+        return changes
+
     def remplacer(self, client: str, genre: str, depuis: tuple[str, ...], par: int, maintenant: float | None = None) -> list[int]:
         """Les ordres plus anciens de ce genre, dans ces états, remplacés par l'ordre `par` ; rend leurs numéros."""
-        t = self._t
-        quand = time.time() if maintenant is None else maintenant
         with self._e.begin() as c:
-            numeros = [n for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.genre == genre,
-                                                                       t.c.etat.in_(depuis), t.c.numero < par))]
-            if numeros:
-                c.execute(update(t).where(t.c.client == client, t.c.numero.in_(numeros))
-                          .values(etat="remplace", detail=f"remplacé par l'ordre {par}", maj=quand))
-        return numeros
+            return self._remplacer(c, client, genre, depuis, par, time.time() if maintenant is None else maintenant)
 
     def a_servir(self, client: str) -> dict | None:
         """La configuration que l'agent doit servir (chez le client) : le dernier ordre « config » à appliquer ou appliqué."""
@@ -695,38 +697,54 @@ class Ordres:
                           .order_by(t.c.numero.desc()).limit(1)).first()
         return dict(l._mapping) if l else None
 
-    def a_remettre(self, client: str, apres: int, maintenant: float) -> tuple[list[dict], list[int], list[int]]:
+    def expirer(self, client: str, maintenant: float) -> list[int]:
+        """Chez MEGGA : les ordres qui n'ont pas abouti avant leur échéance (pas encore reçus, ou sans accord)
+        expirent ; rend leurs numéros."""
+        t = self._t
+        vivants = ("en_attente", "remis", "attente_accord")  # une fois acceptée, la suite est rapportée par l'installation
+        with self._e.begin() as c:
+            expires = [n for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.etat.in_(vivants),
+                                                                       t.c.expire < maintenant)).all()]
+            for n in expires:
+                c.execute(update(t).where(t.c.client == client, t.c.numero == n, t.c.etat.in_(vivants))
+                          .values(etat="expire", detail="pas abouti dans la semaine", maj=maintenant))
+        return expires
+
+    def a_remettre(self, client: str, apres: int, maintenant: float) -> tuple[list[dict], list[int]]:
         """Chez MEGGA : les ordres à remettre à l'installation (numéro au-delà du dernier qu'elle a reçu, encore
-        valables). Rend ces ordres, ceux remis pour la première fois, et ceux qui viennent d'expirer."""
+        valables). Rend ces ordres et ceux remis pour la première fois."""
         t = self._t
         attente = ("en_attente", "remis")
+        valable = (t.c.client == client, t.c.numero > apres, t.c.expire >= maintenant)
         with self._e.begin() as c:
-            expires = [n for (n,) in c.execute(select(t.c.numero).where(t.c.client == client, t.c.etat.in_(attente),
-                                                                       t.c.expire < maintenant))]
-            if expires:
-                c.execute(update(t).where(t.c.client == client, t.c.numero.in_(expires))
-                          .values(etat="expire", detail="pas reçu par l'installation dans la semaine", maj=maintenant))
-            lignes = [dict(l._mapping) for l in c.execute(select(t).where(t.c.client == client, t.c.numero > apres,
-                                                                          t.c.etat.in_(attente)).order_by(t.c.numero))]
-            nouveaux = [l["numero"] for l in lignes if l["etat"] == "en_attente"]
-            if nouveaux:
-                c.execute(update(t).where(t.c.client == client, t.c.numero.in_(nouveaux)).values(etat="remis", maj=maintenant))
-        return lignes, nouveaux, expires
+            # Marqués d'abord, sous condition ; puis relus : un ordre remplacé entre-temps n'est jamais remis.
+            nouveaux = [n for (n,) in c.execute(select(t.c.numero).where(*valable, t.c.etat == "en_attente")).all()]
+            nouveaux = [n for n in nouveaux if c.execute(update(t).where(t.c.client == client, t.c.numero == n,
+                                                                          t.c.etat == "en_attente")
+                                                         .values(etat="remis", maj=maintenant)).rowcount]
+            lignes = [dict(l._mapping) for l in c.execute(select(t).where(*valable, t.c.etat.in_(attente)).order_by(t.c.numero))]
+        return lignes, nouveaux
 
     REPORTES = ("attente_accord", "a_appliquer", "applique", "propose", "refuse", "echec", "remplace", "retire", "expire")
+    # Un ordre arrivé là ne change plus : un état rapporté ensuite (rejoué, ou annoncé sans être signé) est ignoré.
+    FINAUX = ("refuse", "echec", "remplace", "retire", "expire")
 
     def noter_etats(self, client: str, etats: list, maintenant: float) -> list[dict]:
-        """Chez MEGGA : ce que l'installation dit de ses ordres ; rend ceux qui ont changé."""
+        """Chez MEGGA : ce que l'installation dit de ses ordres (le dernier mot par ordre) ; rend ceux qui ont changé.
+        Un ordre jamais remis (en_attente) n'a pas d'état chez elle ; un ordre arrivé à un état final n'en change plus."""
         t = self._t
+        derniers: dict[int, tuple[str, str]] = {}
+        for e in etats[:50]:
+            if not isinstance(e, dict):
+                continue
+            numero, etat = e.get("numero"), e.get("etat")
+            if isinstance(numero, int) and not isinstance(numero, bool) and etat in self.REPORTES:
+                derniers[numero] = (etat, str(e.get("detail") or "")[:200])
         changes = []
         with self._e.begin() as c:
-            for e in etats[:50]:
-                if not isinstance(e, dict):
-                    continue
-                numero, etat, detail = e.get("numero"), e.get("etat"), str(e.get("detail") or "")[:200]
-                if isinstance(numero, bool) or not isinstance(numero, int) or etat not in self.REPORTES:
-                    continue
-                r = c.execute(update(t).where(t.c.client == client, t.c.numero == numero, t.c.etat != etat)
+            for numero, (etat, detail) in derniers.items():
+                r = c.execute(update(t).where(t.c.client == client, t.c.numero == numero, t.c.etat != etat,
+                                              t.c.etat.notin_(("en_attente",) + self.FINAUX))
                               .values(etat=etat, detail=detail, maj=maintenant))
                 if r.rowcount:
                     changes.append({"numero": numero, "etat": etat, "detail": detail})
@@ -787,6 +805,12 @@ class Installations:
             r = c.execute(update(t).where(t.c.client == client).values(cle=cle, enregistree=quand, revoquee=None))
             if r.rowcount == 0:
                 c.execute(insert(t).values(client=client, cle=cle, enregistree=quand))
+
+    def client_de_cle(self, cle: str) -> str | None:
+        """Le client dont c'est la clé en service, s'il y en a un : une clé ne sert qu'une installation."""
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(t.c.client).where(t.c.cle == cle, t.c.revoquee.is_(None))).scalar()
 
     def revoquer(self, client: str, quand: float) -> bool:
         t = self._t

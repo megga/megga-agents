@@ -13,14 +13,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import time
-
-from noyau import config as configuration
-from noyau import pilotage
-from noyau.environnement import charger
-
-from .service import Installation, en_vie
 
 ETATS = {
     "attente_accord": "attend votre accord",
@@ -36,7 +31,8 @@ ETATS = {
 
 
 def date(t: float) -> str:
-    return time.strftime("%d.%m.%Y %H:%M", time.localtime(t))
+    """L'heure du serveur, avec son fuseau (UTC dans un conteneur sans réglage)."""
+    return time.strftime("%d.%m.%Y %H:%M %Z", time.localtime(t))
 
 
 def court(v) -> str:
@@ -60,7 +56,12 @@ def differences(avant: dict, apres: dict, prefixe: str = "") -> list[str]:
     return lignes
 
 
-def ordres(inst: Installation, ecrire) -> None:
+def ordres(inst, ecrire) -> None:
+    from noyau import pilotage
+    from noyau.config import Config
+
+    from .service import Installation
+
     conf, source = inst.config_servie()
     ecrire("Configuration servie : " + (f"version {source['version']} de MEGGA (ordre {source['ordre']})" if source
                                         else "le fichier client.yaml"))
@@ -72,7 +73,11 @@ def ordres(inst: Installation, ecrire) -> None:
         ecrire(f"Ordre {l['numero']} du {date(l['cree'])} : {Installation.decrire(o)}, {ETATS.get(l['etat'], l['etat'])}"
                + (f" ({l['detail']})" if l["detail"] and l["etat"] not in ("attente_accord", "propose") else ""))
         if l["etat"] == "attente_accord" and o.get("genre") == "config":
-            nouvelle = (o.get("contenu") or {}).get("config") or {}
+            # L'ordre ne porte que les réglages qui s'écartent des valeurs par défaut : comparé une fois complété.
+            try:
+                nouvelle = Config.model_validate((o.get("contenu") or {}).get("config")).model_dump(mode="json")
+            except ValueError:
+                nouvelle = {}
             for ligne in differences(conf.model_dump(mode="json"), nouvelle) or ["aucun réglage ne change"]:
                 ecrire(f"    {ligne}")
             ecrire(f"    jusqu'au {date(l['expire'])} : python -m pilote accepter {l['numero']}, ou refuser {l['numero']}")
@@ -81,24 +86,35 @@ def ordres(inst: Installation, ecrire) -> None:
 
 
 def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_megga=None) -> int:
-    env = charger(dict(os.environ if env is None else env))
     commande, args = (argv[0] if argv else ""), argv[1:]
+    if commande == "vivant":  # la sonde, chaque minute : rien d'autre à charger
+        from .sonde import en_vie
+
+        return 0 if en_vie((os.environ if env is None else env).get("PILOTAGE_INTERVALLE")) else 1
+    from noyau import config as configuration
+    from noyau import pilotage
+    from noyau.environnement import charger
+
+    from .service import Installation, source_config
+
+    env = charger(dict(os.environ if env is None else env))
     if commande == "cle":
         if not env.get("PILOTE_CLE"):
             ecrire("PILOTE_CLE manquante : la clé de l'installation")
             return 1
         ecrire(pilotage.en_texte(pilotage.cle_privee(env["PILOTE_CLE"]).public_key()))
         return 0
-    if commande == "vivant":
-        return 0 if en_vie(float(env.get("PILOTAGE_INTERVALLE") or 60)) else 1
     if commande not in ("ordres", "accepter", "refuser", "revenir", "journal"):
         ecrire(__doc__.strip())
         return 2
-    source = env.get("CLIENT_CONFIG_FILE") or env.get("CLIENT_CONFIG")
-    if not source or not env.get("DATABASE_URL"):
+    if not (env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")) or not env.get("DATABASE_URL"):
         ecrire("CLIENT_CONFIG_FILE et DATABASE_URL attendues")
         return 1
-    inst = Installation(env["DATABASE_URL"], configuration.lire(source), cle_megga)
+    if commande == "accepter" and (env.get("PILOTAGE") or "non").strip().lower() not in ("suivi", "complet"):
+        # Sans pilote qui tourne, personne ne verrait une configuration que l'agent ne prend pas (10 minutes).
+        ecrire("Refusé : accepter un ordre demande PILOTAGE=suivi ou complet (le pilote surveille son application).")
+        return 1
+    inst = Installation(env["DATABASE_URL"], configuration.lire(source_config(env)), cle_megga)
     if not inst.prete():
         ecrire("La base n'est pas encore prête : l'agent a-t-il démarré ?")
         return 1
@@ -106,14 +122,14 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
         if commande == "ordres":
             ordres(inst, ecrire)
         elif commande == "journal":
-            n = int(args[0]) if args and args[0].isdigit() else 30
+            n = min(int(args[0]), 1000) if args and re.fullmatch(r"[0-9]{1,6}", args[0]) else 30
             for e in inst.journal.lire(inst.client, n):
                 ecrire(f"{date(e['quand'])}  {e['evenement']}" + (f", ordre {e['numero']}" if e["numero"] is not None else "")
                        + (f" : {e['detail']}" if e["detail"] else ""))
         elif commande == "revenir":
             ecrire(inst.revenir())
         else:
-            if len(args) != 1 or not args[0].isdigit():
+            if len(args) != 1 or not re.fullmatch(r"[0-9]{1,9}", args[0]):
                 ecrire(f"python -m pilote {commande} <numéro de l'ordre>")
                 return 2
             ecrire((inst.accepter if commande == "accepter" else inst.refuser)(int(args[0])))

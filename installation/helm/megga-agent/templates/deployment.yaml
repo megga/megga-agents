@@ -40,6 +40,8 @@ spec:
           env:
             - {name: MEGGA_INSTALLATION, value: client}
             - {name: CLIENT_CONFIG_FILE, value: /config/client.yaml}
+            # Le même réglage que le pilote : avec « non », l'agent sert toujours sa configuration.
+            - {name: PILOTAGE, value: {{ .Values.pilotage.mode | toString | quote }}}
             # Le disque de l'image est en lecture seule : le reste s'écrit dans /tmp.
             - {name: HOME, value: /tmp}
             {{- with .Values.extraEnv }}

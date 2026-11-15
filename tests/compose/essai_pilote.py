@@ -220,13 +220,17 @@ def parcours(essai: Essai) -> None:
     print("MEGGA révoque la clé : les relevés sont refusés")
     code, d = essai.atelier("DELETE", f"/atelier/clients/{CLIENT}/installation")
     assert code == 200 and d["revoquee"] is True
-    essai.attendre("le pilote est refusé", lambda: "révoquée" in essai.compose("logs", "--tail", "20", "pilote"), 60)
+    essai.attendre("le pilote est refusé", lambda: "installation non reconnue" in essai.compose("logs", "--tail", "20", "pilote"), 60)
     print("Essai réussi.")
 
 
 def main() -> int:
-    dossier = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="megga-essai-pilote-"))
-    dossier.mkdir(parents=True, exist_ok=True)
+    dossier = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="megga-essai-pilote-")) / "essai"
+    # Un dossier neuf, créé ici : c'est lui seul qui est effacé à la fin.
+    if dossier.exists():
+        print(f"{dossier} existe déjà : donner un dossier qui n'existe pas encore")
+        return 2
+    dossier.mkdir(parents=True)
     essai = Essai(dossier)
     try:
         print("Construction de l'image (socle/Dockerfile) et ajout des clés publiques d'essai")
