@@ -10,7 +10,7 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
    - fait : l'app « Alix MEGGA » (4746973982197378, portefeuille MEGGA, usage WhatsApp) est créée, et le compte « MEGGA » lui envoie ses événements. Alix FSP n'a pas bougé : son app garde son webhook et ses comptes ;
    - publier l'app (elle est en développement) ;
    - garder sa clé secrète (Paramètres, De base) ;
-   - créer un jeton d'utilisateur système qui a `whatsapp_business_messaging` sur ce compte ;
+   - créer un jeton d'utilisateur système (MEGGA Agents) ; il doit avoir l'app, le compte WhatsApp ET le compte de messagerie « MEGGA » en accès total, sinon Meta ne transmet rien à l'agent (constaté le 15.11.2026) ;
    - ajouter un moyen de paiement au compte « MEGGA » (sans lui, les modèles Meta ne partent pas).
 2. **Neon** : fait le 15.11.2026. Le projet `calm-king-39242423` (AWS Francfort, Postgres 18) est lié au dépôt par `neon init`. Ses adresses sont dans `.env.local`, jamais suivi par git ; connexion vérifiée sans les afficher.
 3. **Cloudflare** :
