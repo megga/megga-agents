@@ -1,0 +1,70 @@
+"""L'agent d'un client, construit d'après sa configuration.
+
+Claude d'abord ; si Claude échoue (panne, délai, refus), le modèle de secours
+reprend le tour (FallbackConfig d'Agno). La mémoire est rangée par personne
+(user_id = son numéro), l'historique par conversation (session_id).
+"""
+
+from __future__ import annotations
+
+from agno.agent import Agent
+from agno.models.base import Model
+from agno.models.fallback import FallbackConfig
+
+from .config import Config
+from .typographie import crochet_typographie
+
+REGLES = (
+    "Tu réponds sur WhatsApp : des messages courts, clairs, sans titres ni tableaux.",
+    "N'utilise jamais de tiret long ni de point médian.",
+    "N'invente rien : ni chiffre, ni nom, ni fait. Si tu ne sais pas, dis-le simplement.",
+    "Ne demande et ne répète jamais de mot de passe, de clé ou de code.",
+    "Réponds dans la langue de la personne.",
+)
+
+
+def modele(nom: str, cles: dict[str, str]) -> Model:
+    """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek."""
+    if nom.startswith("claude-"):
+        from agno.models.anthropic import Claude
+
+        return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=4096)
+    if nom.startswith("deepseek-"):
+        from agno.models.deepseek import DeepSeek
+
+        return DeepSeek(id=nom, api_key=cles.get("DEEPSEEK_API_KEY"))
+    raise ValueError(f"modèle inconnu : {nom}")
+
+
+def consignes(config: Config) -> list[str]:
+    base = [
+        f"Tu es {config.nom_agent}, et tu travailles pour {config.entreprise}.",
+        f"Ton ton : {config.ton}. Langue par défaut : {config.langue}.",
+        *REGLES,
+    ]
+    if config.consignes.strip():
+        base.append(config.consignes.strip())
+    return base
+
+
+def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None) -> Agent:
+    """`principal` et `secours` remplacent les modèles de la configuration (essais)."""
+    principal = principal or modele(config.modeles.principal, cles)
+    if secours is None and config.modeles.secours:
+        secours = modele(config.modeles.secours, cles)
+    return Agent(
+        id=config.id,
+        name=config.nom_agent,
+        model=principal,
+        fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
+        db=db,
+        instructions=consignes(config),
+        add_history_to_context=True,
+        num_history_runs=12,
+        update_memory_on_run=True,
+        add_datetime_to_context=True,
+        timezone_identifier=config.fuseau,
+        post_hooks=[crochet_typographie],
+        markdown=False,
+        telemetry=False,
+    )

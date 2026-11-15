@@ -38,7 +38,7 @@ scripts/    nouveau-client, tests de bout en bout
 - R2 pour les fichiers (photos, vocaux, PDF) ;
 - D1 pour l'annuaire des clients (numéro vers client, état), lu par le Worker.
 
-**Secrets** : jamais dans le dépôt ni dans une configuration. Ceux de MEGGA (Anthropic, DeepSeek, ElevenLabs, jeton Meta de l'app) en secrets du Worker ; ceux d'un client (base, clés propres) dans le Secrets Store de Cloudflare, nommés par client, remis à son seul conteneur au démarrage.
+**Secrets** : jamais dans le dépôt ni dans une configuration. Ceux de MEGGA (Anthropic, DeepSeek, ElevenLabs, jeton Meta de l'app) en secrets du Worker ; ceux d'un client (l'adresse de sa base, ses clés propres) dans le stockage de son propre objet Cloudflare, posés par une route d'administration en écriture seule, remis à son seul conteneur au démarrage.
 
 **Journaux** : observabilité Cloudflare (7 jours, exportables) pour le Worker et les conteneurs ; les traces d'Agno (tours, outils, jetons) dans la base du client, lues par la console.
 

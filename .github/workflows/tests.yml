@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  noyau:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: essai
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_POSTGRES_URL: postgresql://postgres:essai@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip install -e ".[test]"
+      - run: .venv/bin/python -m pytest -q
+
+  porte:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: porte
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npx wrangler deploy --dry-run --containers-rollout=none --outdir /tmp/porte
+
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f socle/Dockerfile -t megga-agents:essai .
+      - name: Le conteneur démarre et répond à /sante
+        run: |
+          CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
+          docker run -d --name essai -p 8080:8080 -e CLIENT_CONFIG="$CONF" \
+            -e DATABASE_URL=sqlite:////tmp/essai.db -e META_APP_SECRET=essai megga-agents:essai
+          for i in $(seq 1 30); do curl -sf localhost:8080/sante && exit 0; sleep 1; done
+          docker logs essai; exit 1
