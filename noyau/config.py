@@ -118,3 +118,9 @@ def lire(source: str | Path | dict) -> Config:
     if not isinstance(donnees, dict):
         raise ValueError(f"{chemin} : une configuration est un objet")
     return Config.model_validate(donnees)
+
+
+if __name__ == "__main__":  # python -m noyau.config clients/x.yaml : la configuration validée, en JSON
+    import sys
+
+    print(json.dumps(lire(sys.argv[1]).model_dump(), ensure_ascii=False))
