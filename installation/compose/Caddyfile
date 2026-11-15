@@ -1,0 +1,10 @@
+# L'entrée publique de l'installation : seul le webhook de Meta passe, en HTTPS.
+# Le reste de l'agent (/sante, routes internes) n'est jamais exposé.
+{$DOMAINE} {
+	handle /whatsapp {
+		reverse_proxy agent:8080
+	}
+	handle {
+		respond 404
+	}
+}

@@ -88,7 +88,9 @@ async def bd(f, *a, **k):
 
 def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
-    env = dict(os.environ if env is None else env)
+    from noyau.environnement import charger
+
+    env = charger(dict(os.environ if env is None else env))
     os.environ.setdefault("AGNO_TELEMETRY", "false")
     admin = env.get("ADMIN_TOKEN", "")
     if not admin:

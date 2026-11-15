@@ -1,0 +1,69 @@
+# Une installation chez le client : l'agent, sa base Postgres, et l'entrée HTTPS du webhook WhatsApp.
+# Guide : docs/installation-client.md. Rien de secret ici : les réglages sont dans .env, les secrets
+# dans secrets.env (ou en fichiers, <NOM>_FILE), la configuration de l'agent dans client.yaml.
+name: megga-agent
+
+services:
+  agent:
+    # L'image signée par MEGGA, par son empreinte (scripts/verifier_image.sh avant de la changer).
+    image: ${MEGGA_IMAGE:?l'image signée, par empreinte, ghcr.io/megga/megga-agents@sha256:...}
+    restart: unless-stopped
+    env_file: [secrets.env]
+    environment:
+      MEGGA_INSTALLATION: client
+      CLIENT_CONFIG_FILE: /config/client.yaml
+      # Le mot de passe hors de l'adresse : il peut contenir n'importe quel caractère (@, %, /…).
+      DATABASE_URL: postgresql://megga@base:5432/megga
+      PGPASSWORD: ${POSTGRES_PASSWORD:?mot de passe de la base}
+    volumes:
+      # Sans client.yaml, l'installation s'arrête net au lieu de monter un dossier vide à sa place.
+      - type: bind
+        source: ./client.yaml
+        target: /config/client.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      base:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/sante', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    # Aucun port publié : seule l'entrée HTTPS lui parle, et seulement pour /whatsapp.
+    expose: ["8080"]
+    # À l'arrêt (mise à jour, redémarrage), l'agent finit ses tours en cours (100 secondes au plus).
+    stop_grace_period: 2m
+
+  base:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: megga
+      POSTGRES_DB: megga
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?mot de passe de la base}
+    volumes:
+      - base:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U megga -d megga"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  entree:
+    # HTTPS avec un certificat Let's Encrypt pour DOMAINE, renouvelé seul.
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      DOMAINE: ${DOMAINE:?le nom de domaine public du webhook}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificats:/data
+    depends_on: [agent]
+
+volumes:
+  base:
+  certificats:

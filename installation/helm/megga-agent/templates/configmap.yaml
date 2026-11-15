@@ -1,0 +1,10 @@
+{{- $config := fromYaml (include "megga-agent.config" .) }}
+{{- if not $config.id }}{{ fail "config : la configuration de l'agent (au moins son id), en valeurs ou par --set-file" }}{{ end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "megga-agent.nom" . }}
+  labels: {{- include "megga-agent.etiquettes" . | nindent 4 }}
+data:
+  client.yaml: |
+{{ include "megga-agent.config" . | indent 4 }}

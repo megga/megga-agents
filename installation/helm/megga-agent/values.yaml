@@ -1,0 +1,40 @@
+# L'agent MEGGA d'un client. Rien de secret ici : les secrets sont dans un Secret du client
+# (créé par lui, ou par son coffre : External Secrets, Vault, Key Vault...).
+
+image:
+  # L'image signée par MEGGA, par son empreinte (scripts/verifier_image.sh).
+  repository: ghcr.io/megga/megga-agents
+  digest: ""          # sha256:...  (de préférence)
+  tag: ""             # sinon, la version publiée
+  pullSecrets: []     # l'accès au registre privé de MEGGA, s'il le faut
+
+# Les secrets du client, au choix :
+# - existingSecret : un Secret avec ces clés, remises en variables : DATABASE_URL, MEGGA_LICENCE,
+#   META_TOKEN, META_APP_SECRET, META_VERIFY_TOKEN, ANTHROPIC_API_KEY, DEEPSEEK_API_KEY,
+#   et ELEVENLABS_API_KEY (facultative) ;
+# - des fichiers montés par son coffre (pilote CSI de Vault, Key Vault...) : le volume dans
+#   extraVolumes et extraVolumeMounts, et chaque secret dans extraEnv sous la forme <NOM>_FILE.
+existingSecret: ""
+extraEnv: []
+#   - {name: ANTHROPIC_API_KEY_FILE, value: /mnt/secrets/anthropic}
+extraVolumes: []
+extraVolumeMounts: []
+
+# La configuration de l'agent (noyau/config.py), telle quelle : en valeurs, ou par
+# --set-file config=client.yaml.
+config: {}
+
+ingress:
+  enabled: true
+  className: ""
+  host: ""            # le nom de domaine public du webhook
+  tlsSecret: ""       # le certificat HTTPS de ce domaine (Meta exige HTTPS)
+  tlsAilleurs: false  # vrai si un répartiteur de charge assure HTTPS devant l'ingress
+  annotations: {}
+
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {memory: 1Gi}
+
+nodeSelector: {}
+tolerations: []

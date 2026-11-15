@@ -10,9 +10,15 @@ Variables d'environnement (jamais dans le dépôt) :
   ELEVENLABS_API_KEY   facultatif : écouter les vocaux et répondre de vive voix
   JWT_VERIFICATION_KEY facultatif : ouvre l'API d'AgentOS, protégée par jeton (console, mode 2)
   INTERNE_TOKEN        le jeton des routes internes (posé par la porte, propre à chaque client)
+  MEGGA_INSTALLATION   « client » : installation chez le client (webhook direct, rappels sans porte,
+                       licence exigée) ; sinon, derrière la porte de MEGGA
+  META_VERIFY_TOKEN    chez le client : le jeton d'abonnement du webhook de Meta
+  MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
+Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
+  GET  /whatsapp  l'abonnement du webhook de Meta (chez le client ; chez MEGGA, la porte s'en charge)
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
@@ -25,6 +31,7 @@ Routes :
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -33,12 +40,15 @@ import time
 from collections import OrderedDict
 
 from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 
 from . import config as configuration
+from . import licence as licences
 from . import stockage
 from . import suivi as suivi_agent
 from . import version as version_image
 from .agent import construire, modele
+from .environnement import charger
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
@@ -97,14 +107,17 @@ def _reecriture(conf, cles):
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
-          delai_vider: float = 100.0, journal=None, lecture=None, fil=None) -> FastAPI:
-    """Les arguments nommés remplacent les vrais services (essais)."""
-    env = dict(os.environ if env is None else env)
+          delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None) -> FastAPI:
+    """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence`, la clé publique des licences."""
+    env = charger(dict(os.environ if env is None else env))
     os.environ.setdefault("AGNO_TELEMETRY", "false")
     source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
     if not source:
         raise RuntimeError("CLIENT_CONFIG manquante")
     conf = configuration.lire(source)
+    chez_le_client = env.get("MEGGA_INSTALLATION") == "client"
+    # Chez le client, pas de licence valide, pas de démarrage (vérifiée sans appel extérieur).
+    licence = licences.verifier(env.get("MEGGA_LICENCE", ""), conf.id, cle=cle_licence) if chez_le_client else None
     cles = {k: env.get(k, "") for k in CLES}
     if agent is None:
         if not env.get("DATABASE_URL"):
@@ -128,17 +141,73 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     secret = env.get("META_APP_SECRET")
     deja = Deja()
 
-    app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None)
+    def licence_echue() -> bool:
+        """Au-delà du délai de grâce, même un agent lancé avant cesse de servir (vérifié à chaque appel)."""
+        return bool(licence) and licences.etat_du_jour(licence)["etat"] == "hors_delai"
+
+    async def finir_les_tours(delai: float) -> int:
+        """Attend la fin des tours en cours (un tour peut en lancer un autre) ; rend ceux qui restent."""
+        fin = time.monotonic() + delai
+        while conversations.taches and time.monotonic() < fin:
+            await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
+        return len(conversations.taches)
+
+    @contextlib.asynccontextmanager
+    async def vie(_):
+        arret = asyncio.Event()
+        # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel : il veille lui-même.
+        veille = asyncio.create_task(veiller_rappels(arret)) if chez_le_client and rappels is not None else None
+        yield
+        # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
+        # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
+        arret.set()
+        if veille:
+            await asyncio.wait({veille}, timeout=delai_vider)
+        restantes = await finir_les_tours(delai_vider)
+        if restantes:
+            log.warning("arrêt avec %d tour(s) inachevé(s)", restantes)
+
+    async def veiller_rappels(arret: asyncio.Event):
+        while not arret.is_set():
+            prochain = None
+            if not licence_echue():
+                try:
+                    prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
+                except Exception as e:
+                    log.error("rappels en échec : %s", str(e)[:200])
+            attente = min(60.0, max(1.0, (prochain - time.time()) if prochain else 60.0))
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(arret.wait(), timeout=attente)
+
+    app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None, lifespan=vie)
     app.state.config = conf
     app.state.conversations = conversations
     app.state.taches = conversations.taches
 
     @app.get("/sante")
     async def sante():
-        return {"ok": True, "client": conf.id, "zone": conf.zone, **version_image.carte()}
+        etat = {"ok": True, "client": conf.id, "zone": conf.zone, **version_image.carte(),
+                "installation": "client" if chez_le_client else "megga"}
+        if licence:
+            etat["licence"] = licences.etat_du_jour(licence)
+        if licence_echue():  # les sondes le voient : l'agent n'est plus en service
+            return JSONResponse({**etat, "ok": False}, status_code=503)
+        return etat
+
+    @app.get("/whatsapp")
+    async def abonnement(requete: Request):
+        """Meta vérifie l'adresse du webhook : le défi est rendu si le jeton correspond."""
+        p = requete.query_params
+        jeton = env.get("META_VERIFY_TOKEN", "")
+        # En octets : un jeton accentué se compare aussi (sur des textes, compare_digest n'accepte que l'ASCII).
+        if jeton and p.get("hub.mode") == "subscribe" and hmac.compare_digest(p.get("hub.verify_token", "").encode(), jeton.encode()):
+            return Response(p.get("hub.challenge", ""), media_type="text/plain")
+        return Response("refusé", status_code=403)
 
     @app.post("/whatsapp")
     async def whatsapp(requete: Request):
+        if licence_echue():
+            return Response("licence échue", status_code=503)
         corps = await requete.body()
         if not signature_valide(corps, requete.headers.get("x-hub-signature-256"), secret):
             return Response("signature", status_code=401)
@@ -160,7 +229,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")
-        return bool(jeton_interne) and hmac.compare_digest(jeton, jeton_interne)
+        return bool(jeton_interne) and hmac.compare_digest(jeton.encode(), jeton_interne.encode())
 
     @app.post("/interne/rappels")
     async def interne_rappels(requete: Request):
@@ -172,11 +241,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     async def interne_vider(requete: Request):
         if not interne(requete):
             return Response("refusé", status_code=401)
-        fin = time.monotonic() + delai_vider
-        # Un tour peut en lancer un autre (regroupement, réponse) : on attend jusqu'à ce qu'il n'y en ait plus.
-        while conversations.taches and time.monotonic() < fin:
-            await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
-        return {"restantes": len(conversations.taches)}
+        return {"restantes": await finir_les_tours(delai_vider)}
 
     def lisible(requete: Request) -> Response | None:
         if not interne(requete):
