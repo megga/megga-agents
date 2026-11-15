@@ -24,10 +24,44 @@ class Strict(BaseModel):
 
 
 class Modeles(Strict):
-    """Le modèle principal et celui qui prend le relais s'il échoue."""
+    """Le modèle principal, celui qui prend le relais s'il échoue, et celui qui réécrit pour l'oral."""
 
     principal: str = "claude-sonnet-5-5"
     secours: str | None = "deepseek-v4-pro"
+    # La réécriture d'une réponse pour un vocal ; vide : le secours, sinon le principal.
+    oral: str | None = None
+
+
+class Voix(Strict):
+    """La voix ElevenLabs de l'agent : à un vocal, il répond par un vocal.
+
+    Une voix garde l'accent de la personne enregistrée : une voix par langue si besoin.
+    Sans voix réglée, l'agent transcrit les vocaux mais répond par écrit.
+    """
+
+    voix: str | None = Field(default=None, pattern=r"^[A-Za-z0-9]{10,40}$")
+    par_langue: dict[str, str] = {}
+    modele: str = "eleven_v4"
+    transcription: str = "scribe_v3"
+    stabilite: float = Field(default=0.5, ge=0, le=1)
+    vitesse: float = Field(default=1.0, ge=0.7, le=1.2)
+    # Le serveur d'ElevenLabs (https://api.eu.residency.elevenlabs.io pour l'UE, offre Enterprise).
+    serveur: str = Field(default="https://api.elevenlabs.io", pattern=r"^https://[a-z0-9.-]+$")
+
+    @field_validator("par_langue")
+    @classmethod
+    def langues(cls, v: dict[str, str]) -> dict[str, str]:
+        for k, voix in v.items():
+            if not re.fullmatch(r"[a-z]{2}", k) or not re.fullmatch(r"[A-Za-z0-9]{10,40}", voix):
+                raise ValueError("par_langue : {code de langue: identifiant de voix}")
+        return v
+
+
+class ModeleMeta(Strict):
+    """Un modèle de message approuvé par Meta (seul permis hors des 24 heures)."""
+
+    nom: str = Field(pattern=r"^[a-z0-9_]{1,512}$")
+    langue: str = Field(default="fr", pattern=r"^[a-z]{2}(_[A-Z]{2})?$")
 
 
 class WhatsApp(Strict):
@@ -49,7 +83,12 @@ class Config(Strict):
     consignes: str = Field(default="", max_length=8000)
     modeles: Modeles = Modeles()
     whatsapp: WhatsApp
-    # Les outils actifs : noms de packs ou d'outils du noyau. Vide au lot 1.
+    voix: Voix = Voix()
+    # Les modèles Meta du client, par usage (« rappel », « relance »).
+    modeles_meta: dict[str, ModeleMeta] = {}
+    # Un 👀 sur le message quand un tour traîne, retiré à la réponse.
+    reactions: bool = True
+    # Les outils actifs : noms de packs ou d'outils du noyau.
     outils: tuple[str, ...] = ()
 
     @field_validator("version")

@@ -124,11 +124,8 @@ def test_export_import_aller_retour(tmp_path, genre):
     n = stockage.exporter(source, fichier)
     assert n >= 1
 
-    cible = f"sqlite:///{tmp_path}/cible.db"
-    db_cible = stockage.base_agno(cible)
-    db_cible.upsert_user_memory(UserMemory(memory="temporaire", user_id="x", memory_id="tmp"))
-    db_cible.delete_user_memory("tmp")
+    cible = f"sqlite:///{tmp_path}/cible.db"  # une base neuve : l'import crée les tables
     assert stockage.importer(fichier, cible) == n
     assert stockage.importer(fichier, cible) == n  # rejouable sans doublon
-    lus = db_cible.get_user_memories(user_id="+41790000000")
+    lus = stockage.base_agno(cible).get_user_memories(user_id="+41790000000")
     assert [m.memory for m in lus] == ["Préfère être appelé le matin"]
