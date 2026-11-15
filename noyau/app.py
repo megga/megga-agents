@@ -16,6 +16,10 @@ Variables d'environnement (jamais dans le dépôt) :
   MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
 Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
+Chez le client, la configuration servie est la dernière poussée par MEGGA et acceptée (pilotage,
+noyau/pilotage.py), revérifiée au démarrage, sinon CLIENT_CONFIG. Quand le pilote en note une autre,
+l'agent finit ses tours et s'arrête : Compose ou Kubernetes le relancent, et il la relit.
+
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
   GET  /whatsapp  l'abonnement du webhook de Meta (chez le client ; chez MEGGA, la porte s'en charge)
@@ -36,6 +40,7 @@ import hmac
 import json
 import logging
 import os
+import signal
 import time
 from collections import OrderedDict
 
@@ -44,6 +49,7 @@ from fastapi.responses import JSONResponse
 
 from . import config as configuration
 from . import licence as licences
+from . import pilotage as pilotages
 from . import stockage
 from . import suivi as suivi_agent
 from . import version as version_image
@@ -107,22 +113,34 @@ def _reecriture(conf, cles):
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
-          delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None) -> FastAPI:
-    """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence`, la clé publique des licences."""
+          delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
+          quitter=None) -> FastAPI:
+    """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
+    publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
     os.environ.setdefault("AGNO_TELEMETRY", "false")
     source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
     if not source:
         raise RuntimeError("CLIENT_CONFIG manquante")
-    conf = configuration.lire(source)
+    fichier = configuration.lire(source)
     chez_le_client = env.get("MEGGA_INSTALLATION") == "client"
+    url = env.get("DATABASE_URL", "")
+    if agent is None:
+        if not url:
+            raise RuntimeError("DATABASE_URL manquante")
+        stockage.migrer(url)  # avant toute table : une base neuve se reconnaît à ce qu'elle n'en a aucune
+    # Chez le client, la dernière configuration poussée par MEGGA et acceptée, revérifiée ; sinon son fichier.
+    ordres = stockage.Ordres(url) if chez_le_client and url else None
+    conf, pilotee, refus = fichier, None, None
+    if ordres is not None:
+        conf, pilotee, refus = pilotages.configuration_servie(fichier, ordres.a_servir(fichier.id), cle_pilotage)
+        if refus:
+            log.error("configuration poussée refusée (%s) : l'agent sert son fichier", refus)
     # Chez le client, pas de licence valide, pas de démarrage (vérifiée sans appel extérieur).
     licence = licences.verifier(env.get("MEGGA_LICENCE", ""), conf.id, cle=cle_licence) if chez_le_client else None
     cles = {k: env.get(k, "") for k in CLES}
+    quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     if agent is None:
-        if not env.get("DATABASE_URL"):
-            raise RuntimeError("DATABASE_URL manquante")
-        stockage.migrer(env["DATABASE_URL"])
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
         agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
@@ -155,8 +173,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     @contextlib.asynccontextmanager
     async def vie(_):
         arret = asyncio.Event()
-        # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel : il veille lui-même.
-        veille = asyncio.create_task(veiller_rappels(arret)) if chez_le_client and rappels is not None else None
+        # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel ni pour le relancer
+        # sur une nouvelle configuration : il veille lui-même.
+        veille = asyncio.create_task(veiller(arret)) if chez_le_client and (rappels is not None or ordres is not None) else None
         yield
         # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
         # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
@@ -167,14 +186,32 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if restantes:
             log.warning("arrêt avec %d tour(s) inachevé(s)", restantes)
 
-    async def veiller_rappels(arret: asyncio.Event):
+    def a_relire() -> bool:
+        """Une autre configuration est à servir : poussée et acceptée, retirée par le client, ou la précédente
+        après un échec. Comparée par le numéro de son ordre (aucun : le fichier)."""
+        _, nouvelle, _ = pilotages.configuration_servie(fichier, ordres.a_servir(fichier.id), cle_pilotage)
+        return (nouvelle or {}).get("ordre") != (pilotee or {}).get("ordre")
+
+    async def veiller(arret: asyncio.Event):
+        verifier_le = 0.0
         while not arret.is_set():
             prochain = None
-            if not licence_echue():
+            if rappels is not None and not licence_echue():
                 try:
                     prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
                 except Exception as e:
                     log.error("rappels en échec : %s", str(e)[:200])
+            if ordres is not None and time.monotonic() >= verifier_le:
+                verifier_le = time.monotonic() + 30
+                try:
+                    if await asyncio.to_thread(a_relire):
+                        # L'arrêt en douceur (SIGTERM) : les tours en cours finissent, puis Compose ou
+                        # Kubernetes relancent l'agent, qui relit sa configuration.
+                        log.info("nouvelle configuration du pilotage : l'agent finit ses tours et redémarre")
+                        quitter()
+                        return
+                except Exception as e:
+                    log.error("pilotage illisible : %s", str(e)[:200])
             attente = min(60.0, max(1.0, (prochain - time.time()) if prochain else 60.0))
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(arret.wait(), timeout=attente)
@@ -190,6 +227,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 "installation": "client" if chez_le_client else "megga"}
         if licence:
             etat["licence"] = licences.etat_du_jour(licence)
+        if chez_le_client:  # d'où vient la configuration servie : poussée par MEGGA (version, ordre), ou le fichier
+            etat["configuration"] = {"source": "pilotage", **pilotee} if pilotee else {"source": "fichier"}
         if licence_echue():  # les sondes le voient : l'agent n'est plus en service
             return JSONResponse({**etat, "ok": False}, status_code=503)
         return etat

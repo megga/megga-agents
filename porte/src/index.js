@@ -14,6 +14,8 @@
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
+//   POST /pilotage/…               le pilote d'une installation hors Cloudflare (chez le client, zone
+//                                  suisse) : requête signée de sa clé, transmise à l'atelier qui la vérifie
 //
 // Elle ne garde aucun message et ne journalise ni texte ni numéro de personne.
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
@@ -28,6 +30,9 @@ const json = (v, status = 200) => Response.json(v, { status });
 const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.headers.get("authorization") ?? "").replace(/^Bearer /, ""), env.ADMIN_TOKEN);
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
+// Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
+const FENETRE_PILOTAGE_S = 300;
+const TAILLE_PILOTAGE = 256 * 1024;
 
 export async function recevoir(requete, env, ctx) {
   const url = new URL(requete.url);
@@ -44,6 +49,7 @@ export async function recevoir(requete, env, ctx) {
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
+  if (url.pathname === "/pilotage" || url.pathname.startsWith("/pilotage/")) return pilote(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
     // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
     if (!/^Bearer \S+$/.test(requete.headers.get("authorization") ?? "")) return texte("jeton attendu", 401);
@@ -51,6 +57,30 @@ export async function recevoir(requete, env, ctx) {
     return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
   }
   return texte("introuvable", 404);
+}
+
+/**
+ * Une requête de pilote bien formée : installation, heure récente, nonce et signature (noyau/pilotage.py).
+ * La porte ne connaît pas les clés des installations : l'atelier vérifie la signature elle-même.
+ */
+export function pilotageBienForme(entetes, maintenant = Date.now()) {
+  const heure = entetes.get("x-megga-heure") ?? "";
+  return (
+    idValide(entetes.get("x-megga-installation")) &&
+    /^[0-9]{1,12}$/.test(heure) &&
+    Math.abs(maintenant / 1000 - Number(heure)) <= FENETRE_PILOTAGE_S &&
+    /^[0-9a-f]{32}$/.test(entetes.get("x-megga-nonce") ?? "") &&
+    /^[A-Za-z0-9_-]{86}$/.test(entetes.get("x-megga-signature") ?? "")
+  );
+}
+
+/** Le pilote d'une installation : sans requête signée et récente, rien ne réveille l'atelier. */
+async function pilote(requete, env) {
+  if (requete.method !== "POST") return texte("méthode", 405);
+  if (!pilotageBienForme(requete.headers)) return texte("requête signée attendue", 401);
+  if (Number(requete.headers.get("content-length") ?? 0) > TAILLE_PILOTAGE) return texte("relevé trop gros", 413);
+  const atelier = atelierDe(env);
+  return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
 }
 
 async function webhook(requete, env, ctx) {

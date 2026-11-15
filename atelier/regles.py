@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from noyau.config import METIERS, ZONES, Config
+from noyau.config import METIERS, ZONES, Config, manques  # noqa: F401 (manques réexporté)
 
 # Les réglages simples d'un client. « voix » : l'identifiant de la voix ElevenLabs, ou rien.
 CHAMPS_CLIENT = ("metier", "nom_agent", "voix", "ton", "outils")
@@ -121,11 +121,3 @@ def numero(valeur: Any, nom: str) -> int | None:
     if isinstance(valeur, bool) or not isinstance(valeur, int) or valeur < 1:
         raise Refus(400, f"{nom} : un numéro de version")
     return valeur
-
-
-def manques(conf: Config) -> list[str]:
-    """Ce qui empêche une configuration valide d'être mise en service."""
-    m = []
-    if "immobilier" in conf.outils and not conf.catalogue:
-        m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
-    return m

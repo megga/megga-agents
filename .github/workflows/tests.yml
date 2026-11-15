@@ -74,6 +74,24 @@ jobs:
             sleep 1
           done
           docker logs atelier; exit 1
+      - name: La même image en pilote, disque en lecture seule ; sans sa clé, il ne démarre pas
+        run: |
+          CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
+          docker run -d --name pilote --read-only --tmpfs /tmp -e HOME=/tmp -e MEGGA_SERVICE=pilote -e CLIENT_CONFIG="$CONF" megga-agents:essai
+          sleep 5
+          test "$(docker inspect -f '{{.State.Running}}' pilote)" = true
+          docker exec pilote python -m pilote vivant
+          docker logs pilote 2>&1 | grep -q "rien ne sort"
+          if docker run --rm -e MEGGA_SERVICE=pilote -e PILOTAGE=suivi -e CLIENT_CONFIG="$CONF" -e DATABASE_URL=sqlite:////tmp/p.db megga-agents:essai; then exit 1; fi
+
+  pilotage:
+    # De bout en bout : l'installation Compose du guide, son pilote, et un atelier d'essai à côté.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/python tests/compose/essai_pilote.py "$RUNNER_TEMP/essai-pilote"
 
   installation:
     runs-on: ubuntu-latest
@@ -97,6 +115,12 @@ jobs:
           if helm template essai installation/helm/megga-agent > /dev/null 2>&1; then echo "rendu sans valeurs"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set ingress.tlsSecret= > /dev/null 2>&1; then echo "rendu sans HTTPS"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set existingSecret= > /dev/null 2>&1; then echo "rendu sans secrets"; exit 1; fi
+          # le pilote : rendu avec le pilotage, avec ses propres étiquettes ; absent sans ; refusé sans sa clé
+          grep -q "name: essai-megga-agent-pilote" /tmp/rendu.yaml
+          grep -q "app.kubernetes.io/name: megga-pilote" /tmp/rendu.yaml
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=non | grep -q megga-pilote; then echo "pilote sans pilotage"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.secret= > /dev/null 2>&1; then echo "pilote sans clé"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=tout > /dev/null 2>&1; then echo "pilotage inconnu"; exit 1; fi
       - name: Le Docker Compose
         working-directory: installation/compose
         run: |

@@ -36,5 +36,25 @@ resources:
   requests: {cpu: 250m, memory: 512Mi}
   limits: {memory: 1Gi}
 
+# Le pilotage par MEGGA (docs/installation-client.md, « Le pilotage ») : un petit pilote à côté de
+# l'agent, la même image, toujours sortant (aucun port, aucun accès entrant).
+pilotage:
+  mode: non           # non (rien ne sort), suivi (état, volumes, coûts, alertes ; jamais une
+                      # conversation) ou complet (et MEGGA peut changer la configuration de l'agent)
+  accord: true        # chaque changement venu de MEGGA attend l'accord du client
+  url: https://megga-agents.api-963.workers.dev
+  # La clé de l'installation (PILOTE_CLE), créée chez le client, au choix :
+  # - secret : un Secret avec la clé PILOTE_CLE (l'adresse de la base vient de existingSecret) ;
+  # - des fichiers montés par son coffre : extraVolumes, extraVolumeMounts, et dans extraEnv
+  #   PILOTE_CLE_FILE (et DATABASE_URL_FILE sans existingSecret).
+  # Le pilote ne reçoit ni les clés des modèles ni celles de Meta.
+  secret: ""
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  resources:
+    requests: {cpu: 50m, memory: 128Mi}
+    limits: {memory: 256Mi}
+
 nodeSelector: {}
 tolerations: []

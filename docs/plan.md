@@ -85,7 +85,7 @@ Même code, même pack métier, choisis client par client.
 
 **Le pilotage à distance** :
 - Toujours sortant : l'installation du client appelle la console de MEGGA, en HTTPS. Aucun port ouvert chez le client, aucun accès entrant.
-- Authentifié : un certificat propre à chaque installation, délivré à la mise en service, révocable des deux côtés.
+- Authentifié : une clé propre à chaque installation, créée chez le client ; MEGGA en enregistre la partie publique à la mise en service ; révocable des deux côtés. Chaque requête est signée (Ed25519, avec l'heure et un nonce contre le rejeu) : un vrai certificat client demanderait un domaine de MEGGA chez Cloudflare, `workers.dev` ne le permettant pas (lot 6.3, à confirmer par Julien).
 - Avec l'accord du client : un réglage chez lui, `PILOTAGE`, à « non », « suivi » (état et alertes seulement) ou « complet ». Il peut aussi demander que chaque changement attende son oui.
 - Sans contenu : le suivi remonte l'état, les volumes, les coûts et les erreurs, jamais les conversations.
 - Borné : la console ne peut que changer un réglage prévu ou proposer une version. Aucune commande libre. Chaque ordre est signé par MEGGA, vérifié par l'installation, et inscrit au journal des deux côtés.

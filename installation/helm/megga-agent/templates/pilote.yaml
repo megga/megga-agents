@@ -1,0 +1,90 @@
+{{- $mode := toString .Values.pilotage.mode }}
+{{- if not (has $mode (list "non" "suivi" "complet")) }}{{ fail "pilotage.mode : non, suivi ou complet" }}{{ end }}
+{{- if ne $mode "non" }}
+{{- if not (or .Values.pilotage.secret .Values.pilotage.extraEnv) }}{{ fail "pilotage.secret (avec PILOTE_CLE), ou pilotage.extraEnv avec PILOTE_CLE_FILE : la clé de l'installation" }}{{ end }}
+{{- if not (or .Values.existingSecret .Values.pilotage.extraEnv) }}{{ fail "pilotage : l'adresse de la base, par existingSecret ou DATABASE_URL_FILE dans pilotage.extraEnv" }}{{ end }}
+# Le pilote : le pilotage par MEGGA, toujours sortant (aucun Service, aucun port). Il lit l'état de
+# l'agent (/sante) et sa base, sans les clés des modèles ni celles de Meta. Ses pods ont leurs propres
+# étiquettes : ni le Service de l'agent ni son Deployment ne les prennent pour l'agent.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "megga-agent.nom" . }}-pilote
+  labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: {{- include "megga-agent.etiquettes-pilote" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 8 }}
+      annotations:
+        megga.ai/config: {{ include "megga-agent.config" . | sha256sum | trunc 16 }}
+    spec:
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: pilote
+          image: {{ include "megga-agent.image" . }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - {name: MEGGA_SERVICE, value: pilote}
+            - {name: PILOTAGE, value: {{ $mode | quote }}}
+            - {name: PILOTAGE_ACCORD, value: {{ ternary "oui" "non" (ne (toString .Values.pilotage.accord) "false") | quote }}}
+            - {name: PILOTAGE_URL, value: {{ .Values.pilotage.url | quote }}}
+            - {name: CLIENT_CONFIG_FILE, value: /config/client.yaml}
+            - {name: AGENT_URL, value: "http://{{ include "megga-agent.nom" . }}:8080"}
+            - {name: HOME, value: /tmp}
+            {{- with .Values.existingSecret }}
+            - name: DATABASE_URL
+              valueFrom: {secretKeyRef: {name: {{ . }}, key: DATABASE_URL}}
+            {{- end }}
+            {{- with .Values.pilotage.secret }}
+            - name: PILOTE_CLE
+              valueFrom: {secretKeyRef: {name: {{ . }}, key: PILOTE_CLE}}
+            {{- end }}
+            {{- with .Values.pilotage.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            {{- with .Values.pilotage.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          livenessProbe:
+            exec: {command: [python, -m, pilote, vivant]}
+            initialDelaySeconds: 120
+            periodSeconds: 60
+            timeoutSeconds: 10
+          resources: {{- toYaml .Values.pilotage.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "megga-agent.nom" . }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.pilotage.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

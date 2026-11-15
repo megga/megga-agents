@@ -13,3 +13,6 @@ config:
 ingress:
   host: agent.exemple.ch
   tlsSecret: agent-exemple-tls
+pilotage:
+  mode: suivi
+  secret: megga-agent-pilote

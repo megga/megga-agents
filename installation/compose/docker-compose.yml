@@ -1,6 +1,7 @@
-# Une installation chez le client : l'agent, sa base Postgres, et l'entrée HTTPS du webhook WhatsApp.
+# Une installation chez le client : l'agent, sa base Postgres, l'entrée HTTPS du webhook WhatsApp,
+# et le pilote (le pilotage par MEGGA, toujours sortant).
 # Guide : docs/installation-client.md. Rien de secret ici : les réglages sont dans .env, les secrets
-# dans secrets.env (ou en fichiers, <NOM>_FILE), la configuration de l'agent dans client.yaml.
+# dans secrets.env et pilote.env (ou en fichiers, <NOM>_FILE), la configuration de l'agent dans client.yaml.
 name: megga-agent
 
 services:
@@ -35,7 +36,45 @@ services:
     # Aucun port publié : seule l'entrée HTTPS lui parle, et seulement pour /whatsapp.
     expose: ["8080"]
     # À l'arrêt (mise à jour, redémarrage), l'agent finit ses tours en cours (100 secondes au plus).
+    # Il s'arrête aussi de lui-même quand le pilote a noté une nouvelle configuration : relancé, il la relit.
     stop_grace_period: 2m
+
+  pilote:
+    # Le pilotage par MEGGA (docs/installation-client.md, « Le pilotage ») : la même image, toujours
+    # sortant, aucun port. PILOTAGE (dans .env) : non, suivi ou complet. Ses seuls secrets : sa clé
+    # (pilote.env) et la base ; ni les clés des modèles ni celles de Meta.
+    image: ${MEGGA_IMAGE:?l'image signée, par empreinte, ghcr.io/megga/megga-agents@sha256:...}
+    restart: unless-stopped
+    env_file:
+      - path: pilote.env
+        required: false
+    environment:
+      MEGGA_SERVICE: pilote
+      PILOTAGE: ${PILOTAGE:-non}
+      PILOTAGE_ACCORD: ${PILOTAGE_ACCORD:-oui}
+      PILOTAGE_URL: ${PILOTAGE_URL:-https://megga-agents.api-963.workers.dev}
+      PILOTAGE_INTERVALLE: ${PILOTAGE_INTERVALLE:-60}
+      CLIENT_CONFIG_FILE: /config/client.yaml
+      AGENT_URL: http://agent:8080
+      DATABASE_URL: postgresql://megga@base:5432/megga
+      PGPASSWORD: ${POSTGRES_PASSWORD:?mot de passe de la base}
+    volumes:
+      - type: bind
+        source: ./client.yaml
+        target: /config/client.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      base:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "pilote", "vivant"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 30s
 
   base:
     image: postgres:17
