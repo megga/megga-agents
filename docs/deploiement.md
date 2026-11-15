@@ -66,7 +66,7 @@ Une seule image, construite une fois par version, signée, la même partout : Cl
 scripts/cle_signature.sh
 ```
 
-Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de passe vont dans les secrets GitHub du dépôt, rien ne s'affiche ; seule la clé publique reste, dans `socle/cosign.pub`, à commiter. Il faut `cosign` et `gh` (`brew install cosign gh`). Elle part aussi dans l'image (`noyau/cosign.pub`) : le pilote d'une installation vérifie avec elle chaque image qu'on lui propose ; une image construite sans elle n'accepte aucune mise à jour.
+Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de passe vont dans les secrets GitHub du dépôt, rien ne s'affiche ; seule la clé publique reste, dans `socle/cosign.pub`, à commiter. Il faut `cosign` et `gh` (`brew install cosign gh`). Faite le 16.11.2026, avec un mot de passe aléatoire que personne n'a vu : il n'existe que dans les secrets GitHub, seule la publication s'en sert. Ne pas relancer le script : une nouvelle paire rendrait les images déjà signées invérifiables. Elle part aussi dans l'image (`noyau/cosign.pub`) : le pilote d'une installation vérifie avec elle chaque image qu'on lui propose ; une image construite sans elle n'accepte aucune mise à jour.
 
 ### Une seule fois : la clé de pilotage (Julien)
 
