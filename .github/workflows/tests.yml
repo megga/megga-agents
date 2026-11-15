@@ -53,3 +53,14 @@ jobs:
             -e DATABASE_URL=sqlite:////tmp/essai.db -e META_APP_SECRET=essai megga-agents:essai
           for i in $(seq 1 30); do curl -sf localhost:8080/sante && exit 0; sleep 1; done
           docker logs essai; exit 1
+      - name: La même image démarre en atelier
+        run: |
+          docker run -d --name atelier -p 8081:8080 -e MEGGA_SERVICE=atelier \
+            -e DATABASE_URL=sqlite:////tmp/atelier.db -e ADMIN_TOKEN=essai megga-agents:essai
+          for i in $(seq 1 30); do
+            if curl -sf localhost:8081/sante | grep -q atelier; then
+              curl -sf -H "authorization: Bearer essai" localhost:8081/atelier/catalogue && exit 0
+            fi
+            sleep 1
+          done
+          docker logs atelier; exit 1

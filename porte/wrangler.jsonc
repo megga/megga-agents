@@ -27,18 +27,31 @@
       "instance_type": "basic",
       "max_instances": 50,
       "constraints": { "jurisdiction": "us" }
+    },
+    {
+      // L'atelier de MEGGA (lot 5) : la même image, en service « atelier », un seul conteneur.
+      "class_name": "Atelier",
+      "image": "../socle/Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "constraints": { "jurisdiction": "eu" }
     }
   ],
   "durable_objects": {
     "bindings": [
       { "name": "AGENTS_EUROPE", "class_name": "AgentEurope" },
-      { "name": "AGENTS_ETATS_UNIS", "class_name": "AgentEtatsUnis" }
+      { "name": "AGENTS_ETATS_UNIS", "class_name": "AgentEtatsUnis" },
+      { "name": "ATELIER", "class_name": "Atelier" }
     ]
   },
   "exports": {
     "AgentEurope": { "type": "durable-object", "storage": "sqlite" },
-    "AgentEtatsUnis": { "type": "durable-object", "storage": "sqlite" }
+    "AgentEtatsUnis": { "type": "durable-object", "storage": "sqlite" },
+    "Atelier": { "type": "durable-object", "storage": "sqlite" }
   },
+  // L'adresse publique de la porte : l'atelier l'appelle pour mettre une configuration en service.
+  "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev" },
   // L'annuaire des clients (D1, juridiction UE, créé le 15.11.2026).
   "d1_databases": [
     { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "637715e3-6675-4310-bbdd-27a4f3b5d8c2", "migrations_dir": "migrations" }

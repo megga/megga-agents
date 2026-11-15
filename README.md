@@ -9,8 +9,9 @@ Le plan : [docs/plan.md](docs/plan.md).
 | Dossier | Contenu |
 |---|---|
 | `noyau/` | le noyau Python, sur Agno : configuration, agent, WhatsApp, base, typographie |
+| `atelier/` | l'API qui construit et pilote les agents des clients ([docs/atelier.md](docs/atelier.md)) |
 | `socle/` | l'image Docker unique (Cloudflare, Suisse, chez le client) |
-| `porte/` | le Worker d'entrée des zones Europe et États-Unis, et l'objet de chaque client |
+| `porte/` | le Worker d'entrée des zones Europe et États-Unis, l'objet de chaque client et celui de l'atelier |
 | `clients/` | des configurations ; seulement un exemple, aucun client réel |
 | `tests/` | les essais du noyau |
 
