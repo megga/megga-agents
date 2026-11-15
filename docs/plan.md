@@ -159,9 +159,13 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
      - un mode d'essai avant la mise en service ;
      - un historique des versions de configuration, avec retour à une version précédente.
    - partir des fondations d'Agno plutôt que tout refaire (validé par Julien, 15.11.2026). AgentOS (Agno 3.2) a déjà les routes de composants, vérifiées dans le code : `/components`, `/components/{id}/configs`, `.../configs/current`, `.../configs/{version}`, `.../configs/{version}/set-current`, `/components/{id}/restore` et `/registry`. Elles couvrent l'agent en base, l'historique des versions, la version en service et le retour en arrière. À construire par-dessus : l'assistant simple des clients, les droits par rôle, le mode d'essai avant activation, et le lien avec notre configuration et l'annuaire des zones. Le « Studio » d'os.agno.com n'est pas retenu (marque Agno, connexion en direct payante, fait pour des développeurs).
-   L'interface elle-même reste à Julien, dans Claude Design : le plan ne la fige pas.
+   Pas d'écran dans ce lot : l'interface a son propre lot (8).
 6. **Installation chez le client et zone suisse** : Docker Compose et chart Helm, conteneur pilote, canal de pilotage, mises à jour signées, guide, puis la zone suisse chez Exoscale et l'entrée par API. Avancé dès qu'un client suisse signe.
 7. **Alix FSP sur le socle** : parité, essai, bascule sur accord.
+8. **L'interface** (décision de Julien, 15.11.2026) : les écrans de la console, faits en artefacts, d'après les références que Julien donnera, avec un spécialiste UI/UX. Elle se branche sur l'API du lot 5, sans toucher au moteur :
+   - la création d'agent pour le client, très épurée : une question par écran (métier, prénom, voix et ton, ce que l'agent sait faire), un essai dans un faux WhatsApp, puis « Mettre en service » ;
+   - le tableau de bord du client : son agent en ligne, quelques chiffres, « Modifier », « Revenir à la version d'avant » ;
+   - la vue MEGGA : tous les clients, les réglages avancés et la reprise en main.
 
 ## Décidé
 
