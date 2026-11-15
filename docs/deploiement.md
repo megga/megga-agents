@@ -71,7 +71,7 @@ Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de p
 ### Publier une version
 
 1. Changer la version dans `pyproject.toml` (une PR, comme le reste). Une version publiée ne se republie jamais.
-2. GitHub, Actions, « publier », en écrivant « Publie » : l'image est construite une fois, publiée dans le registre privé de MEGGA (`ghcr.io/megga/megga-agents:<version>`), essayée (elle démarre et dit sa version), signée, puis vérifiée avec la clé publique du dépôt. Le résumé donne son empreinte.
+2. GitHub, Actions, « publier », en écrivant « Publie » : l'image est construite une fois, publiée dans le registre privé de MEGGA (`ghcr.io/megga/megga-agents:<version>`, choisi par Julien le 15.11.2026), essayée (elle démarre et dit sa version), signée, puis vérifiée avec la clé publique du dépôt. Le résumé donne son empreinte.
 3. Pour la vérifier ailleurs (avant un déploiement, chez un client) :
 
    ```bash
