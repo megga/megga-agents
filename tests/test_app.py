@@ -82,7 +82,7 @@ def test_sante_sans_rien_de_prive():
     from noyau.version import version
 
     assert r.json() == {"ok": True, "client": "exemple", "zone": "europe", "version": version(), "revision": "inconnue",
-                        "config": 1, "schema": 1}
+                        "config": 1, "schema": 1, "installation": "megga"}
 
 
 def test_signature_obligatoire():
