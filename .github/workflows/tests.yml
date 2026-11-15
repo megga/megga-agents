@@ -108,9 +108,14 @@ jobs:
           V=installation/helm/megga-agent/exemple-valeurs.yaml
           # la configuration par --set-file, comme dans le guide
           helm template essai installation/helm/megga-agent -f $V --set-file config=clients/exemple.yaml | grep -q "entreprise: Entreprise exemple"
-          # les secrets en fichiers (coffre du client), sans Secret Kubernetes
-          helm template essai installation/helm/megga-agent -f $V --set existingSecret= \
+          # les secrets en fichiers (coffre du client), sans Secret Kubernetes : l'agent seul, puis avec son pilote
+          helm template essai installation/helm/megga-agent -f $V --set existingSecret= --set pilotage.mode=non \
             --set "extraEnv[0].name=ANTHROPIC_API_KEY_FILE" --set "extraEnv[0].value=/mnt/secrets/anthropic" | grep -q ANTHROPIC_API_KEY_FILE
+          helm template essai installation/helm/megga-agent -f $V --set existingSecret= --set pilotage.secret= \
+            --set "extraEnv[0].name=DATABASE_URL_FILE" --set "extraEnv[0].value=/mnt/secrets/base" \
+            --set "pilotage.extraEnv[0].name=PILOTE_CLE_FILE" --set "pilotage.extraEnv[0].value=/mnt/pilote/cle" \
+            --set "pilotage.extraEnv[1].name=DATABASE_URL_FILE" --set "pilotage.extraEnv[1].value=/mnt/pilote/base" > /tmp/fichiers.yaml
+          grep -q "value: /mnt/pilote/cle" /tmp/fichiers.yaml
           # sans les valeurs du client, sans HTTPS ou sans secrets, le chart refuse au lieu d'installer un agent incomplet
           if helm template essai installation/helm/megga-agent > /dev/null 2>&1; then echo "rendu sans valeurs"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set ingress.tlsSecret= > /dev/null 2>&1; then echo "rendu sans HTTPS"; exit 1; fi

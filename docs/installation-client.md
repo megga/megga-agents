@@ -89,7 +89,7 @@ helm install agent installation/helm/megga-agent \
 
 Ou un fichier de valeurs, sur le modèle de `exemple-valeurs.yaml`.
 
-Le pilote, avec `pilotage.mode` à `suivi` ou `complet` : sa clé dans un Secret à part (clé `PILOTE_CLE`, donné par `pilotage.secret`), ou en fichier depuis le coffre (`pilotage.extraEnv` avec `PILOTE_CLE_FILE`). Il ne reçoit que sa clé et l'adresse de la base, jamais les clés des modèles ni celles de Meta.
+Le pilote, avec `pilotage.mode` à `suivi` ou `complet` : sa clé dans un Secret à part (clé `PILOTE_CLE`, donné par `pilotage.secret`), ou en fichier depuis le coffre (`pilotage.extraEnv` avec `PILOTE_CLE_FILE`, et `DATABASE_URL_FILE` sans `existingSecret` ; ses propres `pilotage.extraVolumes` et `pilotage.extraVolumeMounts`). Il ne reçoit que sa clé et l'adresse de la base, jamais les clés des modèles ni celles de Meta.
 
 - **Secrets en fichiers** : sans Secret Kubernetes, le coffre du client (pilote CSI de Vault, Key Vault…) monte ses fichiers par `extraVolumes` et `extraVolumeMounts`, et chaque secret se déclare dans `extraEnv` sous la forme `<NOM>_FILE` (par exemple `ANTHROPIC_API_KEY_FILE=/mnt/secrets/anthropic`).
 - **HTTPS** : exigé par Meta. Le chart refuse de s'installer sans `ingress.tlsSecret`, sauf `ingress.tlsAilleurs=true` si un répartiteur de charge l'assure devant l'ingress.
