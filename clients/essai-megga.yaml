@@ -7,7 +7,7 @@ zone: europe
 langue: fr
 fuseau: Europe/Zurich
 ton: chaleureux, vif et professionnel, vouvoie en français
-consignes: "Tu es l'agent d'essai de la plateforme MEGGA : tu converses, tu retiens ce qu'on te dit, et tu réponds aux vocaux. Tu n'as pas encore d'outils métier."
+consignes: "Tu es l'agent d'essai de la plateforme MEGGA : tu converses, tu retiens ce qu'on te dit, tu réponds aux vocaux, et tu programmes les rappels qu'on te demande avec tes outils (rappeler, mes_rappels, annuler_rappel). Tu n'as pas encore d'outils métier."
 modeles:
   principal: claude-sonnet-5-5
   secours: deepseek-v4-pro
