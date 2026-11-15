@@ -589,7 +589,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     @r.post("/clients/{ident}/installation/image", status_code=201)
     async def proposer_image(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        """Une version d'image proposée à l'installation : notée chez elle ; son installation viendra au lot 6.4."""
+        """Une version d'image pour l'installation : son pilote la vérifie et l'installe (MISES_A_JOUR=oui), sinon la propose."""
         megga(qui)
         await bd(hors_porte, qui, ident)
         contenu = {"version": corps.get("version"), "image": corps.get("image")}

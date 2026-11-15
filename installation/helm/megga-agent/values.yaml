@@ -42,11 +42,21 @@ pilotage:
   mode: non           # non (rien ne sort), suivi (état, volumes, coûts, alertes ; jamais une
                       # conversation) ou complet (et MEGGA peut changer la configuration de l'agent)
   accord: true        # chaque changement venu de MEGGA attend l'accord du client
+  # true : le pilote installe les versions d'image acceptées (signature vérifiée, base sauvegardée,
+  # retour arrière si l'agent ne répond plus). Il reçoit un compte de service qui ne peut changer que
+  # l'image de l'agent et la sienne. false : le client met à jour image.digest lui-même.
+  misesAJour: false
+  delai: 600          # les secondes laissées à l'agent pour répondre sur une nouvelle configuration ou image
+  sauvegardes:        # avec misesAJour : les 3 dernières sauvegardes de la base, dans un volume
+    taille: 5Gi
+    storageClass: ""
+    existingClaim: ""
   url: https://megga-agents.api-963.workers.dev
   # La clé de l'installation (PILOTE_CLE), créée chez le client, au choix :
   # - secret : un Secret avec la clé PILOTE_CLE (l'adresse de la base vient de existingSecret) ;
   # - des fichiers montés par son coffre : extraVolumes, extraVolumeMounts, et dans extraEnv
   #   PILOTE_CLE_FILE (et DATABASE_URL_FILE sans existingSecret).
+  # Le même Secret peut porter REGISTRE_COMPTE et REGISTRE_JETON : la lecture du registre, pour la signature.
   # Le pilote ne reçoit ni les clés des modèles ni celles de Meta.
   secret: ""
   extraEnv: []

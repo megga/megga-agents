@@ -1,0 +1,56 @@
+{{- if and (ne (toString .Values.pilotage.mode) "non") .Values.pilotage.misesAJour }}
+# Les mises à jour signées de l'image par le pilote (docs/installation-client.md, « Les mises à jour ») :
+# son compte de service ne peut que lire et changer deux Deployments nommés, celui de l'agent et le sien.
+# Ni Secret, ni Pod, ni autre Deployment ; rien hors de cet espace de noms. Le pilote, lui, ne change
+# que l'image, et seulement pour une image de MEGGA dont il a vérifié la signature.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "megga-agent.nom" . }}-pilote
+  labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "megga-agent.nom" . }}-pilote
+  labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "megga-agent.nom" . | quote }}, {{ printf "%s-pilote" (include "megga-agent.nom" .) | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "megga-agent.nom" . }}-pilote
+  labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "megga-agent.nom" . }}-pilote
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "megga-agent.nom" . }}-pilote
+    namespace: {{ .Release.Namespace }}
+{{- if not .Values.pilotage.sauvegardes.existingClaim }}
+---
+# Les sauvegardes de la base faites avant chaque mise à jour (les 3 dernières). Gardé si le chart est retiré.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "megga-agent.nom" . }}-sauvegardes
+  labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.pilotage.sauvegardes.storageClass }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.pilotage.sauvegardes.taille | quote }}
+{{- end }}
+{{- end }}

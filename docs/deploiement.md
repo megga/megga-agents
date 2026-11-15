@@ -66,7 +66,7 @@ Une seule image, construite une fois par version, signée, la même partout : Cl
 scripts/cle_signature.sh
 ```
 
-Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de passe vont dans les secrets GitHub du dépôt, rien ne s'affiche ; seule la clé publique reste, dans `socle/cosign.pub`, à commiter. Il faut `cosign` et `gh` (`brew install cosign gh`).
+Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de passe vont dans les secrets GitHub du dépôt, rien ne s'affiche ; seule la clé publique reste, dans `socle/cosign.pub`, à commiter. Il faut `cosign` et `gh` (`brew install cosign gh`). Elle part aussi dans l'image (`noyau/cosign.pub`) : le pilote d'une installation vérifie avec elle chaque image qu'on lui propose ; une image construite sans elle n'accepte aucune mise à jour.
 
 ### Une seule fois : la clé de pilotage (Julien)
 
@@ -98,7 +98,15 @@ La clé privée va dans le trousseau, rien ne s'affiche ; la clé publique dans 
    scripts/verifier_image.sh ghcr.io/megga/megga-agents@sha256:<empreinte>
    ```
 
-Cloudflare ne tire pas depuis GitHub : `scripts/vers_cloudflare.sh <version>` vérifie la signature et copie la même image (même empreinte) dans son registre. Pour l'instant, `wrangler deploy` construit encore l'image depuis `socle/Dockerfile` ; le passage de Cloudflare à l'image publiée viendra avec les mises à jour signées (lot 6, partie 4).
+4. Pour une installation hors Cloudflare : la proposer à son pilote, qui la vérifie et l'installe si le client l'a permis (`docs/installation-client.md`, « Les mises à jour de l'image ») :
+
+   ```bash
+   .venv/bin/python scripts/pilotage.py image <id-du-client> https://megga-agents.api-963.workers.dev <version> ghcr.io/megga/megga-agents@sha256:<empreinte>
+   ```
+
+   Jamais une version qui saute une migration : l'installation doit pouvoir revenir à l'image d'avant sur la même base.
+
+Cloudflare ne tire pas depuis GitHub : `scripts/vers_cloudflare.sh <version>` vérifie la signature et copie la même image (même empreinte) dans son registre. Pour l'instant, `wrangler deploy` construit encore l'image depuis `socle/Dockerfile` ; le passage de Cloudflare à l'image publiée reste à faire.
 
 ### Déployer chez Cloudflare
 

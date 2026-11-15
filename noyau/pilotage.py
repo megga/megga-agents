@@ -8,7 +8,7 @@ chez le client. Deux clés Ed25519, une par sens :
     l'image (noyau/pilotage.pub). Elle est distincte de la clé des licences, qui reste hors ligne.
 
 Un ordre est borné : une version de configuration de l'atelier (« config ») ou une version
-d'image proposée (« image », installée au lot 6.4). Aucune commande libre. L'installation le
+d'image (« image », installée par le pilote si le client l'a permis). Aucune commande libre. L'installation le
 vérifie (signature, client, numéro, échéance, contenu) avant de le noter.
 """
 

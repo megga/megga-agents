@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import decimal
+import gzip
 import json
 import threading
 import time
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from sqlalchemy import (Column, Float, Integer, MetaData, String, Table, Text, and_, create_engine, delete, func, insert,
-                        select, text, update)
+                        or_, select, text, update)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -113,16 +114,23 @@ def _tables(e: Engine) -> MetaData:
 
 def _lignes(e: Engine) -> Iterator[dict]:
     meta = _tables(e)
-    with e.connect() as c:
+    # Sous Postgres, toutes les tables lues au même instant, même si l'agent écrit pendant l'export.
+    options = {"isolation_level": "REPEATABLE READ"} if e.dialect.name == "postgresql" else {}
+    with e.connect().execution_options(**options) as c, c.begin():
         for table in meta.sorted_tables:
             for ligne in c.execute(select(table)).mappings():
                 yield {"table": table.name, "ligne": {k: _en_json(v) for k, v in ligne.items()}}
 
 
-def exporter(url: str, fichier: str | Path) -> int:
-    """Toutes les lignes de la base du client dans un fichier JSON Lines ; rend leur nombre."""
+def _ouvrir(fichier: str | Path, mode: str, gz: bool):
+    return gzip.open(fichier, mode + "t", encoding="utf-8") if gz else open(fichier, mode, encoding="utf-8")
+
+
+def exporter(url: str, fichier: str | Path, gz: bool | None = None) -> int:
+    """Toutes les lignes de la base du client dans un fichier JSON Lines (compressé si `gz`, ou si le nom finit
+    par .gz) ; rend leur nombre."""
     n = 0
-    with open(fichier, "w", encoding="utf-8") as f:
+    with _ouvrir(fichier, "w", str(fichier).endswith(".gz") if gz is None else gz) as f:
         f.write(json.dumps({"format": FORMAT}) + "\n")
         for l in _lignes(moteur(url)):
             f.write(json.dumps(l, ensure_ascii=False, default=str) + "\n")
@@ -201,6 +209,7 @@ def preparer(url: str) -> None:
     Fil(url)
     Ordres(url)
     JournalPilotage(url)
+    Reglages(url)
     _table_schema(url)
 
 
@@ -213,7 +222,9 @@ def importer(fichier: str | Path, url: str) -> int:
     e = moteur(url)
     tables = {t.name: t for t in _tables(e).sorted_tables}
     n = 0
-    with open(fichier, encoding="utf-8") as f, e.begin() as c:
+    with open(fichier, "rb") as f:
+        gz = f.read(2) == b"\x1f\x8b"  # un export compressé (les sauvegardes du pilote)
+    with _ouvrir(fichier, "r", gz) as f, e.begin() as c:
         entete = json.loads(f.readline() or "{}")
         if entete.get("format") != FORMAT:
             raise ValueError("export d'un format inconnu")
@@ -550,7 +561,8 @@ class Suivi:
 
 
 class Reglages:
-    """Les réglages de l'atelier, en JSON par clé (table megga_reglages) : aujourd'hui, les tarifs."""
+    """Des réglages en JSON par clé (table megga_reglages) : dans l'atelier, les tarifs ; chez le client,
+    la mise à jour d'image en cours (pilote)."""
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -593,8 +605,9 @@ class Ordres:
     Chez le client : ceux que son pilote a reçus et vérifiés, et ce qu'ils sont devenus.
 
     états : en_attente (déposé, pas encore remis), remis, attente_accord (le oui du client),
-    a_appliquer, applique, propose (une image, installée au lot 6.4), refuse, echec, remplace
-    (par un ordre plus récent), retire (le client revient à son fichier), expire.
+    a_appliquer, applique, propose (une image, quand le pilote n'installe pas les mises à jour :
+    le client l'installe à la main), refuse, echec, remplace (par un ordre plus récent), retire
+    (le client revient à son fichier), expire.
     """
 
     SERVIS = ("a_appliquer", "applique")
@@ -730,7 +743,8 @@ class Ordres:
     FINAUX = ("refuse", "echec", "remplace", "retire", "expire")
 
     def noter_etats(self, client: str, etats: list, maintenant: float) -> list[dict]:
-        """Chez MEGGA : ce que l'installation dit de ses ordres (le dernier mot par ordre) ; rend ceux qui ont changé.
+        """Chez MEGGA : ce que l'installation dit de ses ordres (le dernier mot par ordre) ; rend ceux qui ont changé,
+        d'état, ou de détail pour un ordre en cours (une mise à jour d'image avance sans changer d'état : vérifiée, lancée).
         Un ordre jamais remis (en_attente) n'a pas d'état chez elle ; un ordre arrivé à un état final n'en change plus."""
         t = self._t
         derniers: dict[int, tuple[str, str]] = {}
@@ -743,7 +757,8 @@ class Ordres:
         changes = []
         with self._e.begin() as c:
             for numero, (etat, detail) in derniers.items():
-                r = c.execute(update(t).where(t.c.client == client, t.c.numero == numero, t.c.etat != etat,
+                r = c.execute(update(t).where(t.c.client == client, t.c.numero == numero,
+                                              or_(t.c.etat != etat, and_(t.c.etat == "a_appliquer", t.c.detail != detail)),
                                               t.c.etat.notin_(("en_attente",) + self.FINAUX))
                               .values(etat=etat, detail=detail, maj=maintenant))
                 if r.rowcount:

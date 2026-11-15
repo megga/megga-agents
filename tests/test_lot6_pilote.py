@@ -534,7 +534,7 @@ def test_une_image_proposee_est_notee_seulement(canal):
     assert inst.ordres.lire("exemple", 1)["etat"] == "propose"
     env = {"CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": c.url, "PILOTAGE": "complet"}
     sortie = []
-    assert commande(["accepter", "1"], env, sortie.append, cle_megga=PUB) == 1 and "6.4" in sortie[-1]
+    assert commande(["accepter", "1"], env, sortie.append, cle_megga=PUB) == 1 and "MISES_A_JOUR" in sortie[-1]
     assert commande(["refuser", "1"], env, sortie.append, cle_megga=PUB) == 0
     c.tour(p)
     assert c.ordres() == {1: "refuse"}
