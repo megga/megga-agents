@@ -284,3 +284,51 @@ test("les pannes d'un conteneur sont gardées, puis marquées résolues quand il
   for (let i = 0; i < 15; i++) await agent.noterAlerte("transmission", new Error(`panne ${i}`));
   assert.equal((await agent.etat()).alertes.length, 10); // les dix dernières seulement
 });
+
+test("après un déploiement : chaque conteneur allumé repart sur la nouvelle image, réservé à MEGGA", async () => {
+  const journal = [];
+  const e = env(journal, new Set(["exemple"]), new Set(["casse"]));
+  await put(e, "exemple", { version: 1, config: config() });
+  await put(e, "dort", { version: 1, config: config("dort", { whatsapp: { numero_id: "100000000000005" } }) });
+  journal.length = 0;
+  const post = (jeton) => recevoir(new Request("https://porte/admin/redemarrer", { method: "POST", headers: { authorization: `Bearer ${jeton}` } }), e);
+  assert.equal((await post("faux")).status, 401);
+  assert.equal(journal.length, 0);
+  const r = await (await post("admin")).json();
+  assert.deepEqual(r.clients, [{ id: "dort", redemarre: false }, { id: "exemple", redemarre: true }]);
+  // l'atelier aussi (« megga »), pour qu'il reparte lui aussi sur la nouvelle image
+  assert.deepEqual(journal.filter((x) => "redemarre" in x).map((x) => x.nom).sort(), ["dort", "exemple", "megga"]);
+  assert.equal(r.atelier, false);
+});
+
+test("l'atelier ne s'arrête qu'entre deux requêtes : une mise en service en cours va au bout", async () => {
+  const a = ctx({ running: true });
+  let finir;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () => {
+      await new Promise((r) => (finir = r));
+      return Response.json({ version_en_service: 2 });
+    },
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const enCours = atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/activer", { method: "POST" }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(await atelier.redemarrer(), true); // demandé pendant la mise en service
+  assert.deepEqual(a.journal, []); // rien n'est coupé
+  finir();
+  const r = await enCours;
+  assert.deepEqual(await r.json(), { version_en_service: 2 }); // la réponse arrive entière
+  assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
+  assert.equal(await atelier.redemarrer(), false); // arrêté : plus rien à faire
+});
+
+test("le commit déployé (wrangler deploy --tag) est remis au conteneur", async () => {
+  const a = ctx({ secrets: { DATABASE_URL: "postgresql://atelier" } });
+  const envW = { ADMIN_TOKEN: "admin", PORTE_URL: "https://porte", VERSION_PORTE: { id: "v1", tag: "abc123def456" } };
+  await new Atelier(a.ctx, envW).demarrer();
+  assert.equal(a.journal[0][1].env.MEGGA_REVISION, "abc123def456");
+  const b = ctx({ secrets: { DATABASE_URL: "postgresql://atelier" } });
+  await new Atelier(b.ctx, { ...envW, VERSION_PORTE: { id: "v2", tag: "" } }).demarrer();
+  assert.equal("MEGGA_REVISION" in b.journal[0][1].env, false); // sans étiquette, l'image garde la sienne
+});

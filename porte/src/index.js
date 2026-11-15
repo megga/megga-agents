@@ -10,6 +10,8 @@
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
+//   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
+//                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
 //
@@ -41,6 +43,7 @@ export async function recevoir(requete, env, ctx) {
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
+  if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
     // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
     if (!/^Bearer \S+$/.test(requete.headers.get("authorization") ?? "")) return texte("jeton attendu", 401);
@@ -163,6 +166,33 @@ async function suivre(requete, env, id, chemin, params) {
     const message = String(e?.message ?? e).slice(0, 200);
     return json({ erreur: message === "chemin de suivi" ? message : "conteneur injoignable" }, message === "chemin de suivi" ? 400 : 503);
   }
+}
+
+/**
+ * Après un déploiement, un conteneur déjà allumé garde l'ancienne image jusqu'à son sommeil.
+ * Celui de chaque client actif redémarre en douceur (ses tours finis) ; celui de l'atelier, tout de suite.
+ */
+async function redemarrerTout(requete, env) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const actifs = (await lister(env.ANNUAIRE)).filter((c) => c.actif);
+  const clients = await Promise.all(
+    actifs.map(async (c) => {
+      const agent = agentDe(env, c);
+      if (!agent) return { id: c.id, redemarre: null, erreur: "zone non servie ici" };
+      try {
+        return { id: c.id, redemarre: await agent.redemarrer() };
+      } catch {
+        return { id: c.id, redemarre: null, erreur: "objet injoignable" };
+      }
+    }),
+  );
+  let atelier = null;
+  try {
+    atelier = (await atelierDe(env)?.redemarrer()) ?? null;
+  } catch {
+    atelier = null;
+  }
+  return json({ clients, atelier });
 }
 
 async function secretsAtelier(requete, env) {

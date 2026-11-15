@@ -95,6 +95,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         raise RuntimeError("ADMIN_TOKEN manquant")
     if not env.get("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL manquante")
+    stockage.migrer(env["DATABASE_URL"])
     versions = Versions(db if db is not None else stockage.base_agno(env["DATABASE_URL"]))
     jetons = stockage.Jetons(env["DATABASE_URL"])
     reglages = stockage.Reglages(env["DATABASE_URL"])
@@ -485,7 +486,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     @app.get("/sante")
     async def sante():
-        return {"ok": True, "service": "atelier"}
+        from noyau.version import carte
+
+        return {"ok": True, "service": "atelier", **carte()}
 
     app.include_router(r)
     return app

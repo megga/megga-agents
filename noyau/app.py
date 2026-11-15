@@ -37,6 +37,7 @@ from fastapi import FastAPI, Request, Response
 from . import config as configuration
 from . import stockage
 from . import suivi as suivi_agent
+from . import version as version_image
 from .agent import construire, modele
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
@@ -108,6 +109,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if agent is None:
         if not env.get("DATABASE_URL"):
             raise RuntimeError("DATABASE_URL manquante")
+        stockage.migrer(env["DATABASE_URL"])
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
         agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
@@ -133,7 +135,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     @app.get("/sante")
     async def sante():
-        return {"ok": True, "client": conf.id, "zone": conf.zone, "version": configuration.VERSION}
+        return {"ok": True, "client": conf.id, "zone": conf.zone, **version_image.carte()}
 
     @app.post("/whatsapp")
     async def whatsapp(requete: Request):

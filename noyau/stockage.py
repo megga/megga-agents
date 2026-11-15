@@ -25,6 +25,11 @@ from sqlalchemy import Column, Float, MetaData, String, Table, Text, and_, creat
 from sqlalchemy.engine import Engine
 
 FORMAT = 1
+# La version de nos tables (préfixe megga_). Chaque migration est additive : une image démarre
+# aussi sur une base migrée par la version suivante (retour arrière), pas au-delà.
+SCHEMA_VERSION = 1
+# Les étapes de migration, de la version n-1 à n : {n: fonction(connexion, schéma)}.
+ETAPES: dict = {}
 # Le schéma Postgres des tables d'Agno (SQLite n'a pas de schéma).
 SCHEMA = "ai"  # celui d'Agno par défaut, qu'il emploie dans tous les cas
 
@@ -122,6 +127,61 @@ def exporter(url: str, fichier: str | Path) -> int:
     return n
 
 
+class BaseTropRecente(RuntimeError):
+    pass
+
+
+def _table_schema(url: str) -> tuple[Engine, Table]:
+    """La version de nos tables (table megga_schema), une ligne."""
+    from sqlalchemy import Integer
+
+    return _table(url, "megga_schema", Column("cle", String(20), primary_key=True), Column("version", Integer, nullable=False))
+
+
+# La version des tables d'avant les migrations (lot 6) : une base qui les a sans megga_schema en est là.
+VERSION_DE_DEPART = 1
+
+
+def migrer(url: str, version: int | None = None, etapes: dict | None = None, _relu: bool = False) -> int:
+    """Joue au démarrage les migrations de nos tables qui manquent ; rend la version de la base.
+
+    Refuse une base migrée au-delà de la version suivante : deux versions sont soutenues à la fois.
+    `version` et `etapes` remplacent SCHEMA_VERSION et ETAPES (essais).
+    """
+    from sqlalchemy import inspect
+    from sqlalchemy.exc import IntegrityError
+
+    cible = SCHEMA_VERSION if version is None else version
+    etapes = ETAPES if etapes is None else etapes
+    e, t = _table_schema(url)
+    schema = SCHEMA if e.dialect.name == "postgresql" else None
+    try:
+        with e.begin() as c:
+            if e.dialect.name == "postgresql":  # deux conteneurs qui démarrent ensemble ne migrent pas deux fois
+                c.execute(text("SELECT pg_advisory_xact_lock(4242)"))
+            actuelle = c.execute(select(t.c.version).where(t.c.cle == "megga")).scalar()
+            if actuelle is None:
+                nos_tables = [n for n in inspect(c).get_table_names(schema=schema) if n.startswith("megga_") and n != "megga_schema"]
+                # Une base neuve : nos tables seront créées à la version de l'image. Une base d'avant les
+                # migrations : elle est à la version de départ, et ses étapes restent à jouer.
+                actuelle = VERSION_DE_DEPART if nos_tables else cible
+                c.execute(insert(t).values(cle="megga", version=actuelle))
+            actuelle = int(actuelle)
+            if actuelle > cible + 1:
+                raise BaseTropRecente(f"base à la version {actuelle}, image à la {cible} : trop ancienne pour cette base")
+            for n in range(actuelle + 1, cible + 1):
+                etapes[n](c, schema)
+            if cible > actuelle:
+                c.execute(update(t).where(t.c.cle == "megga").values(version=cible))
+            return max(actuelle, cible)
+    except IntegrityError:
+        # Deux démarrages simultanés sur une base neuve (SQLite, sans verrou) : l'autre a écrit la
+        # version entre-temps ; on relit, une fois.
+        if _relu:
+            raise
+        return migrer(url, version, etapes, _relu=True)
+
+
 def preparer(url: str) -> None:
     """Crée dans une base neuve toutes les tables : celles d'Agno et les nôtres."""
     base = base_agno(url)
@@ -132,6 +192,7 @@ def preparer(url: str) -> None:
     Rappels(url)
     Journal(url)
     Fil(url)
+    _table_schema(url)
 
 
 def importer(fichier: str | Path, url: str) -> int:
