@@ -4,7 +4,7 @@ Un seul moteur : la configuration du client (`noyau/config.py`). L'atelier ne fa
 
 ## Où il tourne
 
-La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`), dans un conteneur unique en zone Europe, derrière la porte : tout ce qui commence par `/atelier` lui est transmis tel quel. Sa base (versions et jetons) est un Postgres de MEGGA, posé comme celle d'un client.
+La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`), dans un conteneur unique en zone Europe, derrière la porte : tout ce qui commence par `/atelier` lui est transmis tel quel, à condition de porter un jeton (sans jeton, la porte ne réveille pas l'atelier). Sa base (versions et jetons) est un Postgres de MEGGA, posé comme celle d'un client.
 
 ## Les rôles
 
@@ -19,10 +19,12 @@ Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Q
 
 1. MEGGA crée le client d'une configuration complète : version 1, brouillon. Puis lui donne un jeton.
 2. `valider` montre la configuration qui résulterait des changements, sans rien garder.
-3. Une nouvelle version part d'une base (la dernière par défaut) : un brouillon.
-4. `essai` : l'agent de cette version répond, hors WhatsApp, dans une base d'essai à part. Rien ne part au numéro du client.
-5. `activer` : la porte inscrit la configuration dans l'annuaire et redémarre le conteneur du client, qui la relit au réveil. La version devient publiée, donc figée, et en service. Un brouillon jamais essayé est refusé (MEGGA peut forcer).
+3. Une nouvelle version part d'une base (la dernière par défaut) : un brouillon. Dans `modeles`, `voix` et `whatsapp`, les changements se fusionnent clé par clé ; partout ailleurs, la valeur donnée remplace l'ancienne en entier (c'est ainsi qu'on retire un modèle Meta ou une voix par langue).
+4. `essai` : l'agent de cette version répond, hors WhatsApp, dans une base d'essai à part. Rien ne part au numéro du client. Chaque version et chaque conversation d'essai est une personne neuve.
+5. `activer` : la porte inscrit la configuration dans l'annuaire, puis le conteneur du client redémarre dès qu'il a fini ses tours en cours, et relit la configuration. La version devient publiée, donc figée, et en service. Un brouillon jamais essayé est refusé (MEGGA peut forcer). Une version d'une autre zone que celle en service est refusée : changer de zone, c'est déménager le client.
 6. Revenir en arrière : `activer` une version publiée plus ancienne.
+
+Si la mise en service s'interrompt après la porte, l'atelier remet l'annuaire sur la version d'avant. Si la porte ne répond pas (état incertain), la liste des clients signale un `ecart` entre la version que sert l'annuaire et celle de l'atelier : il suffit de relancer la mise en service.
 
 ## Les routes
 
@@ -44,7 +46,7 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `POST /clients/{id}/jetons` | MEGGA | un jeton pour le client |
 | `DELETE /clients/{id}/jetons` | MEGGA | retire ses jetons |
 
-Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients`, `PUT /admin/atelier/secrets`.
+Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets`. Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
 
 ## Sur les fondations d'Agno
 
@@ -53,6 +55,8 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 ## Ce qui reste
 
 - **Mise en route** (sur « Fusionne et déploie ») : la migration `0002` de l'annuaire passe au déploiement ; créer une base Neon pour l'atelier et la poser par `PUT /admin/atelier/secrets` (comme `scripts/secrets_client.sh`) ; puis inscrire dans l'atelier les clients déjà là (`essai-megga`, puis `megga-estates`).
+- **Script d'inscription** : `scripts/inscrire_client.py` reste possible, mais son inscription ne vient d'aucune version : l'atelier montrera un écart jusqu'à la prochaine mise en service. Il demande la migration `0002`.
+- **Redémarrage** : un message arrivé pendant les quelques secondes entre la fin des tours et l'arrêt du conteneur peut rester sans réponse.
 - **Un numéro, un client** : `essai-megga` et `megga-estates` ont le même numéro ; la porte refusera d'activer le second tant que le premier le garde.
 - **Zone suisse et chez le client** : la mise en service y est notée mais pas poussée ; elle passera par le pilotage (lot 6).
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.

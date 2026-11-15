@@ -42,12 +42,18 @@ def catalogue() -> dict:
     }
 
 
+# Les sous-objets de la configuration : un changement s'y fusionne clé par clé.
+# Partout ailleurs (modeles_meta, voix.par_langue, outils...), la valeur donnée remplace
+# l'ancienne en entier : c'est ainsi qu'on retire un modèle Meta ou une voix.
+SOUS_OBJETS = ("modeles", "voix", "whatsapp")
+
+
 def fusionner(base: dict, changements: dict) -> dict:
-    """Les changements par-dessus la base ; les objets se fusionnent clé par clé."""
+    """Les changements par-dessus la base."""
     sortie = dict(base)
     for k, v in changements.items():
-        if isinstance(v, dict) and isinstance(sortie.get(k), dict):
-            sortie[k] = fusionner(sortie[k], v)
+        if k in SOUS_OBJETS and isinstance(v, dict) and isinstance(sortie.get(k), dict):
+            sortie[k] = {**sortie[k], **v}
         else:
             sortie[k] = v
     return sortie
@@ -57,11 +63,11 @@ def erreurs(e: ValidationError) -> list[dict]:
     return [{"champ": ".".join(str(x) for x in err["loc"]), "message": err["msg"]} for err in e.errors()]
 
 
-def appliquer(role: str, base: dict, changements: dict, zone_figee: bool) -> Config:
+def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | None) -> Config:
     """La configuration qui résulte de ces changements, validée par le noyau.
 
-    `zone_figee` : le client a déjà été mis en service ; changer sa zone, c'est le
-    déménager (copie, vérification, bascule), pas un réglage.
+    `zone_en_service` : la zone de la version en service, s'il y en a une. Changer de
+    zone, c'est déménager le client (copie, vérification, bascule), pas un réglage.
     """
     if not isinstance(changements, dict):
         raise Refus(400, "changements : un objet")
@@ -80,12 +86,39 @@ def appliquer(role: str, base: dict, changements: dict, zone_figee: bool) -> Con
             ch["outils"] = [o for o in base.get("outils", ()) if o in permis]
     if "id" in ch and ch["id"] != base.get("id"):
         raise Refus(400, "l'identifiant d'un client ne change pas")
-    if zone_figee and "zone" in ch and ch["zone"] != base.get("zone"):
-        raise Refus(409, "changer de zone, c'est déménager le client : sur demande, hors de l'atelier")
+    conf = valider(fusionner(base, ch))
+    verifier_zone(conf, zone_en_service)
+    return conf
+
+
+def valider(donnees: Any) -> Config:
+    """Une configuration validée par le noyau, ou un refus lisible (champ et message)."""
     try:
-        return Config.model_validate(fusionner(base, ch))
+        return Config.model_validate(donnees)
     except ValidationError as e:
         raise Refus(422, "configuration invalide", erreurs(e)) from e
+
+
+def verifier_zone(conf: Config, zone_en_service: str | None) -> None:
+    if zone_en_service and conf.zone != zone_en_service:
+        raise Refus(409, f"zone {conf.zone} au lieu de {zone_en_service} : changer de zone, c'est déménager le client, sur demande et hors de l'atelier")
+
+
+def oui_non(valeur: Any, defaut: bool, nom: str) -> bool:
+    """Un vrai booléen JSON : « false » en texte n'est pas faux, il est refusé."""
+    if valeur is None:
+        return defaut
+    if not isinstance(valeur, bool):
+        raise Refus(400, f"{nom} : true ou false")
+    return valeur
+
+
+def numero(valeur: Any, nom: str) -> int | None:
+    if valeur is None:
+        return None
+    if isinstance(valeur, bool) or not isinstance(valeur, int) or valeur < 1:
+        raise Refus(400, f"{nom} : un numéro de version")
+    return valeur
 
 
 def manques(conf: Config) -> list[str]:

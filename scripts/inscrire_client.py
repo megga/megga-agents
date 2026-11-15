@@ -5,6 +5,10 @@
 
 Seules les zones Europe et États-Unis passent par la porte. Aucun secret ici :
 l'adresse de la base se pose ensuite avec scripts/secrets_client.sh.
+
+Depuis le lot 5, la voie normale est l'atelier (docs/atelier.md). Une inscription par
+ce script ne vient d'aucune version de l'atelier : la version de l'annuaire est vidée,
+et la liste de l'atelier montrera un écart jusqu'à la prochaine mise en service.
 """
 
 from __future__ import annotations
@@ -29,10 +33,10 @@ def sql(c: configuration.Config) -> str:
 
     donnees = json.dumps(c.model_dump(), ensure_ascii=False)
     return (
-        "INSERT INTO clients (id, numero_id, zone, config, actif) VALUES "
-        f"({q(c.id)}, {q(c.whatsapp.numero_id)}, {q(c.zone)}, {q(donnees)}, 1) "
+        "INSERT INTO clients (id, numero_id, zone, config, actif, version, maj_le) VALUES "
+        f"({q(c.id)}, {q(c.whatsapp.numero_id)}, {q(c.zone)}, {q(donnees)}, 1, NULL, datetime('now')) "
         "ON CONFLICT(id) DO UPDATE SET numero_id = excluded.numero_id, zone = excluded.zone, "
-        "config = excluded.config, actif = 1;\n"
+        "config = excluded.config, actif = 1, version = NULL, maj_le = excluded.maj_le;\n"
     )
 
 

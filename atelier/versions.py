@@ -103,11 +103,20 @@ class Versions:
         v = self.db.get_latest_config(ident)
         return _version(v) if v else None
 
+    def dernieres(self, idents: set[str]) -> dict[str, int | None]:
+        """Le numéro de la dernière version de chaque client, en une lecture."""
+        return {i: (v or {}).get("version") for i, v in self.db.get_latest_configs(idents).items()}
+
     def historique(self, ident: str) -> list[dict]:
         return [_version(v, avec_config=False) for v in self.db.list_configs(ident)]
 
     def courante(self, ident: str) -> int | None:
         return (self.client(ident) or {}).get("current_version")
+
+    def en_service(self, ident: str) -> dict | None:
+        """La version en service et sa configuration, ou None."""
+        n = self.courante(ident)
+        return self.version(ident, n) if n else None
 
     def noter_essai(self, ident: str, numero: int) -> None:
         """Compte un essai sur un brouillon (une version publiée a déjà servi)."""
@@ -117,17 +126,22 @@ class Versions:
             n["essais"] = int(n.get("essais", 0)) + 1
             self.db.upsert_config(ident, version=numero, notes=json.dumps(n))
 
-    def mettre_en_service(self, ident: str, numero: int) -> None:
-        """Publie un brouillon (il devient courant) ou rend courante une version publiée."""
+    def mettre_en_service(self, ident: str, numero: int, avant: int | None) -> None:
+        """Publie un brouillon (il devient courant) ou rend courante une version publiée.
+
+        `avant` : la version qu'on croit en service (garde d'Agno : refus si elle a changé).
+        """
         reglages = self.reglages(ident)
         v = self.db.get_config(ident, version=numero)
         if v is None:
             raise ValueError("version introuvable")
+        garde = avant or 0  # 0 : aucune version en service
         if v.get("stage") == "published":
-            if not self.db.set_current_version(ident, version=numero):
+            if not self.db.set_current_version(ident, version=numero, expected_current_version=garde):
                 raise ValueError("version non publiée")
         else:
-            self.db.upsert_config(ident, version=numero, stage="published")
-        # La publication réécrit la ligne du composant : on y remet nos réglages.
-        if self.reglages(ident) != reglages:
-            self.db.upsert_component(ident, metadata=reglages)
+            self.db.upsert_config(ident, version=numero, stage="published", expected_current_version=garde)
+        # La ligne du composant suit la version en service : prénom, entreprise, et nos réglages,
+        # que la publication d'Agno réécrit.
+        conf = v.get("config") or {}
+        self.db.upsert_component(ident, name=conf.get("nom_agent"), description=conf.get("entreprise"), metadata=reglages)

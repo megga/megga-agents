@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { AgentEurope, Atelier } from "../src/agent.js";
+import { Atelier } from "../src/agent.js";
 import { clientParNumero, inscrire, lister } from "../src/annuaire.js";
 import { recevoir } from "../src/index.js";
 
@@ -23,15 +23,19 @@ function d1() {
 const config = (id = "exemple", autres = {}) => ({ version: 1, id, zone: "europe", whatsapp: { numero_id: "100000000000001" }, nom_agent: "Alix", ...autres });
 
 // Une fausse liaison : chaque objet note ses redémarrages et dit s'il tourne.
-function liaison(journal, demarres = new Set()) {
+function liaison(journal, demarres = new Set(), enPanne = new Set()) {
   return {
     jurisdiction: (j) => ({
       getByName: (nom) => ({
         redemarrer: async () => {
+          if (enPanne.has(nom)) throw new Error("objet injoignable");
           journal.push({ j, nom, redemarre: demarres.has(nom) });
           return demarres.has(nom);
         },
-        etat: async () => ({ demarre: demarres.has(nom) }),
+        etat: async () => {
+          journal.push({ j, nom, etat: true });
+          return { demarre: demarres.has(nom) };
+        },
         poserSecrets: async (s) => {
           journal.push({ j, nom, secrets: Object.keys(s) });
           return Object.keys(s);
@@ -45,8 +49,8 @@ function liaison(journal, demarres = new Set()) {
   };
 }
 
-function env(journal, demarres) {
-  return { ADMIN_TOKEN: "admin", ANNUAIRE: d1(), AGENTS_EUROPE: liaison(journal, demarres), AGENTS_ETATS_UNIS: liaison(journal, demarres), ATELIER: liaison(journal) };
+function env(journal, demarres, enPanne) {
+  return { ADMIN_TOKEN: "admin", ANNUAIRE: d1(), AGENTS_EUROPE: liaison(journal, demarres, enPanne), AGENTS_ETATS_UNIS: liaison(journal, demarres, enPanne), ATELIER: liaison(journal) };
 }
 
 const put = (e, id, corps, jeton = "admin") =>
@@ -96,6 +100,16 @@ test("mise en service par l'atelier : annuaire puis redémarrage", async () => {
   assert.equal(journal.length, 1);
 });
 
+test("un redémarrage en échec n'annule pas l'annuaire, il est signalé", async () => {
+  const e = env([], new Set(), new Set(["exemple"]));
+  const r = await put(e, "exemple", { version: 2, config: config() });
+  assert.equal(r.status, 200);
+  const d = await r.json();
+  assert.equal(d.redemarre, null);
+  assert.match(d.alerte, /redémarrage/);
+  assert.equal((await lister(e.ANNUAIRE))[0].version, 2);
+});
+
 test("la liste des clients et l'état des conteneurs, pour MEGGA seulement", async () => {
   const journal = [];
   const e = env(journal, new Set(["exemple"]));
@@ -105,6 +119,11 @@ test("la liste des clients et l'état des conteneurs, pour MEGGA seulement", asy
   assert.equal((await get("faux")).status, 401);
   const { clients } = await (await get("admin")).json();
   assert.deepEqual(clients.map((c) => [c.id, c.zone, c.version, c.conteneur.demarre]), [["exemple", "europe", 1, true], ["loin", "etats-unis", 4, false]]);
+  // un seul client : seul son objet est interrogé
+  journal.length = 0;
+  const seul = await recevoir(new Request("https://porte/admin/clients?id=loin", { headers: { authorization: "Bearer admin" } }), e);
+  assert.deepEqual((await seul.json()).clients.map((c) => c.id), ["loin"]);
+  assert.deepEqual(journal, [{ j: "us", nom: "loin", etat: true }]);
 });
 
 test("l'atelier derrière la porte : transmis tel quel, jeton compris", async () => {
@@ -113,7 +132,12 @@ test("l'atelier derrière la porte : transmis tel quel, jeton compris", async ()
   const r = await recevoir(new Request("https://porte/atelier/clients", { headers: { authorization: "Bearer jeton-client" } }), e);
   assert.equal(r.status, 200);
   assert.deepEqual(journal, [{ j: "eu", nom: "megga", chemin: "/atelier/clients", auth: "Bearer jeton-client", corps: "" }]);
-  assert.equal((await recevoir(new Request("https://porte/atelier/clients"), { ...e, ATELIER: undefined })).status, 503);
+  assert.equal((await recevoir(new Request("https://porte/atelier/clients", { headers: { authorization: "Bearer x" } }), { ...e, ATELIER: undefined })).status, 503);
+  // sans jeton, le conteneur de l'atelier n'est pas réveillé
+  for (const h of [{}, { authorization: "Bearer " }, { authorization: "Basic abc" }]) {
+    assert.equal((await recevoir(new Request("https://porte/atelier/clients", { headers: h }), e)).status, 401);
+  }
+  assert.equal(journal.length, 1);
   assert.equal((await recevoir(new Request("https://porte/atelierx"), e)).status, 404);
   // sa base se pose comme celle d'un client, écriture seule
   const s = await recevoir(new Request("https://porte/admin/atelier/secrets", { method: "PUT", body: JSON.stringify({ DATABASE_URL: "postgresql://x" }), headers: { authorization: "Bearer admin" } }), e);
@@ -142,14 +166,14 @@ function ctx({ running = false, secrets = {} } = {}) {
   return { ctx: { id: { name: "megga" }, blockConcurrencyWhile: (f) => f(), storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) }, container: c }, journal, stock };
 }
 
-test("redémarrer : seulement un conteneur qui tourne", async () => {
+test("l'atelier redémarre tout de suite, seulement s'il tourne", async () => {
   const a = ctx({ running: true });
-  const agent = new AgentEurope(a.ctx, {});
-  assert.deepEqual(await agent.etat(), { demarre: true });
-  assert.equal(await agent.redemarrer(), true);
-  assert.equal(await agent.redemarrer(), false);
+  const atelier = new Atelier(a.ctx, {});
+  assert.deepEqual(await atelier.etat(), { demarre: true });
+  assert.equal(await atelier.redemarrer(), true);
+  assert.equal(await atelier.redemarrer(), false);
   assert.deepEqual(a.journal, [["destroy"]]);
-  assert.deepEqual(await agent.etat(), { demarre: false });
+  assert.deepEqual(await atelier.etat(), { demarre: false });
 });
 
 test("l'atelier démarre en service « atelier », avec sa base et sans les secrets de Meta", async () => {

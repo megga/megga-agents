@@ -14,6 +14,8 @@ const PORT = 8080;
 const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes sans message
 // Après un message, la porte demande au conteneur s'il a un rappel à venir (le tour a pu en créer un).
 const VERIFICATION_MS = 90 * 1000;
+// Avant un redémarrage, le conteneur a ce temps pour finir les tours en cours.
+const VIDER_MS = 120 * 1000;
 
 /** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
 export async function jetonInterne(admin, nom) {
@@ -47,7 +49,7 @@ class Conteneur extends DurableObject {
     return Object.keys(gardes);
   }
 
-  /** Arrête le conteneur s'il tourne : le prochain message le relance avec l'annuaire et les secrets du moment. */
+  /** Arrête le conteneur s'il tourne : le prochain appel le relance avec l'annuaire et les secrets du moment. */
   async redemarrer() {
     const c = this.ctx.container;
     if (!c?.running) return false;
@@ -112,10 +114,35 @@ class AgentClient extends Conteneur {
     if (!a || a > t) await this.ctx.storage.setAlarm(t);
   }
 
-  /** L'heure d'un rappel (ou d'une vérification) : le conteneur envoie ce qui est échu. */
+  /**
+   * Un redémarrage en douceur : il se fait à l'alarme, qui laisse le conteneur finir ses
+   * tours en cours (réponse en route, messages en regroupement) avant de l'arrêter.
+   * Rend vrai si un conteneur tournait.
+   */
+  async redemarrer() {
+    if (!this.ctx.container?.running) return false;
+    await this.ctx.storage.put("a_redemarrer", true);
+    await this.ctx.storage.setAlarm(Date.now());
+    return true;
+  }
+
+  /** L'heure d'un rappel (ou d'une vérification, ou d'un redémarrage) : le conteneur envoie ce qui est échu. */
   async alarm() {
-    await this.pret();
     const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    if (await this.ctx.storage.get("a_redemarrer")) {
+      const c = this.ctx.container;
+      if (c?.running) {
+        await c
+          .getTcpPort(PORT)
+          .fetch("http://container/interne/vider", { method: "POST", headers: { "x-megga-interne": jeton }, signal: AbortSignal.timeout(VIDER_MS) })
+          .then((r) => r.body?.cancel())
+          .catch(() => {}); // un conteneur qui ne répond plus s'arrête quand même
+        await c.destroy().catch(() => {});
+      }
+      await this.ctx.storage.delete("a_redemarrer");
+    }
+    // Relance (avec la nouvelle configuration s'il y a lieu) et rappels échus.
+    await this.pret();
     const r = await this.ctx.container.getTcpPort(PORT).fetch("http://container/interne/rappels", {
       method: "POST",
       headers: { "x-megga-interne": jeton },

@@ -15,10 +15,12 @@ Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
+  POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
 """
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -88,7 +90,8 @@ def _reecriture(conf, cles):
 
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
-          reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None) -> FastAPI:
+          reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
+          delai_vider: float = 100.0) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais)."""
     env = dict(os.environ if env is None else env)
     os.environ.setdefault("AGNO_TELEMETRY", "false")
@@ -143,12 +146,25 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Meta veut une réponse rapide : le tour se poursuit après.
         return Response(f"reçu {lus}", media_type="text/plain")
 
+    def interne(requete: Request) -> bool:
+        jeton = requete.headers.get("x-megga-interne", "")
+        return bool(jeton_interne) and hmac.compare_digest(jeton, jeton_interne)
+
     @app.post("/interne/rappels")
     async def interne_rappels(requete: Request):
-        jeton = requete.headers.get("x-megga-interne", "")
-        if not jeton_interne or not hmac.compare_digest(jeton, jeton_interne):
+        if not interne(requete):
             return Response("refusé", status_code=401)
         return await conversations.envoyer_rappels_echus(time.time())
+
+    @app.post("/interne/vider")
+    async def interne_vider(requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        fin = time.monotonic() + delai_vider
+        # Un tour peut en lancer un autre (regroupement, réponse) : on attend jusqu'à ce qu'il n'y en ait plus.
+        while conversations.taches and time.monotonic() < fin:
+            await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
+        return {"restantes": len(conversations.taches)}
 
     if env.get("JWT_VERIFICATION_KEY"):
         from agno.os import AgentOS

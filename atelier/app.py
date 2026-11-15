@@ -13,7 +13,8 @@ Rôles, par le jeton (Authorization: Bearer …) :
 
 Routes (toutes sous /atelier) :
   GET   /catalogue                              métiers, outils, zones, modèles, réglages du client
-  GET   /clients                                les clients et leur état (MEGGA : tous ; client : le sien)
+  GET   /clients                                les clients et leur état (MEGGA : tous ; client : le sien) ;
+                                                « ecart » : l'annuaire de la porte ne sert pas la version en service
   POST  /clients                                MEGGA : un nouveau client, d'une configuration complète
   GET   /clients/{id}                           un client, sa version en service et sa configuration
   GET   /clients/{id}/versions                  l'historique
@@ -29,19 +30,22 @@ Routes (toutes sous /atelier) :
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import logging
 import os
 import re
 import tempfile
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, FastAPI, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 
 from noyau import stockage
+from noyau.app import CLES
 from noyau.config import Config
 
 from . import regles
@@ -51,7 +55,6 @@ from .regles import Refus
 from .versions import Versions
 
 log = logging.getLogger("megga.atelier")
-CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 CONVERSATION = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
@@ -60,6 +63,11 @@ CONVERSATION = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 class Identite:
     role: str  # « megga » ou « client »
     client: str | None = None
+
+
+async def bd(f, *a, **k):
+    """Un appel à la base, hors de la boucle : une lecture lente ne gèle pas les autres requêtes."""
+    return await run_in_threadpool(f, *a, **k)
 
 
 def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
@@ -77,6 +85,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         porte = Porte(env["PORTE_URL"], admin)
     cles = {k: env.get(k, "") for k in CLES}
     essais = Path(env.get("ESSAIS_DIR") or Path(tempfile.gettempdir()) / "megga-essais")
+    # Une mise en service à la fois par client (l'atelier est un seul processus).
+    verrous: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     def identite(requete: Request) -> Identite:
         jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -106,156 +116,188 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(404, "version inconnue")
         return v
 
-    def resume(c: dict, etats: dict | None) -> dict:
+    def resume(c: dict, derniere: int | None, etats: dict | None) -> dict:
         meta = c.get("metadata") or {}
-        derniere = versions.derniere(c["component_id"])
         r = {
             "id": c["component_id"],
             "nom_agent": c.get("name"),
             "entreprise": c.get("description"),
             "version_en_service": c.get("current_version"),
-            "derniere_version": derniere["version"] if derniere else None,
+            "derniere_version": derniere,
             "gere_par_megga": bool(meta.get("gere_par_megga")),
         }
         if etats is not None:
-            r["annuaire"] = etats.get(c["component_id"])
+            a = etats.get(c["component_id"])
+            r["annuaire"] = a
+            # Une mise en service interrompue : la porte sert une autre version que l'atelier.
+            r["ecart"] = a is not None and a.get("version") != c.get("current_version")
         return r
 
-    async def etats_porte() -> dict | None:
+    async def etats_porte(ident: str | None = None) -> dict | None:
         if porte is None:
             return None
         try:
-            return await porte.etats()
-        except Exception as e:  # l'état de la porte n'empêche pas de lister
+            return await porte.etats(ident)
+        except PorteErreur as e:  # l'état de la porte n'empêche pas de lister
             log.warning("porte injoignable : %s", str(e)[:120])
             return None
 
+    def zone_en_service(ident: str) -> str | None:
+        v = versions.en_service(ident)
+        return (v["config"] or {}).get("zone") if v else None
+
     def nouvelle(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
         """La configuration d'une nouvelle version, d'après sa base (la dernière par défaut)."""
-        base_n = corps.get("base")
-        base = version_de(ident, int(base_n)) if base_n is not None else versions.derniere(ident)
+        base_n = regles.numero(corps.get("base"), "base")
+        base = version_de(ident, base_n) if base_n is not None else versions.derniere(ident)
         if base is None:
             raise Refus(404, "aucune version de base")
-        conf = regles.appliquer(qui.role, base["config"], corps.get("changements") or {},
-                                zone_figee=versions.courante(ident) is not None)
+        changements = corps.get("changements")
+        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident))
         return conf, base["version"]
+
+    def preparer(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
+        client_de(qui, ident)
+        return nouvelle(qui, ident, corps)
+
+    def config_de(v: dict) -> Config:
+        """La configuration d'une version, revalidée par le code en service ; complète."""
+        conf = regles.valider(v["config"])
+        if regles.manques(conf):
+            raise Refus(409, "version incomplète", regles.manques(conf))
+        return conf
 
     r = APIRouter(prefix="/atelier")
 
     @r.get("/catalogue")
-    async def catalogue(qui: Identite = Depends(identite)):
+    def catalogue(qui: Identite = Depends(identite)):
         return regles.catalogue()
 
     @r.get("/clients")
     async def lister(qui: Identite = Depends(identite)):
-        etats = await etats_porte()
-        tous = versions.clients() if qui.role == "megga" else [c for c in [versions.client(qui.client)] if c]
-        return {"clients": [resume(c, etats) for c in tous], "porte": etats is not None}
+        if qui.role == "megga":
+            tous, etats = await bd(versions.clients), await etats_porte()
+        else:
+            tous = [c for c in [await bd(versions.client, qui.client)] if c]
+            etats = await etats_porte(qui.client)
+        dernieres = await bd(versions.dernieres, {c["component_id"] for c in tous}) if tous else {}
+        return {"clients": [resume(c, dernieres.get(c["component_id"]), etats) for c in tous], "porte": etats is not None}
 
     @r.post("/clients", status_code=201)
-    async def creer_client(qui: Identite = Depends(identite), corps: dict = Body(...)):
+    def creer_client(qui: Identite = Depends(identite), corps: dict = Body(...)):
         megga(qui)
-        try:
-            conf = Config.model_validate(corps.get("config") or {})
-        except ValidationError as e:
-            raise Refus(422, "configuration invalide", regles.erreurs(e)) from e
+        conf = regles.valider(corps.get("config") or {})
         if versions.db.get_component(conf.id, include_deleted=True) is not None:
             raise Refus(409, "ce client existe déjà")
         return {"client": conf.id, **versions.creer(conf, "megga")}
 
     @r.get("/clients/{ident}")
     async def lire(ident: str, qui: Identite = Depends(identite)):
-        c = client_de(qui, ident)
-        etats = await etats_porte()
+        c = await bd(client_de, qui, ident)
         courante = c.get("current_version")
-        return {**resume(c, etats), "config": version_de(ident, courante)["config"] if courante else None}
+        config = (await bd(version_de, ident, courante))["config"] if courante else None
+        derniere = (await bd(versions.dernieres, {ident})).get(ident)
+        return {**resume(c, derniere, await etats_porte(ident)), "config": config}
 
     @r.get("/clients/{ident}/versions")
-    async def historique(ident: str, qui: Identite = Depends(identite)):
+    def historique(ident: str, qui: Identite = Depends(identite)):
         client_de(qui, ident)
         return {"versions": versions.historique(ident)}
 
     @r.get("/clients/{ident}/versions/{numero}")
-    async def version(ident: str, numero: int, qui: Identite = Depends(identite)):
+    def version(ident: str, numero: int, qui: Identite = Depends(identite)):
         client_de(qui, ident)
         return version_de(ident, numero)
 
     @r.post("/clients/{ident}/valider")
-    async def valider(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        client_de(qui, ident)
-        conf, base = nouvelle(qui, ident, corps)
+    def valider(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        conf, base = preparer(qui, ident, corps)
         return {"base": base, "config": conf.model_dump(mode="json"), "manques": regles.manques(conf)}
 
     @r.post("/clients/{ident}/versions", status_code=201)
-    async def ajouter(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        client_de(qui, ident)
-        conf, base = nouvelle(qui, ident, corps)
+    def ajouter(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        conf, base = preparer(qui, ident, corps)
         v = versions.ajouter(conf, qui.role, base)
         return {**v, "manques": regles.manques(conf)}
 
     @r.post("/clients/{ident}/versions/{numero}/essai")
     async def essai(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        client_de(qui, ident)
-        v = version_de(ident, numero)
+        await bd(client_de, qui, ident)
+        v = await bd(version_de, ident, numero)
         message = corps.get("message")
         if not isinstance(message, str) or not message.strip() or len(message) > 4000:
             raise Refus(400, "message : un texte de 1 à 4000 caractères")
         conversation = str(corps.get("conversation") or "1")
         if not CONVERSATION.fullmatch(conversation):
             raise Refus(400, "conversation : lettres, chiffres, - et _")
-        conf = Config.model_validate(v["config"])
-        if regles.manques(conf):
-            raise Refus(409, "version incomplète", regles.manques(conf))
+        conf = config_de(v)
         reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai)
-        versions.noter_essai(ident, numero)
+        await bd(versions.noter_essai, ident, numero)
         return {"version": numero, "conversation": conversation, "reponse": reponse}
 
     @r.post("/clients/{ident}/versions/{numero}/activer")
     async def activer(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict | None = Body(None)):
-        c = client_de(qui, ident)
-        v = version_de(ident, numero)
-        forcer = bool((corps or {}).get("forcer"))
-        if qui.role == "client":
-            if (c.get("metadata") or {}).get("gere_par_megga"):
-                raise Refus(403, "MEGGA a repris la main sur cet agent : la mise en service passe par MEGGA")
-            if forcer:
-                raise Refus(403, "forcer : réservé à MEGGA")
-        if c.get("current_version") == numero:
-            raise Refus(409, "cette version est déjà en service")
-        if v["etat"] == "brouillon" and v["essais"] == 0 and not forcer:
-            raise Refus(409, "essayez d'abord cette version (mode d'essai)")
-        conf = Config.model_validate(v["config"])  # revalidée par le code en service
-        if regles.manques(conf):
-            raise Refus(409, "version incomplète", regles.manques(conf))
-        if conf.zone in regles.ZONES_PORTE:
-            if porte is None:
-                raise Refus(503, "porte non réglée (PORTE_URL)")
+        forcer = regles.oui_non((corps or {}).get("forcer"), False, "forcer")
+        async with verrous[ident]:
+            c = await bd(client_de, qui, ident)
+            v = await bd(version_de, ident, numero)
+            if qui.role == "client":
+                if (c.get("metadata") or {}).get("gere_par_megga"):
+                    raise Refus(403, "MEGGA a repris la main sur cet agent : la mise en service passe par MEGGA")
+                if forcer:
+                    raise Refus(403, "forcer : réservé à MEGGA")
+            courante = c.get("current_version")
+            if courante == numero:
+                raise Refus(409, "cette version est déjà en service")
+            if v["etat"] == "brouillon" and v["essais"] == 0 and not forcer:
+                raise Refus(409, "essayez d'abord cette version (mode d'essai)")
+            conf = config_de(v)
+            avant = await bd(version_de, ident, courante) if courante else None
+            regles.verifier_zone(conf, (avant["config"] or {}).get("zone") if avant else None)
+            par_porte = conf.zone in regles.ZONES_PORTE
+            if par_porte:
+                if porte is None:
+                    raise Refus(503, "porte non réglée (PORTE_URL)")
+                try:
+                    annuaire = await porte.activer(conf, numero)
+                except PorteErreur as e:
+                    if e.statut == 0:
+                        raise Refus(504, "la porte n'a pas répondu : vérifiez l'écart dans la liste des clients avant de relancer",
+                                    {"texte": e.texte}) from e
+                    raise Refus(502, "la porte a refusé la mise en service", {"statut": e.statut, "texte": e.texte}) from e
+            else:
+                # Suisse et installation chez le client : poussée par le pilotage (lot 6).
+                annuaire = {"zone": conf.zone, "porte": False}
             try:
-                annuaire = await porte.activer(conf, numero)
-            except PorteErreur as e:
-                raise Refus(502, "la porte a refusé la mise en service", {"statut": e.statut, "texte": e.texte}) from e
-        else:
-            # Suisse et installation chez le client : poussée par le pilotage (lot 6).
-            annuaire = {"zone": conf.zone, "porte": False}
-        retour = v["etat"] == "publiee"
-        versions.mettre_en_service(ident, numero)
-        return {"client": ident, "version_en_service": numero, "retour": retour, "annuaire": annuaire}
+                await bd(versions.mettre_en_service, ident, numero, courante)
+            except Exception as e:
+                # L'annuaire sert déjà la nouvelle version : on le remet sur celle d'avant.
+                log.error("mise en service de %s v%s interrompue : %s", ident, numero, str(e)[:200])
+                retabli = False
+                if par_porte and avant is not None:
+                    try:
+                        await porte.activer(regles.valider(avant["config"]), courante)
+                        retabli = True
+                    except (PorteErreur, Refus):
+                        pass
+                raise Refus(500, "mise en service interrompue", {"annuaire_retabli": retabli}) from e
+        return {"client": ident, "version_en_service": numero, "retour": v["etat"] == "publiee", "annuaire": annuaire}
 
     @r.post("/clients/{ident}/reprise")
-    async def reprise(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+    def reprise(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
         megga(qui)
         client_de(qui, ident)
-        meta = versions.regler(ident, gere_par_megga=bool(corps.get("gere_par_megga", True)))
+        meta = versions.regler(ident, gere_par_megga=regles.oui_non(corps.get("gere_par_megga"), True, "gere_par_megga"))
         return {"client": ident, "gere_par_megga": meta["gere_par_megga"]}
 
     @r.post("/clients/{ident}/jetons", status_code=201)
-    async def jeton(ident: str, qui: Identite = Depends(identite)):
+    def jeton(ident: str, qui: Identite = Depends(identite)):
         megga(qui)
         client_de(qui, ident)
         return {"client": ident, "jeton": jetons.creer(ident)}
 
     @r.delete("/clients/{ident}/jetons")
-    async def revoquer(ident: str, qui: Identite = Depends(identite)):
+    def revoquer(ident: str, qui: Identite = Depends(identite)):
         megga(qui)
         client_de(qui, ident)
         return {"client": ident, "retires": jetons.revoquer(ident)}

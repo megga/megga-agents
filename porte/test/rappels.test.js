@@ -5,11 +5,18 @@ import { AgentEurope, jetonInterne } from "../src/agent.js";
 // Un faux objet : stockage avec alarme, conteneur qui répond aux routes internes.
 function objet(reponse = { prochain: null }) {
   const journal = [];
+  const stock = new Map();
   let alarme = null;
   const ctx = {
     id: { name: "essai" },
     blockConcurrencyWhile: (f) => f(),
-    storage: { getAlarm: async () => alarme, setAlarm: async (t) => { alarme = t; journal.push(["alarme", t]); } },
+    storage: {
+      getAlarm: async () => alarme,
+      setAlarm: async (t) => { alarme = t; journal.push(["alarme", t]); },
+      get: async (k) => stock.get(k),
+      put: async (k, v) => stock.set(k, v),
+      delete: async (k) => stock.delete(k),
+    },
     container: {
       running: true,
       setInactivityTimeout: async () => {},
@@ -25,7 +32,7 @@ function objet(reponse = { prochain: null }) {
   };
   const a = new AgentEurope(ctx, { ADMIN_TOKEN: "admin" });
   a.demarrer = async () => {};
-  return { a, journal, alarme: () => alarme };
+  return { a, journal, alarme: () => alarme, ctx, stock };
 }
 
 test("le jeton interne est propre à chaque client", async () => {
@@ -63,5 +70,39 @@ test("à l'alarme : rappels envoyés avec le jeton, puis le prochain est program
 test("sans rappel à venir, aucune alarme", async () => {
   const { a, alarme } = objet({ prochain: null });
   await a.alarm();
+  assert.equal(alarme(), null);
+});
+
+test("redémarrage en douceur : à l'alarme, le conteneur finit ses tours, s'arrête, puis repart", async () => {
+  const dans1h = Date.now() / 1000 + 3600;
+  const { a, journal, alarme, ctx, stock } = objet({ prochain: dans1h });
+  ctx.container.destroy = async () => {
+    journal.push(["destroy"]);
+    ctx.container.running = false;
+  };
+  a.demarrer = async () => {
+    journal.push(["demarrer"]);
+    ctx.container.running = true;
+  };
+  const avant = Date.now();
+  assert.equal(await a.redemarrer(), true);
+  assert.ok(alarme() >= avant && alarme() <= Date.now()); // tout de suite, mais par l'alarme
+  assert.equal(journal.some((j) => j[0] === "destroy"), false); // rien n'est coupé à l'appel
+  await a.alarm();
+  const jeton = await jetonInterne("admin", "essai");
+  assert.deepEqual(journal.filter((j) => j[0] !== "alarme"), [
+    ["conteneur", "/interne/vider", jeton],
+    ["destroy"],
+    ["demarrer"],
+    ["conteneur", "/interne/rappels", jeton],
+  ]);
+  assert.equal(stock.has("a_redemarrer"), false);
+  assert.equal(alarme(), Math.round(dans1h * 1000)); // les rappels gardent leur heure
+});
+
+test("redémarrer un conteneur endormi : rien à faire", async () => {
+  const { a, ctx, alarme } = objet();
+  ctx.container.running = false;
+  assert.equal(await a.redemarrer(), false);
   assert.equal(alarme(), null);
 });

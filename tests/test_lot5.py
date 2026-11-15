@@ -58,11 +58,12 @@ class FauxModele(Model):
 
 
 class FaussePorte:
-    """Une porte qui note les mises en service, ou les refuse."""
+    """Une porte qui note les mises en service, ou les refuse ; elle tient son propre annuaire."""
 
     def __init__(self, refus=None):
         self.activations = []
         self.refus = refus
+        self.demandes_etats = []
 
     async def activer(self, conf, version):
         from atelier.porte import PorteErreur
@@ -72,8 +73,10 @@ class FaussePorte:
         self.activations.append((conf.id, version, conf.model_dump(mode="json")))
         return {"ok": True, "redemarre": True}
 
-    async def etats(self):
-        return {c: {"id": c, "actif": 1, "version": v} for c, v, _ in self.activations}
+    async def etats(self, ident=None):
+        self.demandes_etats.append(ident)
+        annuaire = {c: {"id": c, "actif": 1, "version": v} for c, v, _ in self.activations}
+        return {k: e for k, e in annuaire.items() if ident in (None, k)}
 
 
 @pytest.fixture
@@ -113,34 +116,47 @@ def test_metier_et_outils():
 
 def test_regles_client():
     base = conf_exemple()
-    c = regles.appliquer("client", base, {"nom_agent": "Lea", "ton": "direct", "voix": "EST9Ui6982FZPSi7gCHi"}, False)
+    c = regles.appliquer("client", base, {"nom_agent": "Lea", "ton": "direct", "voix": "EST9Ui6982FZPSi7gCHi"}, None)
     assert (c.nom_agent, c.ton, c.voix.voix) == ("Lea", "direct", "EST9Ui6982FZPSi7gCHi")
     assert c.modeles == Config.model_validate(base).modeles  # le reste est repris de la base
     for interdit in ({"modeles": {"principal": "claude-opus-5-5"}}, {"zone": "etats-unis"}, {"consignes": "x"}, {"catalogue": "demo:x"}):
         with pytest.raises(regles.Refus) as e:
-            regles.appliquer("client", base, interdit, False)
+            regles.appliquer("client", base, interdit, None)
         assert e.value.statut == 403
     with pytest.raises(regles.Refus) as e:
-        regles.appliquer("client", base, {"nom_agent": "Lea \u2014 la meilleure"}, False)
+        regles.appliquer("client", base, {"nom_agent": "Lea \u2014 la meilleure"}, None)
     assert e.value.statut == 422 and e.value.details[0]["champ"] == "nom_agent"
 
 
 def test_regles_megga_et_zone():
     base = conf_exemple()
-    c = regles.appliquer("megga", base, {"modeles": {"principal": "claude-opus-5-5"}, "zone": "etats-unis"}, False)
+    c = regles.appliquer("megga", base, {"modeles": {"principal": "claude-opus-5-5"}, "zone": "etats-unis"}, None)
     assert c.modeles.principal == "claude-opus-5-5" and c.modeles.secours == "deepseek-v4-pro"
     with pytest.raises(regles.Refus) as e:
-        regles.appliquer("megga", base, {"zone": "etats-unis"}, True)
+        regles.appliquer("megga", base, {"zone": "etats-unis"}, "europe")
     assert e.value.statut == 409
+    # une base d'une autre zone que celle en service, même sans toucher à la zone
     with pytest.raises(regles.Refus):
-        regles.appliquer("megga", base, {"id": "autre"}, False)
+        regles.appliquer("megga", {**base, "zone": "suisse"}, {}, "europe")
+    with pytest.raises(regles.Refus):
+        regles.appliquer("megga", base, {"id": "autre"}, None)
+
+
+def test_fusion_retire_un_modele_meta_ou_une_voix():
+    base = configuration.lire("clients/megga-estates.yaml").model_dump(mode="json")
+    base["modeles_meta"] = {"rappel": {"nom": "rappel_x", "langue": "fr"}, "relance": {"nom": "relance_y", "langue": "fr"}}
+    base["voix"]["par_langue"] = {"en": "EST9Ui6982FZPSi7gCHi", "de": "EST9Ui6982FZPSi7gCHi"}
+    c = regles.appliquer("megga", base, {"modeles_meta": {"rappel": {"nom": "rappel_x", "langue": "fr"}},
+                                          "voix": {"par_langue": {"en": "EST9Ui6982FZPSi7gCHi"}}}, None)
+    assert sorted(c.modeles_meta) == ["rappel"] and sorted(c.voix.par_langue) == ["en"]
+    assert c.voix.voix == base["voix"]["voix"]  # le reste du sous-objet est gardé
 
 
 def test_changer_de_metier_retire_les_outils():
     base = configuration.lire("clients/megga-estates.yaml").model_dump(mode="json")
-    c = regles.appliquer("client", base, {"metier": "general"}, False)
+    c = regles.appliquer("client", base, {"metier": "general"}, None)
     assert c.metier == "general" and c.outils == ()
-    assert regles.manques(regles.appliquer("megga", base, {"catalogue": None}, False))
+    assert regles.manques(regles.appliquer("megga", base, {"catalogue": None}, None))
 
 
 # L'API
@@ -265,6 +281,90 @@ def test_activation_refusee_par_la_porte(tmp_path):
     assert t.get("/atelier/clients/exemple/versions/1", headers=MEGGA).json()["etat"] == "brouillon"
 
 
+def test_activation_garde_la_zone(atelier):
+    """Un brouillon ou une ancienne version d'une autre zone ne se met pas en service."""
+    t = atelier
+    nouveau_client(t)  # v1 en Europe
+    t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"zone": "suisse"}})  # v2, avant toute mise en service
+    assert t.post("/atelier/clients/exemple/versions/1/activer", headers=MEGGA, json={"forcer": True}).status_code == 200
+    r = t.post("/atelier/clients/exemple/versions/2/activer", headers=MEGGA, json={"forcer": True})
+    assert r.status_code == 409 and "zone" in r.json()["erreur"]
+    assert [v for _, v, _ in t.porte.activations] == [1]
+    # partir de la v2 ne contourne pas la règle
+    assert t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"base": 2, "changements": {}}).status_code == 409
+
+
+def test_echec_apres_la_porte_remet_l_annuaire(atelier, monkeypatch):
+    t = atelier
+    nouveau_client(t)
+    t.post("/atelier/clients/exemple/versions/1/activer", headers=MEGGA, json={"forcer": True})
+    t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"nom_agent": "Lea"}})
+
+    def panne(*a, **k):
+        raise RuntimeError("base perdue")
+
+    monkeypatch.setattr(t.app.state.versions, "mettre_en_service", panne)
+    r = t.post("/atelier/clients/exemple/versions/2/activer", headers=MEGGA, json={"forcer": True})
+    assert r.status_code == 500 and r.json()["details"] == {"annuaire_retabli": True}
+    # la porte a reçu la v2, puis de nouveau la v1 : elle sert ce que l'atelier dit en service
+    assert [v for _, v, _ in t.porte.activations] == [1, 2, 1]
+    assert t.get("/atelier/clients/exemple", headers=MEGGA).json()["version_en_service"] == 1
+
+
+def test_porte_muette_et_ecart(tmp_path):
+    porte = FaussePorte(refus=(0, "sans réponse (ReadTimeout)"))
+    t = TestClient(creer({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/a.db"}, porte=porte))
+    nouveau_client(t)
+    r = t.post("/atelier/clients/exemple/versions/1/activer", headers=MEGGA, json={"forcer": True})
+    assert r.status_code == 504
+    # la porte a peut-être agi : la liste montre l'écart entre l'annuaire et l'atelier
+    porte.refus = None
+    porte.activations.append(("exemple", 1, {}))
+    c = t.get("/atelier/clients", headers=MEGGA).json()["clients"][0]
+    assert c["version_en_service"] is None and c["annuaire"]["version"] == 1 and c["ecart"] is True
+    porte.demandes_etats.clear()
+    assert t.get("/atelier/clients/exemple", headers=MEGGA).json()["ecart"] is True
+    assert porte.demandes_etats == ["exemple"]  # un seul client demandé à la porte
+
+
+def test_entrees_mal_formees(atelier):
+    t = atelier
+    nouveau_client(t)
+    for corps in ({"forcer": "false"}, {"forcer": 1}):
+        assert t.post("/atelier/clients/exemple/versions/1/activer", headers=MEGGA, json=corps).status_code == 400
+    assert t.post("/atelier/clients/exemple/reprise", headers=MEGGA, json={"gere_par_megga": "false"}).status_code == 400
+    for base in ("deux", 0, True):
+        assert t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"base": base, "changements": {}}).status_code == 400
+    assert t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": []}).status_code == 400
+    # une version qui ne passe plus la validation : un refus lisible, pas une erreur 500
+    t.app.state.versions.db.upsert_config("exemple", config={**conf_exemple(), "inconnu": 1}, stage="draft")
+    for route in ("essai", "activer"):
+        r = t.post(f"/atelier/clients/exemple/versions/2/{route}", headers=MEGGA, json={"message": "x", "forcer": True})
+        assert r.status_code == 422 and r.json()["details"][0]["champ"] == "inconnu"
+
+
+def test_la_liste_suit_la_version_en_service(atelier):
+    t = atelier
+    nouveau_client(t)
+    t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"nom_agent": "Lea", "entreprise": "Autre SA"}})
+    t.post("/atelier/clients/exemple/versions/2/activer", headers=MEGGA, json={"forcer": True})
+    c = t.get("/atelier/clients", headers=MEGGA).json()["clients"][0]
+    assert (c["nom_agent"], c["entreprise"], c["derniere_version"], c["ecart"]) == ("Lea", "Autre SA", 2, False)
+
+
+def test_essais_sans_memoire_partagee(atelier, tmp_path):
+    import sqlite3
+
+    t = atelier
+    nouveau_client(t)
+    t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"ton": "direct"}})
+    for v, conv in ((1, "a"), (2, "a"), (2, "b")):
+        t.post(f"/atelier/clients/exemple/versions/{v}/essai", headers=MEGGA, json={"message": "Je m'appelle Paul", "conversation": conv})
+    with sqlite3.connect(tmp_path / "essais" / "exemple.db") as c:
+        personnes = {u for (u,) in c.execute("SELECT DISTINCT user_id FROM agno_sessions")}
+    assert personnes == {"essai-v1-a", "essai-v2-a", "essai-v2-b"}
+
+
 def test_zone_hors_porte_et_version_incomplete(atelier):
     t = atelier
     nouveau_client(t, zone="suisse")
@@ -320,6 +420,17 @@ def test_porte_http():
     with pytest.raises(ValueError):
         Porte("http://non-chiffre", "jeton")
 
+    def muette(r: httpx.Request):
+        raise httpx.ReadTimeout("trop long", request=r)
+
+    from atelier.porte import PorteErreur
+
+    with pytest.raises(PorteErreur) as e:
+        asyncio.run(Porte("https://porte.essai", "jeton", transport=httpx.MockTransport(muette)).activer(conf, 2))
+    assert e.value.statut == 0
+    asyncio.run(p.etats("exemple"))
+    assert vus[-1][1] == "/admin/clients" and vus[-1][0] == "GET"
+
 
 def test_l_image_choisit_son_service(monkeypatch):
     import runpy
@@ -349,19 +460,55 @@ def test_versions_sur_les_deux_bases(moteur, tmp_path):
     ident = f"essai-{uuid.uuid4().hex[:8]}"  # base partagée sous Postgres
     conf = Config.model_validate(conf_exemple(id=ident))
     v.creer(conf, "megga")
-    v.ajouter(Config.model_validate(conf_exemple(id=ident, nom_agent="Lea")), "client", 1)
-    v.regler(ident, gere_par_megga=True)
-    v.mettre_en_service(ident, 2)
-    assert v.courante(ident) == 2 and v.reglages(ident)["gere_par_megga"] is True
-    v.ajouter(conf, "megga", 2)
-    v.mettre_en_service(ident, 3)
-    v.mettre_en_service(ident, 2)  # retour
-    assert v.courante(ident) == 2
-    assert [x["etat"] for x in v.historique(ident)] == ["publiee", "publiee", "brouillon"]
-    assert ident in [c["component_id"] for c in v.clients()]
-    j = stockage.Jetons(url)
-    jeton = j.creer(ident)
-    assert j.client(jeton) == ident and j.client("faux") is None and j.revoquer(ident) == 1
-    # Base partagée : on n'y laisse rien. Sous Postgres, Agno 3.2 donne aux versions une colonne
-    # deleted_at que SQLite n'a pas ; une ligne restante casserait l'export vers SQLite (test_noyau).
-    v.db.delete_component(ident, hard_delete=True)
+    try:
+        v.ajouter(Config.model_validate(conf_exemple(id=ident, nom_agent="Lea")), "client", 1)
+        v.regler(ident, gere_par_megga=True)
+        v.mettre_en_service(ident, 2, None)
+        assert v.courante(ident) == 2 and v.reglages(ident)["gere_par_megga"] is True
+        assert v.client(ident)["name"] == "Lea"  # la ligne suit la version en service
+        v.ajouter(conf, "megga", 2)
+        v.mettre_en_service(ident, 3, 2)
+        v.mettre_en_service(ident, 2, 3)  # retour
+        assert v.courante(ident) == 2 and v.client(ident)["name"] == "Lea"
+        with pytest.raises(Exception):
+            v.mettre_en_service(ident, 3, 1)  # la garde : on ne croyait pas la bonne version en service
+        assert v.courante(ident) == 2
+        assert [x["etat"] for x in v.historique(ident)] == ["publiee", "publiee", "brouillon"]
+        assert ident in [c["component_id"] for c in v.clients()]
+        assert v.dernieres({ident}) == {ident: 3}
+        j = stockage.Jetons(url)
+        jeton = j.creer(ident)
+        assert j.client(jeton) == ident and j.client("faux") is None and j.revoquer(ident) == 1
+    finally:
+        # Base partagée : on n'y laisse rien, même en cas d'échec. Sous Postgres, Agno 3.2 donne aux
+        # versions une colonne deleted_at que SQLite n'a pas ; une ligne restante casserait l'export
+        # vers SQLite (test_noyau).
+        v.db.delete_component(ident, hard_delete=True)
+
+
+def test_le_conteneur_finit_ses_tours_avant_de_redemarrer():
+    """/interne/vider attend la réponse en cours (la porte n'arrête le conteneur qu'ensuite)."""
+    import asyncio
+
+    from noyau.app import creer as creer_agent
+    from test_app import CONF, FauxExpediteur, corps, signe
+
+    class Lent:
+        def __init__(self):
+            self.appels = []
+
+        async def arun(self, texte, user_id=None, session_id=None):
+            await asyncio.sleep(0.3)
+            self.appels.append(texte)
+            return type("S", (), {"content": "Voilà.", "status": "COMPLETED"})()
+
+    exp = FauxExpediteur()
+    app = creer_agent({"CLIENT_CONFIG": CONF, "META_APP_SECRET": "secret-essai", "INTERNE_TOKEN": "jeton"},
+                      agent=Lent(), expediteur=exp, attente=0.01, seuil_regard=30)
+    with TestClient(app) as t:
+        assert t.post("/interne/vider", headers={"x-megga-interne": "faux"}).status_code == 401
+        c = corps()
+        t.post("/whatsapp", content=c, headers=signe(c))
+        assert exp.envois == []  # le tour est en route
+        assert t.post("/interne/vider", headers={"x-megga-interne": "jeton"}).json() == {"restantes": 0}
+        assert [texte for _, texte in exp.envois] == ["Voilà."]

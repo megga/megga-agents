@@ -6,7 +6,7 @@
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
-//   GET  /admin/clients            les clients de l'annuaire et l'état de leur conteneur
+//   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
@@ -35,9 +35,11 @@ export async function recevoir(requete, env, ctx) {
   if (url.pathname === "/meta" && requete.method === "POST") return webhook(requete, env, ctx);
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
-  if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env);
+  if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
+    // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
+    if (!/^Bearer \S+$/.test(requete.headers.get("authorization") ?? "")) return texte("jeton attendu", 401);
     const atelier = atelierDe(env);
     return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
   }
@@ -112,14 +114,20 @@ async function configuration(requete, env, id) {
     if (e instanceof RefusAnnuaire) return texte(e.message, e.statut);
     throw e;
   }
-  // Le conteneur relit sa configuration au démarrage : on l'arrête, le prochain message le relance.
-  const redemarre = await agent.redemarrer();
-  return json({ ok: true, id, version: corps.version, redemarre });
+  // Le conteneur relit sa configuration au démarrage : il redémarre dès qu'il a fini ses tours.
+  // L'annuaire est déjà à jour : un échec ici n'annule rien, il est rendu à l'atelier.
+  try {
+    const redemarre = await agent.redemarrer();
+    return json({ ok: true, id, version: corps.version, redemarre });
+  } catch (e) {
+    console.error("redémarrage en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ ok: true, id, version: corps.version, redemarre: null, alerte: "redémarrage en échec : la configuration s'appliquera au prochain réveil" });
+  }
 }
 
-async function clients(requete, env) {
+async function clients(requete, env, seul) {
   if (!autorise(requete, env)) return texte("refusé", 401);
-  const tous = await lister(env.ANNUAIRE);
+  const tous = (await lister(env.ANNUAIRE)).filter((c) => !seul || c.id === seul);
   const etats = await Promise.all(
     tous.map((c) => (agentDe(env, c)?.etat() ?? Promise.resolve(null)).catch(() => null)),
   );

@@ -33,18 +33,30 @@ class Porte:
             headers={"authorization": f"Bearer {self._jeton}"},
         )
 
-    async def activer(self, conf: Config, version: int) -> dict:
-        """Inscrit la configuration dans l'annuaire et redémarre le conteneur du client."""
-        async with self._client() as c:
-            r = await c.put(f"/admin/clients/{conf.id}/config", json={"version": version, "config": conf.model_dump(mode="json")})
-        if r.status_code != 200:
-            raise PorteErreur(r.status_code, r.text[:200])
-        return r.json()
+    async def _appel(self, methode: str, chemin: str, **options) -> dict:
+        """Un appel à la porte ; toute panne (refus, délai, réseau) devient une PorteErreur.
 
-    async def etats(self) -> dict[str, dict]:
-        """L'état de chaque client dans l'annuaire (actif, version, conteneur)."""
-        async with self._client() as c:
-            r = await c.get("/admin/clients")
+        Statut 0 : la porte n'a pas répondu, on ne sait pas si elle a agi.
+        """
+        try:
+            async with self._client() as c:
+                r = await c.request(methode, chemin, **options)
+        except httpx.HTTPError as e:
+            raise PorteErreur(0, f"sans réponse ({type(e).__name__})") from e
         if r.status_code != 200:
             raise PorteErreur(r.status_code, r.text[:200])
-        return {e["id"]: e for e in r.json().get("clients", [])}
+        try:
+            return r.json()
+        except ValueError as e:
+            raise PorteErreur(r.status_code, "réponse illisible") from e
+
+    async def activer(self, conf: Config, version: int) -> dict:
+        """Inscrit la configuration dans l'annuaire et fait redémarrer le conteneur du client."""
+        return await self._appel("PUT", f"/admin/clients/{conf.id}/config",
+                                 json={"version": version, "config": conf.model_dump(mode="json")})
+
+    async def etats(self, ident: str | None = None) -> dict[str, dict]:
+        """L'état des clients dans l'annuaire (actif, version, conteneur) ; d'un seul si `ident`."""
+        params = {"id": ident} if ident else None
+        d = await self._appel("GET", "/admin/clients", params=params)
+        return {e["id"]: e for e in d.get("clients", [])}
