@@ -25,7 +25,7 @@ from sqlalchemy.engine import Engine
 
 FORMAT = 1
 # Le schéma Postgres des tables d'Agno (SQLite n'a pas de schéma).
-SCHEMA = "agno"
+SCHEMA = "ai"  # celui d'Agno par défaut, qu'il emploie dans tous les cas
 
 
 def moteur(url: str) -> Engine:
