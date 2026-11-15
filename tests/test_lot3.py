@@ -1,0 +1,202 @@
+import asyncio
+import json
+import os
+import time
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+
+from noyau import config as configuration
+from noyau import stockage
+from noyau.agent import construire
+from noyau.app import creer
+from noyau.garde import MASQUE, TROP, Debit, masquer_secrets
+from noyau.rappels import lire_quand, outils
+from noyau.tour import Conversations
+from noyau.whatsapp import Entrant
+
+FUSEAU = "Europe/Zurich"
+MOI = "+41790000000"
+AUTRE = "+41790000001"
+
+
+def conf(**autres):
+    d = configuration.lire("clients/exemple.yaml").model_dump()
+    d.update(autres)
+    return configuration.lire(d)
+
+
+def ctx(personne):
+    return SimpleNamespace(user_id=personne)
+
+
+def demain():
+    return time.strftime("%Y-%m-%dT%H:%M", time.localtime(time.time() + 86400))
+
+
+@pytest.fixture(params=["sqlite"] + (["postgres"] if os.environ.get("TEST_POSTGRES_URL") else []))
+def rappels(request, tmp_path):
+    url = f"sqlite:///{tmp_path}/r.db" if request.param == "sqlite" else os.environ["TEST_POSTGRES_URL"]
+    r = stockage.Rappels(url)
+    if request.param == "postgres":  # base partagée : on repart d'une table vide
+        with r._e.begin() as c:
+            c.execute(r._t.delete())
+    return r
+
+
+# Les rappels
+
+
+def test_quand():
+    maintenant = time.time()
+    assert lire_quand(demain(), FUSEAU) > maintenant
+    for mauvais in ("hier", "2020-01-01T09:00", "2099-01-01T09:00"):
+        with pytest.raises(ValueError):
+            lire_quand(mauvais, FUSEAU)
+
+
+def test_outils_par_personne(rappels):
+    rappeler, mes_rappels, annuler = outils(rappels, FUSEAU)
+    reponse = rappeler(demain(), "relancer M. Exemple", run_context=ctx(MOI))
+    ident = reponse.split()[1]
+    assert "relancer M. Exemple" in mes_rappels(run_context=ctx(MOI))
+    assert mes_rappels(run_context=ctx(AUTRE)) == "Aucun rappel en attente."
+    assert annuler(ident, run_context=ctx(AUTRE)).startswith("Aucun")  # pas le rappel d'un autre
+    assert annuler(ident, run_context=ctx(MOI)) == "Rappel annulé."
+    with pytest.raises(ValueError):
+        rappeler(demain(), "x", run_context=ctx(None))
+
+
+def test_echus_differes_et_prochain(rappels):
+    a = rappels.ajouter(MOI, time.time() - 5, "passé")
+    rappels.ajouter(MOI, time.time() + 3600, "plus tard")
+    assert [r["id"] for r in rappels.echus(time.time())] == [a]
+    assert rappels.prochain() == pytest.approx(time.time() - 5, abs=2)
+    rappels.marquer(a, "differe")
+    assert [r["id"] for r in rappels.differes(MOI)] == [a]
+    assert rappels.prochain() > time.time()
+
+
+# Les garde-fous
+
+
+def test_secrets_masques():
+    t = "base postgresql://u:p@hote/db, clé sk-ant-api03-abcdefghijklmnopqrstuv, jeton EAAB" + "x1" * 20
+    assert "postgresql" not in masquer_secrets(t) and "sk-ant" not in masquer_secrets(t) and "EAAB" not in masquer_secrets(t)
+    sain = "Votre rendez-vous du 20.11.2026 à 09:00, au +41 22 567 04 07, réf 1476827312177165."
+    assert masquer_secrets(sain) == sain
+    assert MASQUE in masquer_secrets("a1" * 25)
+
+
+def test_debit():
+    d = Debit(maximum=2, fenetre=60)
+    assert d.permis("p", 0) and d.permis("p", 1) and not d.permis("p", 2)
+    assert d.permis("p", 70)
+    assert d.prevenir("p", 0) and not d.prevenir("p", 10)
+
+
+# La conversation
+
+
+class Agent:
+    def __init__(self, reponse="Bien reçu."):
+        self.appels, self.reponse = [], reponse
+
+    async def arun(self, texte, user_id=None, session_id=None):
+        self.appels.append(texte)
+        return SimpleNamespace(content=self.reponse, status="COMPLETED")
+
+
+class Exp:
+    def __init__(self):
+        self.journal = []
+
+    async def texte(self, vers, texte):
+        self.journal.append(("texte", vers, texte))
+
+    async def lu(self, i):
+        pass
+
+    async def reaction(self, *a):
+        pass
+
+    async def modele(self, vers, nom, langue, variables):
+        self.journal.append(("modele", vers, nom))
+
+
+class Contacts:
+    def __init__(self, dernier):
+        self._d = dernier
+
+    def noter(self, *a):
+        pass
+
+    def dernier(self, personne):
+        return self._d
+
+
+def entrant(texte="Bonjour", ident="w1"):
+    return Entrant(id=ident, de=MOI, texte=texte, envoye=time.time(), genre="text")
+
+
+async def tourner(c, *messages):
+    for m in messages:
+        c.recevoir(m)
+    while c.taches:
+        await asyncio.gather(*list(c.taches), return_exceptions=True)
+
+
+@pytest.mark.parametrize("dernier,modeles,attendu,etat", [
+    (time.time() - 60, {}, "libre", None),
+    (time.time() - 30 * 3600, {"rappel": {"nom": "rappel_client"}}, "modele", None),
+    (time.time() - 30 * 3600, {}, "attente", "differe"),
+])
+def test_rappels_echus_selon_la_fenetre(rappels, dernier, modeles, attendu, etat):
+    rappels.ajouter(MOI, time.time() - 1, "relancer M. Exemple")
+    exp = Exp()
+    c = Conversations(conf(modeles_meta=modeles), Agent(), exp, contacts=Contacts(dernier), rappels=rappels, attente=0.01)
+    bilan = asyncio.run(c.envoyer_rappels_echus(time.time()))
+    assert bilan[attendu] == 1
+    if etat:
+        assert rappels.differes(MOI) and exp.journal == []
+        # Au prochain message de la personne, le rappel part avant la réponse.
+        asyncio.run(tourner(c, entrant()))
+        assert exp.journal[0] == ("texte", MOI, "Rappel : relancer M. Exemple") and not rappels.differes(MOI)
+
+
+def test_debit_dans_la_conversation():
+    exp, agent = Exp(), Agent()
+    c = Conversations(conf(), agent, exp, attente=0.01, debit=Debit(maximum=1, fenetre=600))
+    asyncio.run(tourner(c, entrant("un", "w1")))
+    asyncio.run(tourner(c, entrant("deux", "w2")))
+    asyncio.run(tourner(c, entrant("trois", "w3")))
+    assert agent.appels == ["un"]
+    assert [e[2] for e in exp.journal].count(TROP) == 1
+
+
+def test_reponse_jamais_avec_un_secret():
+    exp = Exp()
+    c = Conversations(conf(), Agent("La base est postgresql://u:p@hote/db"), exp, attente=0.01)
+    asyncio.run(tourner(c, entrant()))
+    assert "postgresql" not in exp.journal[-1][2]
+
+
+def test_route_interne_protegee(rappels):
+    app = creer({"CLIENT_CONFIG": json.dumps(conf().model_dump()), "META_APP_SECRET": "s", "INTERNE_TOKEN": "jeton"},
+                agent=Agent(), expediteur=Exp(), contacts=Contacts(time.time()), rappels=rappels)
+    t = TestClient(app)
+    assert t.post("/interne/rappels").status_code == 401
+    assert t.post("/interne/rappels", headers={"x-megga-interne": "faux"}).status_code == 401
+    rappels.ajouter(MOI, time.time() + 600, "plus tard")
+    r = t.post("/interne/rappels", headers={"x-megga-interne": "jeton"}).json()
+    assert r["prochain"] > time.time() and r["libre"] == 0
+
+
+def test_agent_a_ses_outils_et_sa_memoire(tmp_path):
+    url = f"sqlite:///{tmp_path}/a.db"
+    agent = construire(conf(), stockage.base_agno(url), {"ANTHROPIC_API_KEY": "x", "DEEPSEEK_API_KEY": "y"},
+                       outils=outils(stockage.Rappels(url), FUSEAU))
+    noms = [getattr(o, "__name__", "") for o in agent.tools]
+    assert noms == ["rappeler", "mes_rappels", "annuler_rappel"]
+    assert agent.enable_agentic_memory is True

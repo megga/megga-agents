@@ -17,6 +17,7 @@ import logging
 from dataclasses import dataclass, field
 
 from .config import Config
+from .garde import TROP, Debit, masquer_secrets
 from .oral import pour_la_voix
 from .typographie import nettoyer
 from .voix import a_ecrire, se_prete
@@ -44,7 +45,7 @@ class Conversations:
     """Les conversations d'un client, une file par personne."""
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
-                 attente: float = 2.5, seuil_regard: float = 8.0):
+                 attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None):
         self.conf = conf
         self.agent = agent
         self.exp = expediteur
@@ -53,6 +54,8 @@ class Conversations:
         self.reecrire = reecrire
         self.attente = attente
         self.seuil_regard = seuil_regard
+        self.rappels = rappels
+        self.debit = debit or Debit()
         self._boites: dict[str, _Boite] = {}
         self._verrous: dict[str, asyncio.Lock] = {}
         self.taches: set[asyncio.Task] = set()
@@ -80,6 +83,11 @@ class Conversations:
             dernier = messages[-1]
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
             await self._sans_echec(self.exp.lu(dernier.id))
+            await self._sans_echec(self._rappels_differes(personne))
+            if not self.debit.permis(personne):
+                if self.debit.prevenir(personne):
+                    await self._ecrire(personne, TROP)
+                return
             etat = {"pose": False}
             regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
             try:
@@ -149,7 +157,7 @@ class Conversations:
 
     async def _ecrire(self, personne: str, texte: str) -> None:
         try:
-            await self.exp.texte(personne, nettoyer(texte))
+            await self.exp.texte(personne, nettoyer(masquer_secrets(texte)))
         except Exception as e:
             log.error("envoi en échec (%s) : %s", self.conf.id, str(e)[:200])
 
@@ -172,6 +180,29 @@ class Conversations:
             await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(texte)[:1000]])
             return "modele"
         return "attente"
+
+    async def _rappels_differes(self, personne: str) -> None:
+        """Les rappels échus hors des 24 heures, sans modèle Meta : ils partent maintenant."""
+        if self.rappels is None:
+            return
+        for r in await asyncio.to_thread(self.rappels.differes, personne):
+            await self.exp.texte(personne, nettoyer(f"Rappel : {r['texte']}"))
+            await asyncio.to_thread(self.rappels.marquer, r["id"], "envoye")
+
+    async def envoyer_rappels_echus(self, maintenant: float) -> dict:
+        """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
+        bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
+        if self.rappels is None:
+            return {"prochain": None, **bilan}
+        for r in await asyncio.to_thread(self.rappels.echus, maintenant):
+            try:
+                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel")
+                await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
+                bilan[voie] += 1
+            except Exception as e:
+                log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
+                bilan["echec"] += 1
+        return {"prochain": await asyncio.to_thread(self.rappels.prochain), **bilan}
 
     @staticmethod
     async def _sans_echec(coro) -> None:

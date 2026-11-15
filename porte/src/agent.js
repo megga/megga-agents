@@ -10,6 +10,16 @@ import { clientParId } from "./annuaire.js";
 
 const PORT = 8080;
 const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes sans message
+// Après un message, la porte demande au conteneur s'il a un rappel à venir (le tour a pu en créer un).
+const VERIFICATION_MS = 90 * 1000;
+
+/** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
+export async function jetonInterne(admin, nom) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey("raw", enc.encode(admin), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(`interne:${nom}`)));
+  return [...sig].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 export const SECRETS_CLIENT = ["DATABASE_URL"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 
@@ -33,14 +43,40 @@ class AgentClient extends DurableObject {
   }
 
   async fetch(requete) {
-    this.demarrage ??= this.demarrer().finally(() => (this.demarrage = undefined));
-    await this.demarrage;
+    await this.pret();
     const url = new URL(requete.url);
     url.protocol = "http:";
     url.host = "container";
     const transmise = new Request(url, requete);
     transmise.headers.delete("host");
-    return this.ctx.container.getTcpPort(PORT).fetch(transmise);
+    const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
+    if (url.pathname === "/whatsapp") await this.verifierBientot();
+    return reponse;
+  }
+
+  pret() {
+    this.demarrage ??= this.demarrer().finally(() => (this.demarrage = undefined));
+    return this.demarrage;
+  }
+
+  /** Une vérification des rappels sous peu, sauf si une alarme plus proche est déjà posée. */
+  async verifierBientot(maintenant = Date.now()) {
+    const t = maintenant + VERIFICATION_MS;
+    const a = await this.ctx.storage.getAlarm();
+    if (!a || a > t) await this.ctx.storage.setAlarm(t);
+  }
+
+  /** L'heure d'un rappel (ou d'une vérification) : le conteneur envoie ce qui est échu. */
+  async alarm() {
+    await this.pret();
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const r = await this.ctx.container.getTcpPort(PORT).fetch("http://container/interne/rappels", {
+      method: "POST",
+      headers: { "x-megga-interne": jeton },
+    });
+    if (!r.ok) throw new Error(`rappels ${r.status}`); // l'alarme est retentée par la plateforme
+    const { prochain } = await r.json();
+    if (prochain) await this.ctx.storage.setAlarm(Math.max(Math.round(prochain * 1000), Date.now() + 5000));
   }
 
   async demarrer() {
@@ -51,7 +87,7 @@ class AgentClient extends DurableObject {
       if (!client) throw new Error("client inconnu ou inactif");
       const secrets = (await this.ctx.storage.get("secrets")) ?? {};
       for (const k of SECRETS_CLIENT) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
-      const env = { CLIENT_CONFIG: client.config, ...secrets };
+      const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await jetonInterne(this.env.ADMIN_TOKEN ?? "", nom) };
       for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
       // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.
       c.start({ enableInternet: true, env });
