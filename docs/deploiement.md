@@ -9,7 +9,7 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
 1. **Meta** : confirmer le numéro de l'essai (+1 555-880-9814 ?) et l'app qui le porte. Il faut de cette app :
    - sa clé secrète (Paramètres, De base) ;
    - un jeton d'utilisateur système qui a `whatsapp_business_messaging` sur le compte de ce numéro.
-2. **Neon** : créer le compte et un projet `megga-agents` en région AWS Francfort (`eu-central-1`), avec une base `essai_megga`. Garder sa chaîne de connexion pour l'étape 8.
+2. **Neon** : fait le 15.11.2026. Le projet `calm-king-39242423` (AWS Francfort, Postgres 18) est lié au dépôt par `neon init`. Ses adresses sont dans `.env.local`, jamais suivi par git ; connexion vérifiée sans les afficher.
 3. **Cloudflare** :
    - vérifier que le compte est en Workers Paid (obligatoire pour les conteneurs) ;
    - créer un jeton d'API (Workers, Containers, D1, Durable Objects en écriture) ;
@@ -36,8 +36,9 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
    .venv/bin/python scripts/inscrire_client.py clients/essai-megga.yaml
    ```
    ```bash
-   scripts/secrets_client.sh essai-megga https://megga-agents.<sous-domaine>.workers.dev
+   scripts/secrets_client.sh essai-megga https://megga-agents.<sous-domaine>.workers.dev .env.local
    ```
+   L'adresse est lue dans `.env.local` (celle sans le regroupeur de connexions de Neon, mieux adaptée à un conteneur qui garde ses connexions), sans s'afficher.
 9. **Julien** : écrire au numéro, puis envoyer un vocal. Le premier message réveille le conteneur (quelques secondes).
 
 ## Revenir en arrière
