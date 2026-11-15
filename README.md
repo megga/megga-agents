@@ -12,6 +12,7 @@ Le plan : [docs/plan.md](docs/plan.md).
 | `atelier/` | l'API qui construit et pilote les agents des clients ([docs/atelier.md](docs/atelier.md)) |
 | `socle/` | l'image Docker unique (Cloudflare, Suisse, chez le client) |
 | `porte/` | le Worker d'entrée des zones Europe et États-Unis, l'objet de chaque client et celui de l'atelier |
+| `installation/` | l'installation chez le client : Docker Compose et chart Helm ([docs/installation-client.md](docs/installation-client.md)) |
 | `clients/` | des configurations ; seulement un exemple, aucun client réel |
 | `tests/` | les essais du noyau |
 

@@ -1,0 +1,31 @@
+{{- if .Values.ingress.enabled }}
+{{- if not .Values.ingress.host }}{{ fail "ingress.host : le nom de domaine public du webhook" }}{{ end }}
+# Seul le webhook de Meta est exposé, en HTTPS ; /sante et les routes internes restent dans le cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "megga-agent.nom" . }}
+  labels: {{- include "megga-agent.etiquettes" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tlsSecret }}
+  tls:
+    - hosts: [{{ .Values.ingress.host | quote }}]
+      secretName: {{ .Values.ingress.tlsSecret }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /whatsapp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "megga-agent.nom" . }}
+                port: {name: http}
+{{- end }}

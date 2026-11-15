@@ -64,3 +64,24 @@ jobs:
             sleep 1
           done
           docker logs atelier; exit 1
+
+  installation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+      - name: Le chart Helm
+        run: |
+          helm lint installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml
+          helm template essai installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml > /tmp/rendu.yaml
+          grep -q "path: /whatsapp" /tmp/rendu.yaml
+          # sans les valeurs du client, le chart refuse au lieu d'installer un agent incomplet
+          if helm template essai installation/helm/megga-agent > /dev/null 2>&1; then echo "rendu sans valeurs"; exit 1; fi
+      - name: Le Docker Compose
+        working-directory: installation/compose
+        run: |
+          cp exemple.env .env && sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=essai/' .env
+          touch secrets.env client.yaml
+          docker compose config -q

@@ -11,3 +11,8 @@ node_modules/
 *.egg-info/
 .neon
 .env.local
+
+# Une installation chez le client, préparée pour un essai : jamais dans le dépôt.
+installation/compose/.env
+installation/compose/secrets.env
+installation/compose/client.yaml

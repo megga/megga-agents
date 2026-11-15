@@ -10,9 +10,15 @@ Variables d'environnement (jamais dans le dépôt) :
   ELEVENLABS_API_KEY   facultatif : écouter les vocaux et répondre de vive voix
   JWT_VERIFICATION_KEY facultatif : ouvre l'API d'AgentOS, protégée par jeton (console, mode 2)
   INTERNE_TOKEN        le jeton des routes internes (posé par la porte, propre à chaque client)
+  MEGGA_INSTALLATION   « client » : installation chez le client (webhook direct, rappels sans porte,
+                       licence exigée) ; sinon, derrière la porte de MEGGA
+  META_VERIFY_TOKEN    chez le client : le jeton d'abonnement du webhook de Meta
+  MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
+Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
+  GET  /whatsapp  l'abonnement du webhook de Meta (chez le client ; chez MEGGA, la porte s'en charge)
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
@@ -25,6 +31,7 @@ Routes :
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -35,10 +42,12 @@ from collections import OrderedDict
 from fastapi import FastAPI, Request, Response
 
 from . import config as configuration
+from . import licence as licences
 from . import stockage
 from . import suivi as suivi_agent
 from . import version as version_image
 from .agent import construire, modele
+from .environnement import charger
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
@@ -97,14 +106,17 @@ def _reecriture(conf, cles):
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
-          delai_vider: float = 100.0, journal=None, lecture=None, fil=None) -> FastAPI:
-    """Les arguments nommés remplacent les vrais services (essais)."""
-    env = dict(os.environ if env is None else env)
+          delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None) -> FastAPI:
+    """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence`, la clé publique des licences."""
+    env = charger(dict(os.environ if env is None else env))
     os.environ.setdefault("AGNO_TELEMETRY", "false")
     source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
     if not source:
         raise RuntimeError("CLIENT_CONFIG manquante")
     conf = configuration.lire(source)
+    chez_le_client = env.get("MEGGA_INSTALLATION") == "client"
+    # Chez le client, pas de licence valide, pas de démarrage (vérifiée sans appel extérieur).
+    licence = licences.verifier(env.get("MEGGA_LICENCE", ""), conf.id, cle=cle_licence) if chez_le_client else None
     cles = {k: env.get(k, "") for k in CLES}
     if agent is None:
         if not env.get("DATABASE_URL"):
@@ -128,14 +140,44 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     secret = env.get("META_APP_SECRET")
     deja = Deja()
 
-    app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None)
+    @contextlib.asynccontextmanager
+    async def vie(_):
+        # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel : il veille lui-même.
+        tache = asyncio.create_task(veiller_rappels()) if chez_le_client and rappels is not None else None
+        yield
+        if tache:
+            tache.cancel()
+
+    async def veiller_rappels():
+        while True:
+            prochain = None
+            try:
+                prochain = (await conversations.envoyer_rappels_echus(time.time())).get("prochain")
+            except Exception as e:
+                log.error("rappels en échec : %s", str(e)[:200])
+            await asyncio.sleep(min(60.0, max(1.0, (prochain - time.time()) if prochain else 60.0)))
+
+    app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None, lifespan=vie)
     app.state.config = conf
     app.state.conversations = conversations
     app.state.taches = conversations.taches
 
     @app.get("/sante")
     async def sante():
-        return {"ok": True, "client": conf.id, "zone": conf.zone, **version_image.carte()}
+        etat = {"ok": True, "client": conf.id, "zone": conf.zone, **version_image.carte(),
+                "installation": "client" if chez_le_client else "megga"}
+        if licence:
+            etat["licence"] = licences.etat_du_jour(licence)
+        return etat
+
+    @app.get("/whatsapp")
+    async def abonnement(requete: Request):
+        """Meta vérifie l'adresse du webhook : le défi est rendu si le jeton correspond."""
+        p = requete.query_params
+        jeton = env.get("META_VERIFY_TOKEN", "")
+        if jeton and p.get("hub.mode") == "subscribe" and hmac.compare_digest(p.get("hub.verify_token", ""), jeton):
+            return Response(p.get("hub.challenge", ""), media_type="text/plain")
+        return Response("refusé", status_code=403)
 
     @app.post("/whatsapp")
     async def whatsapp(requete: Request):

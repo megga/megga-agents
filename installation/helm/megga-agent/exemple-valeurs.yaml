@@ -1,0 +1,15 @@
+# Un exemple de valeurs, pour essayer le chart (helm template) : aucun client réel.
+image:
+  digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+existingSecret: megga-agent-secrets
+config:
+  version: 1
+  id: exemple
+  nom_agent: Alix
+  entreprise: Entreprise exemple
+  zone: client
+  whatsapp:
+    numero_id: "100000000000001"
+ingress:
+  host: agent.exemple.ch
+  tlsSecret: agent-exemple-tls
