@@ -4,6 +4,9 @@ kind: Deployment
 metadata:
   name: {{ include "megga-agent.nom" . }}
   labels: {{- include "megga-agent.etiquettes" . | nindent 4 }}
+  annotations:
+    # L'image des valeurs à ce rendu : tant qu'elle ne change pas, un « helm upgrade » garde celle posée par le pilote.
+    megga.ai/image-valeurs: {{ include "megga-agent.image" . | quote }}
 spec:
   # Un seul agent à la fois : les messages d'une personne se regroupent dans sa mémoire,
   # et deux agents répondraient deux fois. Une mise à jour arrête l'ancien avant le nouveau.
@@ -33,7 +36,7 @@ spec:
       terminationGracePeriodSeconds: 120
       containers:
         - name: agent
-          image: {{ include "megga-agent.image" . }}
+          image: {{ include "megga-agent.image-en-place" (dict "ctx" . "nom" (include "megga-agent.nom" .) "conteneur" "agent") }}
           imagePullPolicy: IfNotPresent
           ports:
             - {name: http, containerPort: 8080}

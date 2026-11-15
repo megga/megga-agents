@@ -583,6 +583,19 @@ class Reglages:
             c.execute(delete(self._t).where(self._t.c.cle == cle))
             c.execute(insert(self._t).values(cle=cle, valeur=donnees))
 
+    def changer(self, cle: str, attendu: Any, valeur: Any) -> bool:
+        """Écrit `valeur` seulement si la clé vaut encore `attendu` (lu juste avant) ; faux sinon : un autre
+        processus l'a changée entre-temps (le pilote et la commande du script de l'hôte, par exemple)."""
+        t, avant, apres = self._t, json.dumps(attendu, ensure_ascii=False), json.dumps(valeur, ensure_ascii=False)
+        try:
+            with self._e.begin() as c:
+                if attendu is None and c.execute(select(t.c.valeur).where(t.c.cle == cle)).scalar() is None:
+                    c.execute(insert(t).values(cle=cle, valeur=apres))
+                    return True
+                return c.execute(update(t).where(t.c.cle == cle, t.c.valeur == avant).values(valeur=apres)).rowcount > 0
+        except IntegrityError:  # écrite au même instant par l'autre
+            return False
+
 
 # Le pilotage des installations hors Cloudflare (noyau/pilotage.py, pilote/, atelier/pilotage.py)
 

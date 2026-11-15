@@ -15,6 +15,8 @@ kind: Deployment
 metadata:
   name: {{ include "megga-agent.nom" . }}-pilote
   labels: {{- include "megga-agent.etiquettes-pilote" . | nindent 4 }}
+  annotations:
+    megga.ai/image-valeurs: {{ include "megga-agent.image" . | quote }}
 spec:
   replicas: 1
   strategy:
@@ -45,7 +47,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: pilote
-          image: {{ include "megga-agent.image" . }}
+          image: {{ include "megga-agent.image-en-place" (dict "ctx" . "nom" (printf "%s-pilote" (include "megga-agent.nom" .)) "conteneur" "pilote") }}
           imagePullPolicy: IfNotPresent
           env:
             - {name: MEGGA_SERVICE, value: pilote}

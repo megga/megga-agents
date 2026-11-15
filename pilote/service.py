@@ -74,6 +74,7 @@ PROTOCOLE = 1
 PERIODE_SUIVI = 300  # le suivi (volumes, modèles, alertes) part toutes les 5 minutes ; l'état, à chaque relevé
 DELAI_APPLICATION = 600  # l'agent a 10 minutes pour servir une nouvelle configuration ou image, sinon retour arrière
 CLE_MAJ = "mise_a_jour"  # la mise à jour d'image en cours, dans megga_reglages
+SANTE_REQUISE = 2  # relevés sains de suite sur la nouvelle image avant de la dire appliquée
 FENETRES = (1, 7, 30)  # les périodes du suivi, en jours
 # Ce que le pilote retient de /sante (rien de privé n'y est ; on ne garde que ce qu'on connaît).
 SANTE = ("ok", "version", "revision", "config", "schema", "installation", "zone", "licence", "configuration")
@@ -359,7 +360,8 @@ class Installation:
 
     # Les mises à jour de l'image
     #
-    # Une à la fois, suivie dans megga_reglages (CLE_MAJ) : {numero, version, image, phase, depuis, ...}.
+    # Une à la fois, suivie dans megga_reglages (CLE_MAJ) : {numero, version, image, phase, depuis, ...}, changée
+    # seulement si personne ne l'a changée depuis sa lecture (le pilote et la commande du script avancent chacun).
     # phases : verifier (la signature de l'image), prete (vérifiée), lancee (base sauvegardée, image remplacée
     # ou demandée), retour (en échec : l'image d'avant à remettre). Le pilote décide ; l'exécutant (le script de
     # l'hôte sous Compose, l'API de Kubernetes sinon) ne fait que remplacer l'image qu'on lui donne.
@@ -368,8 +370,10 @@ class Installation:
         r = self.reglages.lire(CLE_MAJ)
         return r if isinstance(r, dict) else None
 
-    def _poser_maj(self, r: dict | None) -> None:
-        self.reglages.ecrire(CLE_MAJ, r)
+    def _poser_maj(self, nouveau: dict | None, attendu: dict | None) -> bool:
+        """Change la mise à jour en cours seulement si personne ne l'a changée depuis sa lecture : le pilote et la
+        commande du script de l'hôte avancent chacun de leur côté. Faux : rien n'est fait, on relira."""
+        return self.reglages.changer(CLE_MAJ, attendu, nouveau)
 
     def _echec_image(self, numero: int, motif: str, maintenant: float) -> None:
         if self.ordres.changer(self.client, numero, "echec", motif, ("a_appliquer",), maintenant):
@@ -395,22 +399,23 @@ class Installation:
                 return
         l = self.ordres.lire(self.client, r["numero"])
         if r["phase"] in ("verifier", "prete") and (l is None or l["etat"] != "a_appliquer"):
-            self._poser_maj(None)  # refusée, remplacée ou expirée avant d'être lancée
+            self._poser_maj(None, r)  # refusée, remplacée ou expirée avant d'être lancée
             return
         if r["phase"] == "verifier":
             self._verifier(r, l, maintenant)
         elif r["phase"] == "prete":
             if maintenant > l["expire"]:
-                if self.ordres.changer(self.client, r["numero"], "expire", "jamais lancée dans la semaine", ("a_appliquer",), maintenant):
+                if self._poser_maj(None, r) and self.ordres.changer(self.client, r["numero"], "expire", "jamais lancée dans la semaine",
+                                                                    ("a_appliquer",), maintenant):
                     self.noter("expire", r["numero"], "jamais lancée dans la semaine (le script mettre_a_jour.sh tourne-t-il ?)")
-                self._poser_maj(None)
             elif self.maj.kube:
                 self.lancer(self.maj.kube.image(self.maj.agent, "agent"), maintenant)
         elif r["phase"] == "lancee":
             if self.maj.kube and not r.get("en_place"):  # le changement d'image n'est pas passé : on le redemande
                 self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
+                if not self._poser_maj({**r, "en_place": True}, r):
+                    return
                 r = {**r, "en_place": True}
-                self._poser_maj(r)
             self._surveiller(r, sante, maintenant)
         elif r["phase"] == "retour" and self.maj.kube:
             if r.get("avant"):
@@ -423,13 +428,14 @@ class Installation:
         if not lignes:
             return None
         l = lignes[0]
+        c = pilotage.contenu(l["jeton"]).get("contenu") or {}
+        r = {"numero": l["numero"], "version": c.get("version"), "image": c.get("image"), "phase": "verifier", "depuis": maintenant}
+        if not self._poser_maj(r, None):
+            return None
         for vieille in lignes[1:]:
             if self.ordres.changer(self.client, vieille["numero"], "remplace", f"remplacé par l'ordre {l['numero']}",
                                    ("a_appliquer",), maintenant):
                 self.noter("remplace", vieille["numero"], f"remplacé par l'ordre {l['numero']}")
-        c = pilotage.contenu(l["jeton"]).get("contenu") or {}
-        r = {"numero": l["numero"], "version": c.get("version"), "image": c.get("image"), "phase": "verifier", "depuis": maintenant}
-        self._poser_maj(r)
         return r
 
     def _verifier(self, r: dict, l: dict, maintenant: float) -> None:
@@ -440,19 +446,19 @@ class Installation:
                                                   self.maj.compte, self.maj.jeton, self.maj.transport)
         except images.RegistreInjoignable as e:
             if maintenant > l["expire"]:
-                self._echec_image(r["numero"], f"signature non vérifiée dans la semaine : {e}", maintenant)
-                self._poser_maj(None)
+                if self._poser_maj(None, r):
+                    self._echec_image(r["numero"], f"signature non vérifiée dans la semaine : {e}", maintenant)
             else:
                 log.warning("mise à jour %s : %s ; nouvel essai au prochain relevé", r["numero"], e)
                 self._detail(r["numero"], f"signature pas encore vérifiée : {e}", maintenant)
             return
         except pilotage.PilotageRefuse as e:
-            self._echec_image(r["numero"], f"image refusée : {e}", maintenant)
-            self._poser_maj(None)
+            if self._poser_maj(None, r):
+                self._echec_image(r["numero"], f"image refusée : {e}", maintenant)
             return
-        self._poser_maj({**r, "phase": "prete", "reference": reference, "depuis": maintenant})
-        self._detail(r["numero"], "signature de l'image vérifiée", maintenant)
-        self.noter("verifie", r["numero"], f"image {r['version']} signée par MEGGA")
+        if self._poser_maj({**r, "phase": "prete", "reference": reference, "depuis": maintenant}, r):
+            self._detail(r["numero"], "signature de l'image vérifiée", maintenant)
+            self.noter("verifie", r["numero"], f"image {r['version']} signée par MEGGA")
 
     def lancer(self, actuelle: str, maintenant: float | None = None) -> dict | None:
         """La mise à jour vérifiée part : la base sauvegardée, l'image d'avant retenue, puis l'image remplacée
@@ -463,46 +469,57 @@ class Installation:
             return r
         l = self.ordres.lire(self.client, r["numero"])
         if l is None or l["etat"] != "a_appliquer":
-            self._poser_maj(None)
+            self._poser_maj(None, r)
+            return None
+        # Sous Compose, revenir en arrière, c'est remettre l'image d'avant : il faut pouvoir la nommer par son empreinte.
+        if not self.maj.kube and not images.REFERENCE.fullmatch(actuelle or ""):
+            if self._poser_maj(None, r):
+                self._echec_image(r["numero"], "MEGGA_IMAGE (.env) doit nommer l'image par son empreinte (@sha256:…) : "
+                                  "sans elle, pas de retour arrière possible", maintenant)
             return None
         try:
             fichier = images.sauvegarder(self.url, self.maj.sauvegardes, self.client, r["version"], maintenant)
         except Exception as e:  # disque plein, dossier absent, base en panne : pas de mise à jour sans sauvegarde
-            self._echec_image(r["numero"], f"sauvegarde de la base impossible : {pilotage.sans_donnees(e)}", maintenant)
-            self._poser_maj(None)
+            if self._poser_maj(None, r):
+                self._echec_image(r["numero"], f"sauvegarde de la base impossible : {pilotage.sans_donnees(e)}", maintenant)
             return None
-        r = {**r, "phase": "lancee", "avant": actuelle or None, "sauvegarde": fichier.name, "depuis": maintenant,
-             "en_place": False}
-        self._poser_maj(r)
+        lancee = {**r, "phase": "lancee", "avant": actuelle or None, "sauvegarde": fichier.name, "depuis": maintenant,
+                  "en_place": False, "saines": 0}
+        if not self._poser_maj(lancee, r):
+            return self._maj()
         self._detail(r["numero"], f"base sauvegardée ({fichier.name}), image en cours de remplacement", maintenant)
         self.noter("lance", r["numero"], f"image {r['version']} : base sauvegardée ({fichier.name}), remplacement de l'image")
         if self.maj.kube:
-            self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
-            r = {**r, "en_place": True}
-            self._poser_maj(r)
-        return r
+            self.maj.kube.poser(self.maj.agent, "agent", lancee["reference"])
+            if self._poser_maj({**lancee, "en_place": True}, lancee):
+                lancee = {**lancee, "en_place": True}
+        return lancee
 
     def _surveiller(self, r: dict, sante: dict, maintenant: float) -> None:
-        """Appliquée quand l'agent répond sur la nouvelle version ; sinon, après le délai, retour à l'image d'avant."""
-        if r.get("en_place") and sante.get("ok") and sante.get("version") == r["version"]:
-            if self.ordres.changer(self.client, r["numero"], "applique", f"l'agent tourne sur l'image {r['version']}",
-                                   ("a_appliquer",), maintenant):
-                for n in self.ordres.remplacer(self.client, "image", ("applique",), r["numero"], maintenant):
-                    self.noter("remplace", n, f"remplacé par l'ordre {r['numero']}")
-                self.noter("applique", r["numero"], f"l'agent tourne sur l'image {r['version']}")
-            self._poser_maj(None)  # le pilote suivra l'image de l'agent (_suivre_pilote, ou le script de l'hôte)
+        """Appliquée quand l'agent répond sur la nouvelle version à deux relevés de suite (une image qui répond
+        puis tombe n'est pas gardée) ; sinon, après le délai, retour à l'image d'avant."""
+        saine = r.get("en_place") and sante.get("ok") and sante.get("version") == r["version"]
+        if saine and r.get("saines", 0) + 1 >= SANTE_REQUISE:
+            if self._poser_maj(None, r):  # le pilote suivra l'image de l'agent (_suivre_pilote, ou le script de l'hôte)
+                if self.ordres.changer(self.client, r["numero"], "applique", f"l'agent tourne sur l'image {r['version']}",
+                                       ("a_appliquer",), maintenant):
+                    for n in self.ordres.remplacer(self.client, "image", ("applique",), r["numero"], maintenant):
+                        self.noter("remplace", n, f"remplacé par l'ordre {r['numero']}")
+                    self.noter("applique", r["numero"], f"l'agent tourne sur l'image {r['version']}")
         elif maintenant - r["depuis"] > self.delai:
             pourquoi = (sante.get("erreur") or "/sante en échec") if not sante.get("ok") else f"version {sante.get('version')}"
             if not r.get("en_place"):
                 pourquoi = "l'image n'a pas été remplacée"
             motif = f"l'agent ne répond pas sur l'image {r['version']} après {self.delai / 60:.0f} minutes ({pourquoi})"
             retour = " ; retour à l'image d'avant" if r.get("avant") else " ; image d'avant inconnue"
-            self._echec_image(r["numero"], pilotage.sans_donnees(motif + retour), maintenant)
-            self._poser_maj({**r, "phase": "retour", "depuis": maintenant})
+            if self._poser_maj({**r, "phase": "retour", "depuis": maintenant}, r):
+                self._echec_image(r["numero"], pilotage.sans_donnees(motif + retour), maintenant)
+        elif saine or r.get("saines"):  # un relevé sain de plus, ou la série remise à zéro
+            self._poser_maj({**r, "saines": r.get("saines", 0) + 1 if saine else 0}, r)
 
     def _retour_fait(self, r: dict) -> None:
-        self._poser_maj(None)
-        self.noter("retour", r["numero"], "l'agent est revenu à l'image d'avant" if r.get("avant") else "image d'avant inconnue")
+        if self._poser_maj(None, r):
+            self.noter("retour", r["numero"], "l'agent est revenu à l'image d'avant" if r.get("avant") else "image d'avant inconnue")
 
     def _suivre_pilote(self) -> None:
         """Sous Kubernetes, hors mise à jour : le pilote prend l'image de l'agent, une fois celle-ci en service."""
@@ -529,7 +546,7 @@ class Installation:
             if actuelle != r["reference"]:
                 return f"installer {r['reference']}"
             if not r.get("en_place"):
-                self._poser_maj({**r, "en_place": True})
+                self._poser_maj({**r, "en_place": True}, r)
             return "attendre"
         if r["phase"] == "retour":
             if not r.get("avant") or actuelle == r["avant"]:

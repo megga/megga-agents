@@ -12,13 +12,19 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Une seule exécution à la fois (mkdir est atomique, et existe partout).
+# Une seule exécution à la fois (mkdir est atomique, et existe partout). Un verrou de plus de 30 minutes
+# vient d'une exécution interrompue (serveur redémarré) : il ne doit pas bloquer les suivantes.
 verrou=.mise-a-jour.verrou
+find . -maxdepth 1 -name "$verrou" -type d -mmin +30 -exec rmdir {} + 2> /dev/null || true
 mkdir "$verrou" 2> /dev/null || exit 0
 trap 'rmdir "$verrou"' EXIT
 
 heure() { date -u +"%d.%m.%Y %H:%M:%S UTC"; }
-actuelle=$(sed -n 's/^MEGGA_IMAGE=//p' .env | tail -n 1)
+# L'image de l'agent qui tourne vraiment (celle de son conteneur), sinon celle de .env.
+conteneur=$(docker compose ps -a -q agent 2> /dev/null | head -n 1)
+actuelle=""
+[ -n "$conteneur" ] && actuelle=$(docker inspect -f '{{.Config.Image}}' "$conteneur" 2> /dev/null || true)
+[ -n "$actuelle" ] || actuelle=$(sed -n 's/^MEGGA_IMAGE=//p' .env | tail -n 1 | tr -d "\"'")
 [ -n "$actuelle" ] || { echo "$(heure) MEGGA_IMAGE absente de .env"; exit 1; }
 
 pilote() { docker compose exec -T pilote python -m pilote image --actuelle "$1"; }

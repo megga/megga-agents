@@ -147,6 +147,7 @@ jobs:
           grep -q 'verbs: \["get", "patch"\]' /tmp/maj.yaml
           grep -q "claimName: essai-megga-agent-sauvegardes" /tmp/maj.yaml
           grep -q 'name: MISES_A_JOUR, value: "oui"' /tmp/maj.yaml
+          test "$(grep -c 'megga.ai/image-valeurs' /tmp/maj.yaml)" = 2
           if grep -q "ClusterRole" /tmp/maj.yaml; then echo "droits hors de l'espace de noms"; exit 1; fi
           helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true \
             --set pilotage.sauvegardes.existingClaim=mes-sauvegardes | grep -q "claimName: mes-sauvegardes"

@@ -7,7 +7,7 @@ C'est une seconde clé, indépendante de celle des ordres : un ordre signé ne s
 doit l'être aussi.
 
 La sauvegarde : avant chaque mise à jour, la base entière, par l'export de MEGGA (stockage.exporter),
-compressée, dans le dossier des sauvegardes ; les GARDEES plus récentes restent.
+compressée, lisible par le seul pilote, dans le dossier des sauvegardes ; les GARDEES plus récentes restent.
 
 L'exécutant Kubernetes : le pilote ne peut que lire et changer l'image de deux Deployments nommés,
 celui de l'agent et le sien (un Role limité à ces deux noms, installation/helm). Sous Compose, il
@@ -33,6 +33,8 @@ DEPOT = "ghcr.io/megga/megga-agents"
 CLE_IMAGE = Path(pilotage.__file__).with_name("cosign.pub")
 EMPREINTE = re.compile(r"^sha256:[0-9a-f]{64}$")
 NOM_DEPOT = re.compile(r"^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+$")
+# Une image nommée par son empreinte, d'un dépôt quelconque : la seule forme que le script de l'hôte accepte.
+REFERENCE = re.compile(NOM_DEPOT.pattern[:-1] + r"@sha256:[0-9a-f]{64}$")
 GARDEES = 3  # les sauvegardes d'avant mise à jour gardées
 TYPE_SIGNATURE = "application/vnd.dev.cosign.simplesigning.v1+json"
 ANNOTATION = "dev.cosignproject.cosign/signature"
@@ -212,13 +214,17 @@ def sauvegarder(url: str, dossier: str | Path, client: str, version: str, mainte
     quand = time.strftime("%Y%m%d-%H%M%S", time.gmtime(time.time() if maintenant is None else maintenant))
     final = dossier / f"megga-{client}-{quand}-avant-{version}.jsonl.gz"
     provisoire = dossier / f".{final.name}.partiel"  # ni vue ni gardée comme une sauvegarde tant qu'elle n'est pas finie
+    # La place d'abord : on ne garde que les plus récentes avant d'écrire la nouvelle.
+    for vieille in sauvegardes(dossier, client)[max(gardees - 1, 0):]:
+        vieille.unlink(missing_ok=True)
     try:
+        # Lisible par le seul pilote : la base entière, conversations comprises.
+        provisoire.touch(mode=0o600)
+        provisoire.chmod(0o600)
         stockage.exporter(url, provisoire, gz=True)
         os.replace(provisoire, final)
     finally:
         provisoire.unlink(missing_ok=True)
-    for vieille in sauvegardes(dossier, client)[gardees:]:
-        vieille.unlink(missing_ok=True)
     return final
 
 

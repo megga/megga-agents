@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
@@ -161,8 +162,19 @@ def test_la_base_est_sauvegardee_et_se_recharge(url, tmp_path):
     cible = f"sqlite:///{tmp_path}/restauree.db"
     assert stockage.importer(fichiers[-1], cible) > 0
     assert any(e["evenement"] == "essai" for e in stockage.JournalPilotage(cible).lire("exemple"))
+    assert all(f.stat().st_mode & 0o777 == 0o600 for f in images.sauvegardes(dossier, "exemple"))  # le pilote seul
     with pytest.raises(RuntimeError, match="absent"):
         images.sauvegarder(url, tmp_path / "nulle-part", "exemple", "0.2.0")
+
+
+def test_la_mise_a_jour_en_cours_ne_change_que_si_personne_ne_l_a_changee(url):
+    r = stockage.Reglages(url)
+    assert r.changer("maj", None, {"phase": "verifier"})
+    assert not r.changer("maj", None, {"phase": "autre"})  # déjà posée
+    assert r.changer("maj", {"phase": "verifier"}, {"phase": "prete"})
+    assert not r.changer("maj", {"phase": "verifier"}, {"phase": "lancee"})  # l'autre processus l'a avancée
+    assert r.changer("maj", {"phase": "prete"}, None) and r.lire("maj") is None
+    assert r.changer("maj", None, {"phase": "verifier"})  # après un None écrit
 
 
 # Le parcours, par le script de l'hôte (Compose)
@@ -232,6 +244,13 @@ def test_une_image_acceptee_est_verifiee_sauvegardee_puis_installee(canal, tmp_p
     assert etat(p, numero) == "a_appliquer"  # l'agent répond encore sur l'ancienne version
     c.sante.version = "0.2.0"
     c.tour(p)
+    assert etat(p, numero) == "a_appliquer"  # un relevé sain ne suffit pas
+    c.sante.ok = False
+    c.tour(p)  # elle répond puis tombe : la série repart de zéro
+    c.sante.ok = True
+    c.tour(p)
+    assert etat(p, numero) == "a_appliquer"
+    c.tour(p)
     assert etat(p, numero) == "applique"
     c.tour(p)
     assert c.ordres()[numero] == "applique"  # chez MEGGA aussi
@@ -288,6 +307,18 @@ def test_une_image_non_signee_n_est_jamais_tiree(canal, tmp_path):
     c.registre.en_panne = False
     c.tour(p)
     assert p.installation._maj()["phase"] == "prete"
+
+
+def test_sans_empreinte_pas_de_retour_possible_donc_pas_de_mise_a_jour(canal, tmp_path):
+    c = canal
+    p = preparer(c, tmp_path, accord="non")
+    c.registre.signer(empreinte(6))
+    numero = proposer(c, 6, "0.6.0")
+    c.tour(p)
+    c.tour(p)
+    assert hote(c, p, "ghcr.io/megga/megga-agents:0.1.0") == "rien"  # l'image d'avant par étiquette : rien ne part
+    assert etat(p, numero) == "echec" and "empreinte" in p.installation.ordres.lire("exemple", numero)["detail"]
+    assert list((tmp_path / "sauvegardes").iterdir()) == []
 
 
 def test_sans_sauvegarde_pas_de_mise_a_jour(canal, tmp_path):
@@ -365,6 +396,7 @@ def test_sous_kubernetes_le_pilote_change_l_image_puis_revient(canal, tmp_path):
     assert hote(c, p, image(1)) == "rien"  # sous Kubernetes, aucun script
     c.sante.version = "0.2.0"
     c.tour(p)
+    c.tour(p)
     assert etat(p, numero) == "applique"
     c.tour(p)  # puis le pilote prend l'image de l'agent
     assert kube.changements[-1] == ("agent-pilote", image(2))
@@ -406,8 +438,9 @@ def test_compose_les_mises_a_jour_sans_acces_a_docker():
     assert os.access("installation/compose/mettre_a_jour.sh", os.X_OK)
 
 
-def faux_docker(tmp_path, reponses: list[str]) -> dict:
-    """Un faux docker : rend les réponses du pilote dans l'ordre et note chaque commande."""
+def faux_docker(tmp_path, reponses: list[str], conteneur: str = "") -> dict:
+    """Un faux docker : rend les réponses du pilote dans l'ordre et note chaque commande ; `conteneur`, l'image
+    du conteneur de l'agent (aucun conteneur sinon)."""
     (tmp_path / "bin").mkdir()
     (tmp_path / "reponses").write_text("\n".join(reponses) + "\n")
     script = tmp_path / "bin" / "docker"
@@ -416,18 +449,24 @@ echo "$*" >> {tmp_path}/commandes
 if [ "$1 $2" = "compose exec" ]; then
   head -n 1 {tmp_path}/reponses; sed -i.bak 1d {tmp_path}/reponses
 fi
+if [ "$1 $2" = "compose ps" ] && [ -n "{conteneur}" ]; then echo c0ffee; fi
+if [ "$1" = "inspect" ]; then echo "{conteneur}"; fi
 """)
     script.chmod(0o755)
     return {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}"}
 
 
-def lancer_script(tmp_path, reponses: list[str]) -> tuple[subprocess.CompletedProcess, str, str]:
+def lancer_script(tmp_path, reponses: list[str], conteneur: str = "", env_image: str | None = None,
+                  avant=None) -> tuple[subprocess.CompletedProcess, str, str]:
     dossier = tmp_path / "installation"
     dossier.mkdir()
+    if avant:
+        avant(dossier)
     (dossier / "mettre_a_jour.sh").write_bytes(Path("installation/compose/mettre_a_jour.sh").read_bytes())
     (dossier / "mettre_a_jour.sh").chmod(0o755)
-    (dossier / ".env").write_text(f"DOMAINE=agent.exemple.ch\nMEGGA_IMAGE={image(1)}\nPILOTAGE=complet\n")
-    r = subprocess.run([str(dossier / "mettre_a_jour.sh")], env=faux_docker(tmp_path, reponses), capture_output=True, text=True)
+    (dossier / ".env").write_text(f"DOMAINE=agent.exemple.ch\nMEGGA_IMAGE={env_image or image(1)}\nPILOTAGE=complet\n")
+    r = subprocess.run([str(dossier / "mettre_a_jour.sh")], env=faux_docker(tmp_path, reponses, conteneur), capture_output=True,
+                       text=True)
     commandes = (tmp_path / "commandes").read_text() if (tmp_path / "commandes").exists() else ""
     return r, (dossier / ".env").read_text(), commandes
 
@@ -449,6 +488,25 @@ def test_le_script_de_l_hote_refuse_tout_le_reste(tmp_path, reponse):
     assert f"MEGGA_IMAGE={image(1)}" in env and "pull" not in commandes and "up -d" not in commandes
 
 
+def test_le_script_donne_l_image_qui_tourne_vraiment(tmp_path):
+    # .env réécrit, mais « docker compose up » n'est pas passé : l'agent tourne encore sur l'image d'avant.
+    r, _, commandes = lancer_script(tmp_path, ["attendre"], conteneur=image(1), env_image=image(2))
+    assert r.returncode == 0 and f"--actuelle {image(1)}" in commandes
+
+
+def test_un_verrou_orphelin_ne_bloque_pas_les_mises_a_jour(tmp_path):
+    def verrou(dossier, age):
+        (dossier / ".mise-a-jour.verrou").mkdir()
+        os.utime(dossier / ".mise-a-jour.verrou", (time.time() - age, time.time() - age))
+
+    r, _, commandes = lancer_script(tmp_path, ["rien"], avant=lambda d: verrou(d, 3600))
+    assert r.returncode == 0 and "--actuelle" in commandes  # interrompu il y a une heure : repris
+    autre = tmp_path / "autre"
+    autre.mkdir()
+    r, _, commandes = lancer_script(autre, ["rien"], avant=lambda d: verrou(d, 10))
+    assert r.returncode == 0 and commandes == ""  # une exécution en cours : on la laisse
+
+
 def test_le_script_de_l_hote_hors_mise_a_jour(tmp_path):
     r, env, commandes = lancer_script(tmp_path, ["rien"])
     assert r.returncode == 0 and "compose up -d --no-deps pilote" in commandes and f"MEGGA_IMAGE={image(1)}" in env
@@ -458,6 +516,11 @@ def test_helm_le_pilote_ne_peut_changer_que_deux_deployments():
     gabarit = open("installation/helm/megga-agent/templates/mises-a-jour.yaml").read()
     assert 'verbs: ["get", "patch"]' in gabarit and "resourceNames" in gabarit
     assert "secrets" not in gabarit.split("rules:")[1].split("---")[0] and "ClusterRole" not in gabarit
+    # un « helm upgrade » garde l'image posée par le pilote tant que les valeurs n'ont pas changé
+    aides = open("installation/helm/megga-agent/templates/_helpers.tpl").read()
+    assert 'lookup "apps/v1" "Deployment"' in aides and "megga.ai/image-valeurs" in aides
+    for f in ("deployment.yaml", "pilote.yaml"):
+        assert "megga-agent.image-en-place" in open(f"installation/helm/megga-agent/templates/{f}").read()
 
 
 def test_un_releve_dit_si_le_pilote_installe_les_images(canal, tmp_path):
