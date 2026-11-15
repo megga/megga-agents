@@ -150,7 +150,15 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 2. **Noyau WhatsApp** : vocaux, voix, regroupement, fenêtre de 24 h, modèles Meta, réactions.
 3. **Mémoire, rappels, garde-fous.**
 4. **Pack immobilier**, puis l'agence de démo MEGGA Estates (faux biens, son propre numéro), quand Julien le décide.
-5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design.
+5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design. La console sert aussi à **construire** les agents, pas seulement à les suivre (exigence de Julien, 15.11.2026) :
+   - **le client** (logiciel par abonnement) construit le sien très simplement : métier, prénom, voix, ton, outils à cocher, essai, activation ;
+   - **MEGGA** gère tous les agents de tous les clients, en construit sur mesure, règle l'avancé (modèles, outils, zones, coûts) et peut reprendre la main sur ce qu'un client a fait ;
+   - un seul moteur : l'interface ne fait que remplir la configuration du client (`noyau/config.py`). Côté code, il faut donc :
+     - une API d'administration pour créer, valider, essayer et activer une configuration ;
+     - des droits par rôle (client ou MEGGA) ;
+     - un mode d'essai avant la mise en service ;
+     - un historique des versions de configuration, avec retour à une version précédente.
+   L'interface elle-même reste à Julien, dans Claude Design : le plan ne la fige pas.
 6. **Installation chez le client et zone suisse** : Docker Compose et chart Helm, conteneur pilote, canal de pilotage, mises à jour signées, guide, puis la zone suisse chez Exoscale et l'entrée par API. Avancé dès qu'un client suisse signe.
 7. **Alix FSP sur le socle** : parité, essai, bascule sur accord.
 
