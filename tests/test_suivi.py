@@ -87,13 +87,28 @@ def test_suivi_d_apres_les_vrais_tours(tmp_path):
         assert t.get(f"/interne/suivi?depuis={int(time.time()) + 60}", headers=INTERNE).json()["tours"] == 0
 
         conv = t.get("/interne/suivi/conversations", headers=INTERNE).json()["conversations"]
-        assert [(c["personne"], c["echanges"]) for c in conv] == [(MOI, 2)]
-        e = t.get(f"/interne/suivi/conversations/{MOI}", headers=INTERNE).json()["echanges"]
-        assert [x["entendu"] for x in e][0] == "Bonjour"
-        assert "sk-ant" not in json.dumps(e)  # ni clé ni jeton dans la console, même dits par la personne
-        assert e[0]["reponse"] == "Bonjour, ici votre agent d'essai."
+        assert [(c["personne"], c["messages"]) for c in conv] == [(MOI, 4)]
+        fil = t.get(f"/interne/suivi/conversations/{MOI}", headers=INTERNE).json()["messages"]
+        assert [(x["sens"], x["genre"]) for x in fil] == [("recu", "texte"), ("envoye", "texte")] * 2
+        assert fil[0]["texte"] == "Bonjour" and fil[1]["texte"] == "Bonjour, ici votre agent d'essai."
+        assert "sk-ant" not in json.dumps(fil)  # ni clé ni jeton dans la console, même dits par la personne
         assert t.get("/interne/suivi/conversations/abc", headers=INTERNE).status_code == 400
-        assert len(t.get(f"/interne/suivi/conversations/{MOI}?limite=1", headers=INTERNE).json()["echanges"]) == 1
+        assert len(t.get(f"/interne/suivi/conversations/{MOI}?limite=1", headers=INTERNE).json()["messages"]) == 1
+
+
+def test_avant_le_fil_les_tours_d_agno(tmp_path):
+    """Les conversations d'avant le fil se rebâtissent des tours ; un tour en échec montre l'excuse reçue."""
+    from noyau.tour import EXCUSE
+
+    agent, url = agent_et_base(tmp_path)
+    asyncio.run(agent.arun("Bonjour", user_id=MOI, session_id=MOI))
+    lecture = stockage.Suivi(url)
+    assert lecture.conversations() == [{"personne": MOI, "messages": 2, "derniere": lecture.conversations()[0]["derniere"]}]
+    fil = lecture.messages(MOI, 50, EXCUSE)
+    assert [(m["sens"], m["texte"]) for m in fil] == [("recu", "Bonjour"), ("envoye", "Bonjour, ici votre agent d'essai.")]
+    with stockage.moteur(url).begin() as c:
+        c.execute(stockage.text("UPDATE agno_runs SET status = 'ERROR'"))
+    assert lecture.messages(MOI, 50, EXCUSE)[-1]["texte"] == EXCUSE
 
 
 def test_le_secours_est_compte(tmp_path):
@@ -103,7 +118,19 @@ def test_le_secours_est_compte(tmp_path):
         ecrire(t, app, "Bonjour", "w1")
         s = t.get("/interne/suivi", headers=INTERNE).json()
         assert s["tours"] == 1 and s["secours"] == 1
-        assert s["modeles"]["deepseek-v4-pro"]["sortie"] == 200
+        # chez DeepSeek, les jetons d'entrée comprennent le cache : il n'est pas compté deux fois
+        assert s["modeles"]["deepseek-v4-pro"] == {"fournisseur": "DeepSeek", "tours": 1, "entree": 500, "sortie": 200,
+                                                  "cache_lecture": 500, "cache_ecriture": 0}
+
+
+def test_entree_hors_cache_selon_le_fournisseur():
+    from noyau.suivi import entree_hors_cache
+
+    m = {"input_tokens": 1000, "cache_read_tokens": 800}
+    assert entree_hors_cache({**m, "id": "claude-sonnet-5-5", "provider": "Anthropic"}) == 1000
+    assert entree_hors_cache({**m, "id": "eu.anthropic.claude-sonnet-5-5", "provider": "AwsBedrock"}) == 1000
+    assert entree_hors_cache({**m, "id": "deepseek-v4-pro", "provider": "DeepSeek"}) == 200
+    assert entree_hors_cache({"input_tokens": 10, "cache_read_tokens": 30, "id": "x"}) == 0
 
 
 def test_sans_base_le_suivi_est_indisponible():
@@ -113,7 +140,19 @@ def test_sans_base_le_suivi_est_indisponible():
     assert TestClient(app).get("/interne/suivi", headers=INTERNE).status_code == 503
 
 
+def tour_complet(c, personne, entrants):
+    """Un tour, puis les écritures de suivi faites en arrière-plan."""
+    async def tout():
+        await c._tour(personne, entrants)
+        while c.taches:
+            await asyncio.gather(*list(c.taches), return_exceptions=True)
+
+    asyncio.run(tout())
+
+
 def test_le_journal_garde_les_echecs_sans_texte(tmp_path):
+    from noyau.whatsapp import Entrant
+
     url = f"sqlite:///{tmp_path}/j.db"
     j = stockage.Journal(url)
 
@@ -125,10 +164,8 @@ def test_le_journal_garde_les_echecs_sans_texte(tmp_path):
         async def texte(self, vers, texte):
             raise ConnectionError("Meta injoignable")
 
-    from noyau.whatsapp import Entrant
-
     c = Conversations(lire("clients/exemple.yaml"), AgentEnPanne(), ExpEnPanne(), attente=0.01, journal=j)
-    asyncio.run(c._tour(MOI, [Entrant(id="w1", de=MOI, texte="Mon secret", envoye=time.time(), genre="text")]))
+    tour_complet(c, MOI, [Entrant(id="w1", de=MOI, texte="Mon secret", envoye=time.time(), genre="text")])
     j.noter("voix_caracteres", 120)
     j.noter("voix_caracteres", 80)
     totaux = j.totaux(0)
@@ -138,22 +175,93 @@ def test_le_journal_garde_les_echecs_sans_texte(tmp_path):
     assert {a["genre"] for a in alertes} == {"tour_echec", "envoi_echec"}
     assert "secret" not in json.dumps(alertes) and MOI not in json.dumps(alertes)
     assert j.alertes(time.time() + 60) == []
+    from noyau.suivi import resumer
+
+    assert resumer(lire("clients/exemple.yaml"), [], totaux, 0, 0)["tours_en_echec"] == 1  # une seule source
 
 
 def test_un_journal_en_panne_ne_casse_pas_le_tour(tmp_path):
     from test_app import FauxAgent
     from noyau.whatsapp import Entrant
 
-    class JournalEnPanne:
+    class EnPanne:
         def noter(self, *a, **k):
             raise RuntimeError("base perdue")
 
-    class ExpEnPanne(FauxExpediteur):
-        async def texte(self, vers, texte):
-            raise ConnectionError("Meta injoignable")
+    exp = FauxExpediteur()
+    c = Conversations(lire("clients/exemple.yaml"), FauxAgent(reponse="Bien reçu."), exp, attente=0.01, journal=EnPanne(), fil=EnPanne())
+    tour_complet(c, MOI, [Entrant(id="w1", de=MOI, texte="Bonjour", envoye=time.time(), genre="text")])
+    assert exp.envois == [(MOI, "Bien reçu.")]
 
-    c = Conversations(lire("clients/exemple.yaml"), FauxAgent(), ExpEnPanne(), attente=0.01, journal=JournalEnPanne())
-    asyncio.run(c._tour(MOI, [Entrant(id="w1", de=MOI, texte="Bonjour", envoye=time.time(), genre="text")]))
+
+def test_le_suivi_ne_retarde_pas_la_reponse(tmp_path):
+    """Une base lente pour le suivi : la réponse part sans attendre l'écriture du fil ni du journal."""
+    import threading
+
+    from test_app import FauxAgent
+    from noyau.whatsapp import Entrant
+
+    libre = threading.Event()
+
+    class Lente:
+        def __init__(self):
+            self.notes = []
+
+        def noter(self, *a, **k):
+            libre.wait(5)
+            self.notes.append(a)
+
+    exp, fil = FauxExpediteur(), Lente()
+    c = Conversations(lire("clients/exemple.yaml"), FauxAgent(reponse="Bien reçu."), exp, attente=0.01, fil=fil, journal=Lente())
+
+    async def tout():
+        await c._tour(MOI, [Entrant(id="w1", de=MOI, texte="Bonjour", envoye=time.time(), genre="text")])
+        assert exp.envois == [(MOI, "Bien reçu.")] and fil.notes == []  # parti, alors que le fil attend encore
+        libre.set()
+        while c.taches:
+            await asyncio.gather(*list(c.taches), return_exceptions=True)
+
+    asyncio.run(tout())
+    assert [n[1:3] for n in fil.notes] == [("recu", "texte"), ("envoye", "texte")]
+
+
+def test_le_fil_montre_tout_ce_que_la_personne_a_vecu(tmp_path):
+    """Messages reçus sans tour (débit dépassé), rappels envoyés par l'agent : tout est au fil."""
+    from test_app import FauxAgent
+    from noyau.whatsapp import Entrant
+
+    url = f"sqlite:///{tmp_path}/f.db"
+    fil = stockage.Fil(url)
+
+    class Ouvert:
+        def dernier(self, personne):
+            return time.time()
+
+        def noter(self, *a):
+            pass
+
+    c = Conversations(lire("clients/exemple.yaml"), FauxAgent(reponse="Bien reçu."), FauxExpediteur(), contacts=Ouvert(),
+                      attente=0.01, fil=fil)
+
+    async def tout():
+        assert await c.ecrire_de_soi_meme(MOI, "Rappel : appeler l'agence", "rappel") == "libre"
+        while c.taches:
+            await asyncio.gather(*list(c.taches), return_exceptions=True)
+
+    asyncio.run(tout())
+    assert [(m["sens"], m["genre"], m["texte"]) for m in fil.messages(MOI)] == [("envoye", "rappel", "Rappel : appeler l'agence")]
+
+    class Ferme:
+        def permis(self, personne):
+            return False
+
+        def prevenir(self, personne):
+            return True
+
+    c.debit = Ferme()
+    tour_complet(c, MOI, [Entrant(id="w2", de=MOI, texte="Encore moi", envoye=time.time(), genre="text")])
+    derniers = [(m["sens"], m["texte"]) for m in fil.messages(MOI)][-2:]
+    assert derniers[0] == ("recu", "Encore moi") and derniers[1][0] == "envoye"  # reçu sans tour, puis le message de débit
 
 
 # Les coûts
@@ -201,8 +309,13 @@ class PorteSuivie(FaussePorte):
 
     async def etats(self, ident=None):
         e = await super().etats(ident)
+        maintenant = time.time() * 1000
         for v in e.values():
-            v["conteneur"] = {"demarre": False, "alerte": {"quand": time.time() * 1000, "quoi": "demarrage", "message": "secret manquant"}}
+            v["conteneur"] = {"demarre": False, "alertes": [
+                {"quand": maintenant - 9 * 86400 * 1000, "quoi": "transmission", "message": "trop ancienne", "resolue": None},
+                {"quand": maintenant - 3600 * 1000, "quoi": "demarrage", "message": "secret manquant", "resolue": maintenant - 60_000},
+                {"quand": maintenant - 60 * 1000, "quoi": "transmission", "message": "conteneur arrêté", "resolue": None},
+            ]}
         return e
 
 
@@ -223,7 +336,9 @@ def test_suivi_et_couts_pour_megga(atelier):
     assert s["periode_jours"] == 30 and s["activite"]["tours"] == 3 and s["version_en_service"] == 1
     assert s["couts"]["postes"] == {"claude-sonnet-5-5": 3.0}
     ident, chemin, params = t.porte.suivis[-1]
-    assert (ident, chemin) == ("exemple", "") and abs(params["depuis"] - (time.time() - 30 * 86400)) < 5
+    # le début de la période, arrondi à 5 minutes pour que des lectures rapprochées tombent dans la mémoire de la porte
+    assert (ident, chemin) == ("exemple", "") and params["depuis"] % 300 == 0
+    assert 0 <= (time.time() - 30 * 86400) - params["depuis"] < 300
 
 
 def test_le_client_voit_son_activite_mais_pas_les_couts(atelier):
@@ -256,8 +371,11 @@ def test_alertes_rassemblees(atelier):
     t.porte.activations.append(("exemple", 9, {}))  # l'annuaire sert une autre version que l'atelier
     a = t.get("/atelier/clients/exemple/alertes", headers=MEGGA).json()["alertes"]
     genres = [x["genre"] for x in a]
-    assert set(genres) == {"ecart", "conteneur_demarrage", "tour_echec"}
+    assert sorted(genres) == ["conteneur_demarrage", "conteneur_transmission", "ecart", "tour_echec"]  # la panne de 9 jours est hors période
     assert a == sorted(a, key=lambda x: x["quand"], reverse=True)
+    par_genre = {x["genre"]: x for x in a}
+    assert par_genre["conteneur_demarrage"]["resolue"] is not None  # réglée : la console peut l'afficher comme telle
+    assert par_genre["conteneur_transmission"]["resolue"] is None
     t.porte.panne = (0, "sans réponse")
     genres = [x["genre"] for x in t.get("/atelier/clients/exemple/alertes", headers=MEGGA).json()["alertes"]]
     assert "conteneur_injoignable" in genres
@@ -276,10 +394,32 @@ def test_conteneur_muet(tmp_path):
 
             raise PorteErreur(503, '{"erreur":"conteneur injoignable"}')
 
-    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/a.db"}, porte=Muette()))
+    porte = Muette()
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/a.db"}, porte=porte))
     nouveau_client(t)
     r = t.get("/atelier/clients/exemple/suivi", headers=MEGGA)
     assert r.status_code == 502 and r.json()["details"]["statut"] == 503
+    assert r.json()["erreur"] == "suivi indisponible : le conteneur du client ne répond pas"
+
+
+@pytest.mark.parametrize("statut, texte, message", [
+    (401, "refusé", "le conteneur refuse la lecture (jeton interne : le jeton d'administration a-t-il changé ?)"),
+    (503, '{"erreur":"suivi indisponible"}', "le conteneur répond, mais sa base n'est pas branchée"),
+    (0, "sans réponse (ReadTimeout)", "la porte n'a pas répondu"),
+    (500, "boum", "réponse inattendue du conteneur (500)"),
+])
+def test_les_erreurs_du_conteneur_sont_distinguees(tmp_path, statut, texte, message):
+    class Panne(PorteSuivie):
+        async def suivi(self, ident, chemin="", **params):
+            from atelier.porte import PorteErreur
+
+            raise PorteErreur(statut, texte)
+
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/a.db"}, porte=Panne()))
+    nouveau_client(t)
+    r = t.get("/atelier/clients/exemple/suivi", headers=MEGGA)
+    assert r.json()["erreur"] == f"suivi indisponible : {message}"
+    assert r.status_code == (504 if statut == 0 else 502)
 
 
 def test_porte_http_suivi():
@@ -296,3 +436,58 @@ def test_porte_http_suivi():
     p = Porte("https://porte.essai", "jeton", transport=httpx.MockTransport(repondre))
     asyncio.run(p.suivi("exemple", "/conversations", limite=5, depuis=None))
     assert vus == ["https://porte.essai/admin/clients/exemple/suivi/conversations?limite=5"]
+
+
+@pytest.mark.parametrize("moteur", ["sqlite"] + (["postgres"] if __import__("os").environ.get("TEST_POSTGRES_URL") else []))
+def test_le_suivi_sur_les_deux_bases(moteur, tmp_path):
+    """Tours, fil, journal et réglages, sur SQLite comme sur Postgres (la base de chaque client et celle de l'atelier)."""
+    import os
+    import random
+
+    from noyau.suivi import message_lisible
+
+    personne = "+4179" + "".join(random.choices("0123456789", k=8))  # base partagée sous Postgres
+    futur = 4_000_000_000.0
+    if moteur == "sqlite":
+        agent, url = agent_et_base(tmp_path)
+    else:
+        url = os.environ["TEST_POSTGRES_URL"]
+        agent = construire(lire("clients/exemple.yaml"), stockage.base_agno(url), {"ANTHROPIC_API_KEY": "x", "DEEPSEEK_API_KEY": "y"},
+                           principal=ModeleCompte(id="claude-sonnet-5-5", provider="Anthropic"))
+    lecture, fil, journal, reglages = stockage.Suivi(url), stockage.Fil(url), stockage.Journal(url), stockage.Reglages(url)
+    cle = f"essai-{personne[1:]}"
+    try:
+        avant = time.time() - 5
+        asyncio.run(agent.arun("Bonjour", user_id=personne, session_id=personne))
+        tours = [t for t in lecture.tours(avant) if t["personne"] == personne]
+        assert len(tours) == 1 and tours[0]["modeles"][0]["input_tokens"] == 1000  # les métriques seules, lues par JSON
+        assert personne in [c["personne"] for c in lecture.conversations(500)]
+        assert [m["texte"] for m in lecture.messages(personne)] == ["Bonjour", "Bonjour, ici votre agent d'essai."]
+
+        fil.noter(personne, "recu", "texte", "Ma clé sk-ant-api03-abcdefghijklmnopqrstuv", 1.0)
+        fil.noter(personne, "envoye", "rappel", "Rappel : visite", 2.0)
+        assert [(m["sens"], m["genre"]) for m in fil.messages(personne)] == [("recu", "texte"), ("envoye", "rappel")]
+        assert "sk-ant" not in message_lisible(fil.messages(personne)[0])["texte"]
+        assert {"personne": personne, "messages": 2, "derniere": 2.0} in fil.conversations(500) and not fil.vide()
+
+        journal.noter("tour_echec", 1, "RuntimeError", futur)
+        journal.noter("voix_caracteres", 300, "", futur)
+        assert journal.totaux(futur - 1) == {"tour_echec": {"nombre": 1, "quantite": 1.0}, "voix_caracteres": {"nombre": 1, "quantite": 300.0}}
+        assert [a["genre"] for a in journal.alertes(futur - 1)] == ["tour_echec"]
+
+        reglages.ecrire(cle, {"devise": "CHF"})
+        reglages.ecrire(cle, {"devise": "EUR"})
+        assert reglages.lire(cle) == {"devise": "EUR"}
+    finally:
+        # Base partagée : on n'y laisse rien, même en cas d'échec (l'essai d'export relit toute la base).
+        from sqlalchemy import delete as supprimer
+
+        with stockage.moteur(url).begin() as c:
+            c.execute(supprimer(fil._t).where(fil._t.c.personne == personne))
+            c.execute(supprimer(journal._t).where(journal._t.c.quand >= futur - 1))
+            c.execute(supprimer(reglages._t).where(reglages._t.c.cle == cle))
+            runs = lecture._runs()
+            if runs is not None:
+                c.execute(supprimer(runs).where(runs.c.user_id == personne))
+            schema = "ai." if moteur == "postgres" else ""
+            c.execute(stockage.text(f"DELETE FROM {schema}agno_sessions WHERE user_id = :p"), {"p": personne})

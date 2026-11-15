@@ -71,20 +71,21 @@ Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée 
 
 ## Le suivi
 
-Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client (il se réveille s'il dormait, quelques secondes), qui lit sa propre base.
+Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client, qui lit sa propre base. Un conteneur réveillé seulement pour être lu se rendort au bout de 2 minutes (15 après un vrai message) ; la porte garde une lecture récente en mémoire, jamais rangée (5 minutes pour l'activité et les alertes, 1 minute pour les conversations).
 
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours, tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente ; **coûts pour MEGGA seulement** |
 | `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
-| `GET /clients/{id}/conversations/{personne}` | tous | ses derniers échanges (ce qu'elle a dit, ce que l'agent a répondu), clés et jetons masqués |
-| `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; dernière panne du conteneur ; écart avec l'annuaire ; porte ou conteneur injoignable |
+| `GET /clients/{id}/conversations/{personne}` | tous | ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
+| `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
 | `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
 
 D'où viennent les chiffres :
-- les tours, les modèles (secours compris) et leurs jetons : les tours d'Agno, dans la base du client ;
-- les échecs autour d'un tour et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro ;
-- la dernière panne d'un conteneur (démarrage, transmission, rappels) : gardée par son objet, à la porte.
+- les tours, les modèles (secours compris) et leurs jetons : les tours d'Agno, dans la base du client ; les jetons d'entrée sont comptés hors cache, quel que soit le fournisseur ;
+- les échecs et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro, seule source des échecs ;
+- les conversations : le fil du noyau (`megga_fil`), écrit en arrière-plan comme le journal, sans jamais retarder une réponse ; celles d'avant le fil se rebâtissent des tours d'Agno ;
+- les pannes d'un conteneur (démarrage, transmission, rappels) : les dix dernières, gardées par son objet à la porte, marquées résolues quand il répond de nouveau.
 
 MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
 

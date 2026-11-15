@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import os
 import re
@@ -371,14 +372,35 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(503, "porte non réglée (PORTE_URL)")
         return c
 
+    def raison(e: PorteErreur) -> str:
+        """Ce qui a empêché la lecture, dit simplement."""
+        if e.statut == 0:
+            return "la porte n'a pas répondu"
+        if e.statut == 401:
+            return "le conteneur refuse la lecture (jeton interne : le jeton d'administration a-t-il changé ?)"
+        try:
+            erreur = json.loads(e.texte).get("erreur")
+        except (ValueError, AttributeError):
+            erreur = None
+        if erreur == "conteneur injoignable":
+            return "le conteneur du client ne répond pas"
+        if erreur == "suivi indisponible" or "suivi indisponible" in e.texte:
+            return "le conteneur répond, mais sa base n'est pas branchée"
+        return f"réponse inattendue du conteneur ({e.statut})"
+
     async def lire_suivi(ident: str, chemin: str = "", **params) -> dict:
         try:
             return await porte.suivi(ident, chemin, **params)
         except PorteErreur as e:
             if e.statut in (400, 404):
                 raise Refus(e.statut, "suivi refusé", {"texte": e.texte}) from e
-            raise Refus(502 if e.statut else 504, "suivi indisponible : le conteneur du client ne répond pas",
+            raise Refus(502 if e.statut else 504, f"suivi indisponible : {raison(e)}",
                         {"statut": e.statut, "texte": e.texte}) from e
+
+    def debut(jours: int) -> int:
+        """Le début de la période, arrondi à 5 minutes : des lectures rapprochées tombent sur la lecture
+        gardée en mémoire par la porte, sans réveiller le conteneur du client."""
+        return int((time.time() - jours * 86400) // 300 * 300)
 
     def lire_tarifs() -> Tarifs:
         return Tarifs.model_validate(reglages.lire("tarifs") or {})
@@ -389,7 +411,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         c = await bd(suivable, qui, ident)
         derniere = (await bd(versions.dernieres, {ident})).get(ident)
         etats = await etats_porte(ident)
-        activite = await lire_suivi(ident, depuis=int(time.time() - jours * 86400))
+        activite = await lire_suivi(ident, depuis=debut(jours))
         sortie = {**resume(c, derniere, etats), "periode_jours": jours, "activite": activite}
         if qui.role == "megga":
             sortie["couts"] = couts(activite, await bd(lire_tarifs))
@@ -414,7 +436,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         jours = jours_de(requete.query_params.get("jours"))
         c = await bd(suivable, qui, ident)
         maintenant = time.time()
-        depuis = maintenant - jours * 86400
+        depuis = debut(jours)
         liste = []
         etats = await etats_porte(ident)
         if etats is None:
@@ -424,11 +446,13 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             if a and a.get("version") != c.get("current_version"):
                 liste.append({"quand": maintenant, "genre": "ecart",
                               "detail": f"l'annuaire sert la version {a.get('version')}, l'atelier la {c.get('current_version')}"})
-            panne = (a.get("conteneur") or {}).get("alerte")
-            if panne and panne.get("quand", 0) / 1000 >= depuis:
-                liste.append({"quand": panne["quand"] / 1000, "genre": f"conteneur_{panne.get('quoi')}", "detail": panne.get("message", "")})
+            for panne in (a.get("conteneur") or {}).get("alertes") or []:
+                if panne.get("quand", 0) / 1000 >= depuis:
+                    resolue = panne.get("resolue")
+                    liste.append({"quand": panne["quand"] / 1000, "genre": f"conteneur_{panne.get('quoi')}",
+                                  "detail": panne.get("message", ""), "resolue": resolue / 1000 if resolue else None})
         try:
-            liste += (await lire_suivi(ident, "/alertes", depuis=int(depuis))).get("alertes", [])
+            liste += (await lire_suivi(ident, "/alertes", depuis=depuis)).get("alertes", [])
         except Refus as e:
             liste.append({"quand": maintenant, "genre": "conteneur_injoignable", "detail": e.message})
         return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"], reverse=True)}

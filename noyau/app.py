@@ -18,7 +18,7 @@ Routes :
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
   GET  /interne/suivi[?depuis=]                 volumes, modèles, échecs (jeton INTERNE_TOKEN)
   GET  /interne/suivi/conversations[?limite=]   les personnes qui ont écrit
-  GET  /interne/suivi/conversations/{personne}  les derniers échanges avec elle
+  GET  /interne/suivi/conversations/{personne}  ses derniers messages, reçus et envoyés
   GET  /interne/suivi/alertes[?depuis=]         les échecs récents
 """
 
@@ -96,7 +96,7 @@ def _reecriture(conf, cles):
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
-          delai_vider: float = 100.0, journal=None, lecture=None) -> FastAPI:
+          delai_vider: float = 100.0, journal=None, lecture=None, fil=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais)."""
     env = dict(os.environ if env is None else env)
     os.environ.setdefault("AGNO_TELEMETRY", "false")
@@ -115,12 +115,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if env.get("DATABASE_URL"):
         journal = journal or stockage.Journal(env["DATABASE_URL"])
         lecture = lecture or stockage.Suivi(env["DATABASE_URL"])
+        fil = fil or stockage.Fil(env["DATABASE_URL"])
     if expediteur is None:
         expediteur = Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
-                                  journal=journal)
+                                  journal=journal, fil=fil)
     jeton_interne = env.get("INTERNE_TOKEN", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
@@ -178,7 +179,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     def lisible(requete: Request) -> Response | None:
         if not interne(requete):
             return Response("refusé", status_code=401)
-        if lecture is None or journal is None:
+        if lecture is None or journal is None or fil is None:
             return Response("suivi indisponible", status_code=503)
         return None
 
@@ -209,7 +210,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if (refus := lisible(requete)) is not None:
             return refus
         limite = borne(requete.query_params.get("limite"), 50, 200)
-        return {"conversations": await asyncio.to_thread(lecture.conversations, limite)}
+        # Le fil d'abord ; les tours d'Agno pour les conversations d'avant le fil.
+        source = lecture if await asyncio.to_thread(fil.vide) else fil
+        return {"conversations": await asyncio.to_thread(source.conversations, limite)}
 
     @app.get("/interne/suivi/conversations/{personne}")
     async def interne_echanges(personne: str, requete: Request):
@@ -218,8 +221,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if not suivi_agent.PERSONNE.fullmatch(personne):
             return Response("personne", status_code=400)
         limite = borne(requete.query_params.get("limite"), 50, 200)
-        echanges = await asyncio.to_thread(lecture.echanges, personne, limite)
-        return {"personne": personne, "echanges": [suivi_agent.echange_lisible(e) for e in echanges]}
+        messages = await asyncio.to_thread(fil.messages, personne, limite)
+        if not messages:
+            messages = await asyncio.to_thread(lecture.messages, personne, limite, EXCUSE)
+        return {"personne": personne, "messages": [suivi_agent.message_lisible(m) for m in messages]}
 
     @app.get("/interne/suivi/alertes")
     async def interne_alertes(requete: Request):
