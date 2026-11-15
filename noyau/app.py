@@ -59,6 +59,18 @@ class Deja:
         return True
 
 
+def outils_du_client(conf, rappels) -> list:
+    """Les outils du noyau (rappels) et ceux des packs que la configuration active."""
+    liste = outils_rappels(rappels, conf.fuseau)
+    if "immobilier" in conf.outils:
+        from packs.immobilier import Catalogue, outils as outils_immobilier
+
+        if not conf.catalogue:
+            raise RuntimeError("pack immobilier sans catalogue")
+        liste += outils_immobilier(Catalogue(conf.catalogue))
+    return liste
+
+
 def _reecriture(conf, cles):
     """Le modèle qui réécrit une réponse pour l'oral : un agent sans mémoire ni outils."""
     from agno.agent import Agent
@@ -89,7 +101,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if not env.get("DATABASE_URL"):
             raise RuntimeError("DATABASE_URL manquante")
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
-        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_rappels(rappels, conf.fuseau))
+        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         reecrire = reecrire or _reecriture(conf, cles)
     if expediteur is None:

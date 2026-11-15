@@ -23,7 +23,10 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["noyau"]
+packages = ["noyau", "packs", "packs.immobilier"]
+
+[tool.setuptools.package-data]
+"packs.immobilier" = ["demo/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

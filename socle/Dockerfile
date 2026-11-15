@@ -9,6 +9,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 COPY pyproject.toml ./
 COPY noyau ./noyau
+COPY packs ./packs
 RUN pip install --no-cache-dir . && useradd --create-home --uid 10001 agent
 USER agent
 

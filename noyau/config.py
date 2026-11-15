@@ -88,8 +88,10 @@ class Config(Strict):
     modeles_meta: dict[str, ModeleMeta] = {}
     # Un 👀 sur le message quand un tour traîne, retiré à la réponse.
     reactions: bool = True
-    # Les outils actifs : noms de packs ou d'outils du noyau.
-    outils: tuple[str, ...] = ()
+    # Les packs actifs (aujourd'hui : « immobilier »).
+    outils: tuple[Literal["immobilier"], ...] = ()
+    # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
+    catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
 
     @field_validator("version")
     @classmethod
