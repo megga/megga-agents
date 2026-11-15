@@ -20,11 +20,15 @@ mkdir "$verrou" 2> /dev/null || exit 0
 trap 'rmdir "$verrou"' EXIT
 
 heure() { date -u +"%d.%m.%Y %H:%M:%S UTC"; }
-# L'image de l'agent qui tourne vraiment (celle de son conteneur), sinon celle de .env.
-conteneur=$(docker compose ps -a -q agent 2> /dev/null | head -n 1)
-actuelle=""
-[ -n "$conteneur" ] && actuelle=$(docker inspect -f '{{.Config.Image}}' "$conteneur" 2> /dev/null || true)
-[ -n "$actuelle" ] || actuelle=$(sed -n 's/^MEGGA_IMAGE=//p' .env | tail -n 1 | tr -d "\"'")
+valeur() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d "\"'"; }
+# L'image de l'agent qui tourne vraiment : celle de son conteneur.
+image_agent() {
+    local id
+    id=$(docker compose ps -a -q agent 2> /dev/null | head -n 1)
+    [ -n "$id" ] && docker inspect -f '{{.Config.Image}}' "$id" 2> /dev/null || true
+}
+actuelle=$(image_agent)
+[ -n "$actuelle" ] || actuelle=$(valeur MEGGA_IMAGE)
 [ -n "$actuelle" ] || { echo "$(heure) MEGGA_IMAGE absente de .env"; exit 1; }
 
 pilote() { docker compose exec -T pilote python -m pilote image --actuelle "$1"; }
@@ -44,19 +48,24 @@ case "$action" in
     attendre)
         ;;
     installer|revenir)
-        # Seulement une image nommée par son empreinte : jamais une étiquette, jamais une commande.
-        if ! printf '%s' "$cible" | grep -Eq '^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$'; then
+        # Seulement une image du dépôt de MEGGA (ou du miroir du client), nommée par son empreinte :
+        # jamais une étiquette, jamais un autre dépôt, jamais une commande.
+        depot=$(valeur MEGGA_DEPOT)
+        depot=${depot:-ghcr.io/megga/megga-agents}
+        if [ "${cible%@sha256:*}" != "$depot" ] || ! printf '%s' "$cible" | grep -Eq '^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$'; then
             echo "$(heure) réponse du pilote refusée : $reponse"
             exit 1
         fi
         echo "$(heure) $action : $cible (avant : $actuelle)"
-        docker pull -q "$cible" > /dev/null
+        # Déjà là (l'image d'avant, d'ordinaire) : pas besoin du registre, qui peut être en panne.
+        docker image inspect "$cible" > /dev/null 2>&1 || docker pull -q "$cible" > /dev/null
         # .env garde la nouvelle image : un « docker compose up » plus tard la reprend.
         awk -v ligne="MEGGA_IMAGE=$cible" '/^MEGGA_IMAGE=/ { print ligne; next } { print }' .env > .env.nouveau
         cat .env.nouveau > .env && rm -f .env.nouveau
         # L'agent seul : le pilote, resté sur l'image d'avant, surveille la nouvelle et décide du retour.
         docker compose up -d --no-deps agent
-        pilote "$cible" > /dev/null || true
+        # Le pilote apprend l'image qui tourne vraiment, pas celle qu'on voulait poser.
+        pilote "$(image_agent)" > /dev/null || true
         ;;
     *)
         echo "$(heure) réponse du pilote inattendue : $reponse"

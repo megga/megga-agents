@@ -194,7 +194,7 @@ class Sante:
 
 def preparer(c, tmp_path, accord="oui", **env):
     """Un pilote qui installe les images (MISES_A_JOUR=oui), son registre, le /sante de l'agent."""
-    (tmp_path / "sauvegardes").mkdir(exist_ok=True)
+    (tmp_path / "sauvegardes").mkdir(parents=True, exist_ok=True)
     c.registre, c.sante = FauxRegistre(), Sante()
     c.env = {"PILOTAGE": "complet", "PILOTAGE_ACCORD": accord, "MISES_A_JOUR": "oui", "CLIENT_CONFIG": CONF_CLIENT,
              "DATABASE_URL": c.url, "PILOTE_CLE": CLE_INSTALLATION_TEXTE, "PILOTE_SAUVEGARDES": str(tmp_path / "sauvegardes"), **env}
@@ -418,8 +418,10 @@ def test_les_mises_a_jour_se_reglent():
     base = {"PILOTAGE": "complet", "CLIENT_CONFIG": CONF_CLIENT, "DATABASE_URL": "sqlite://", "PILOTE_CLE": CLE_INSTALLATION_TEXTE,
             "PILOTAGE_URL": "https://megga.exemple"}
     assert Pilote(base).maj.actif is False
-    for mauvais in ({"MISES_A_JOUR": "peut-etre"}, {"PILOTAGE_DELAI": "5"}, {"MEGGA_DEPOT": "rien"},
-                    {"MEGGA_REGISTRE_URL": "http://registre.exemple.com"},
+    # sans mises à jour, un dépôt inutile n'empêche pas le pilote de démarrer (un pilote 6.3 sous Helm, par exemple)
+    assert Pilote({**base, "MEGGA_DEPOT": "megga-agents"}).maj.actif is False
+    for mauvais in ({"MISES_A_JOUR": "peut-etre"}, {"PILOTAGE_DELAI": "5"}, {"MISES_A_JOUR": "oui", "MEGGA_DEPOT": "rien"},
+                    {"MISES_A_JOUR": "oui", "MEGGA_REGISTRE_URL": "http://registre.exemple.com"},
                     {"MISES_A_JOUR": "oui", "AGENT_DEPLOIEMENT": "agent", "PILOTE_DEPLOIEMENT": "../x"}):
         with pytest.raises(RuntimeError):
             Pilote({**base, **mauvais})
@@ -438,35 +440,42 @@ def test_compose_les_mises_a_jour_sans_acces_a_docker():
     assert os.access("installation/compose/mettre_a_jour.sh", os.X_OK)
 
 
-def faux_docker(tmp_path, reponses: list[str], conteneur: str = "") -> dict:
-    """Un faux docker : rend les réponses du pilote dans l'ordre et note chaque commande ; `conteneur`, l'image
-    du conteneur de l'agent (aucun conteneur sinon)."""
+def faux_docker(tmp_path, reponses: list[str], conteneur: str = "", locales: tuple[str, ...] = ()) -> dict:
+    """Un faux docker : rend les réponses du pilote dans l'ordre et note chaque commande. `conteneur` : l'image du
+    conteneur de l'agent (aucun sinon), remplacée par celle de .env à « compose up agent » ; `locales` : les images
+    déjà sur le serveur."""
     (tmp_path / "bin").mkdir()
     (tmp_path / "reponses").write_text("\n".join(reponses) + "\n")
+    (tmp_path / "conteneur").write_text(conteneur)
+    (tmp_path / "locales").write_text("\n".join(locales) + "\n")
     script = tmp_path / "bin" / "docker"
     script.write_text(f"""#!/usr/bin/env bash
 echo "$*" >> {tmp_path}/commandes
-if [ "$1 $2" = "compose exec" ]; then
-  head -n 1 {tmp_path}/reponses; sed -i.bak 1d {tmp_path}/reponses
-fi
-if [ "$1 $2" = "compose ps" ] && [ -n "{conteneur}" ]; then echo c0ffee; fi
-if [ "$1" = "inspect" ]; then echo "{conteneur}"; fi
+case "$1 $2" in
+  "compose exec") head -n 1 {tmp_path}/reponses; sed -i.bak 1d {tmp_path}/reponses ;;
+  "compose ps") [ -s {tmp_path}/conteneur ] && echo c0ffee ;;
+  "compose up") case "$*" in *agent*) sed -n 's/^MEGGA_IMAGE=//p' .env > {tmp_path}/conteneur ;; esac ;;
+  "image inspect") grep -qxF "$3" {tmp_path}/locales || exit 1 ;;
+  inspect*) cat {tmp_path}/conteneur ;;
+esac
+exit 0
 """)
     script.chmod(0o755)
     return {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}"}
 
 
 def lancer_script(tmp_path, reponses: list[str], conteneur: str = "", env_image: str | None = None,
-                  avant=None) -> tuple[subprocess.CompletedProcess, str, str]:
+                  avant=None, locales: tuple[str, ...] = (), depot: str | None = None) -> tuple[subprocess.CompletedProcess, str, str]:
     dossier = tmp_path / "installation"
     dossier.mkdir()
     if avant:
         avant(dossier)
     (dossier / "mettre_a_jour.sh").write_bytes(Path("installation/compose/mettre_a_jour.sh").read_bytes())
     (dossier / "mettre_a_jour.sh").chmod(0o755)
-    (dossier / ".env").write_text(f"DOMAINE=agent.exemple.ch\nMEGGA_IMAGE={env_image or image(1)}\nPILOTAGE=complet\n")
-    r = subprocess.run([str(dossier / "mettre_a_jour.sh")], env=faux_docker(tmp_path, reponses, conteneur), capture_output=True,
-                       text=True)
+    (dossier / ".env").write_text(f"DOMAINE=agent.exemple.ch\nMEGGA_IMAGE={env_image or image(1)}\nPILOTAGE=complet\n"
+                                  + (f"MEGGA_DEPOT={depot}\n" if depot else ""))
+    r = subprocess.run([str(dossier / "mettre_a_jour.sh")], env=faux_docker(tmp_path, reponses, conteneur, locales),
+                       capture_output=True, text=True, cwd=dossier)
     commandes = (tmp_path / "commandes").read_text() if (tmp_path / "commandes").exists() else ""
     return r, (dossier / ".env").read_text(), commandes
 
@@ -481,11 +490,24 @@ def test_le_script_de_l_hote_installe_l_image_que_le_pilote_rend(tmp_path):
 
 
 @pytest.mark.parametrize("reponse", ["installer ghcr.io/megga/megga-agents:latest", "installer x; rm -rf /",
-                                     f"installer {image(2)} --privileged", "lancer tout"])
+                                     f"installer {image(2)} --privileged", "lancer tout",
+                                     "revenir evil.example/x/y@" + empreinte(9)])  # un autre dépôt
 def test_le_script_de_l_hote_refuse_tout_le_reste(tmp_path, reponse):
     r, env, commandes = lancer_script(tmp_path, [reponse])
     assert r.returncode == 1
     assert f"MEGGA_IMAGE={image(1)}" in env and "pull" not in commandes and "up -d" not in commandes
+
+
+def test_le_script_reprend_l_image_d_avant_sans_le_registre_et_suit_un_miroir(tmp_path):
+    r, env, commandes = lancer_script(tmp_path, [f"revenir {image(1)}", "rien"], conteneur=image(2), env_image=image(2),
+                                      locales=(image(1),))
+    assert r.returncode == 0, r.stderr
+    assert "pull" not in commandes and f"MEGGA_IMAGE={image(1)}" in env  # déjà sur le serveur : registre inutile
+    miroir = f"registre.client.ch/megga@{empreinte(2)}"
+    autre = tmp_path / "miroir"
+    autre.mkdir()
+    r, env, _ = lancer_script(autre, [f"installer {miroir}", "attendre"], depot="registre.client.ch/megga")
+    assert r.returncode == 0 and f"MEGGA_IMAGE={miroir}" in env
 
 
 def test_le_script_donne_l_image_qui_tourne_vraiment(tmp_path):
@@ -528,3 +550,129 @@ def test_un_releve_dit_si_le_pilote_installe_les_images(canal, tmp_path):
     p = preparer(c, tmp_path)
     c.tour(p)
     assert c.t.get("/atelier/installations", headers=MEGGA).json()["installations"][0]["mises_a_jour"] is True
+
+
+# Seconde relecture
+
+
+def lancee(c, tmp_path, n=2, version="0.2.0", **env):
+    """Une mise à jour lancée sous Compose : vérifiée, base sauvegardée, image donnée au script."""
+    p = preparer(c, tmp_path, accord="non", PILOTAGE_DELAI="60", **env)
+    c.registre.signer(empreinte(n))
+    numero = proposer(c, n, version)
+    c.tour(p)
+    c.tour(p)
+    assert hote(c, p, image(1)) == f"installer {image(n)}"
+    return p, numero
+
+
+def test_une_mise_a_jour_retouchee_dans_la_base_ne_fait_rien_tirer(canal, tmp_path):
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    inst = p.installation
+    r = inst._maj()
+    pirate = "evil.example/x/y@" + empreinte(99)
+    assert inst.reglages.changer("mise_a_jour", r, {**r, "reference": pirate})
+    assert hote(c, p, image(1)) == "rien"  # jamais « installer evil… »
+    assert etat(p, numero) == "echec" and inst._maj() is None
+    assert any(a["genre"] == "mise_a_jour_bloquee" for a in stockage.Journal(c.url).alertes(0))
+    # l'image d'avant retouchée, en phase de retour : pareil
+    p, numero = lancee(c, tmp_path / "b", n=3, version="0.3.0")
+    inst = p.installation
+    r = inst._maj()
+    assert inst.reglages.changer("mise_a_jour", r, {**r, "phase": "retour", "avant": pirate})
+    assert hote(c, p, image(3)) == "rien" and etat(p, numero) == "echec"
+
+
+def test_un_retour_impossible_ne_bloque_pas_pour_toujours(canal, tmp_path):
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    assert hote(c, p, image(2)) == "attendre"
+    c.sante.ok = None
+    c.horloge.t += 61
+    c.tour(p)
+    assert hote(c, p, image(2)) == f"revenir {image(1)}"  # le script n'y arrive pas (registre en panne…)
+    c.horloge.t += 61
+    c.tour(p)
+    assert p.installation._maj() is None and hote(c, p, image(2)) == "rien"
+    assert any(a["genre"] == "mise_a_jour_bloquee" for a in stockage.Journal(c.url).alertes(0))
+    assert image(1) in p.installation.journal.lire("exemple")[0]["detail"]  # l'image à remettre à la main
+    # la mise à jour suivante peut partir
+    c.registre.signer(empreinte(4))
+    suivant = proposer(c, 4, "0.4.0")
+    c.tour(p)
+    c.tour(p)
+    assert hote(c, p, image(2)) == f"installer {image(4)}" and etat(p, suivant) == "a_appliquer"
+
+
+def test_recharger_la_sauvegarde_ne_relance_pas_la_mise_a_jour(canal, tmp_path):
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    (fichier,) = images.sauvegardes(tmp_path / "sauvegardes", "exemple")
+    cible = f"sqlite:///{tmp_path}/rechargee.db"
+    stockage.importer(fichier, cible)
+    assert stockage.Reglages(cible).lire("mise_a_jour") is None
+    assert stockage.Ordres(cible).lire("exemple", numero)["etat"] == "echec"
+    assert p.installation._maj()["phase"] == "lancee"  # la base en service, elle, n'est pas touchée
+
+
+def test_le_delai_part_quand_l_image_est_en_place(canal, tmp_path):
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    c.horloge.t += 50  # un long pull
+    assert hote(c, p, image(2)) == "attendre"
+    c.horloge.t += 50
+    c.tour(p)
+    assert etat(p, numero) == "a_appliquer"  # 100 s depuis le lancement, 50 depuis la mise en place
+    c.horloge.t += 11
+    c.tour(p)
+    assert etat(p, numero) == "echec"
+
+
+def test_mises_a_jour_desactivees_en_route(canal, tmp_path):
+    c = canal
+    p = preparer(c, tmp_path, accord="non")
+    c.registre.signer(empreinte(2))
+    numero = proposer(c, 2, "0.2.0")
+    c.tour(p)
+    c.tour(p)
+    assert p.installation._maj()["phase"] == "prete"
+    p.installation.maj.actif = False  # le client passe MISES_A_JOUR à non
+    assert hote(c, p, image(1)) == "rien"
+    c.tour(p)
+    assert etat(p, numero) == "echec" and p.installation._maj() is None
+    # une mise à jour déjà lancée, elle, va au bout
+    q, suivant = lancee(c, tmp_path / "b", n=3, version="0.3.0")
+    assert hote(c, q, image(3)) == "attendre"
+    q.installation.maj.actif = False
+    c.sante.version = "0.3.0"
+    c.tour(q)
+    c.tour(q)
+    assert etat(q, suivant) == "applique"
+
+
+def test_sous_kubernetes_un_helm_upgrade_en_route_n_est_pas_ecrase(canal, tmp_path):
+    c = canal
+    kube = FauxKubernetes(image(1))
+    p = preparer(c, tmp_path, accord="non", PILOTAGE_DELAI="60", AGENT_DEPLOIEMENT="agent", PILOTE_DEPLOIEMENT="agent-pilote",
+                 KUBERNETES_SERVICE_HOST="10.0.0.1", POD_NAMESPACE="clients", _kube=httpx.MockTransport(kube))
+    c.registre.signer(empreinte(2))
+    numero = proposer(c, 2, "0.2.0")
+    for _ in range(3):
+        c.tour(p)
+    assert kube.images["agent"] == image(2)
+    kube.images["agent"] = image(5)  # le client fait un « helm upgrade » vers une autre empreinte
+    c.sante.ok = False
+    c.horloge.t += 61
+    c.tour(p)
+    c.tour(p)
+    assert kube.images["agent"] == image(5) and etat(p, numero) == "echec"
+    assert "hors du pilote" in p.installation.journal.lire("exemple")[0]["detail"]
+
+
+def test_une_reponse_illisible_du_registre_se_reessaie_avec_sa_cause():
+    def proxy(q: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>portail du proxy</html>")
+
+    with pytest.raises(images.RegistreInjoignable, match="illisible"):
+        images.verifier_signature(image(1), DEPOT, COSIGN_PUB, transport=httpx.MockTransport(proxy))

@@ -152,6 +152,7 @@ jobs:
           helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true \
             --set pilotage.sauvegardes.existingClaim=mes-sauvegardes | grep -q "claimName: mes-sauvegardes"
           if helm template essai installation/helm/megga-agent -f $V --set-string pilotage.misesAJour=oui > /dev/null 2>&1; then echo "misesAJour inconnu"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true --set image.digest= --set image.tag=0.2.0 > /dev/null 2>&1; then echo "misesAJour sans empreinte"; exit 1; fi
       - name: Le Docker Compose
         working-directory: installation/compose
         run: |

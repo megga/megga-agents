@@ -112,27 +112,29 @@ def _tables(e: Engine) -> MetaData:
     return meta
 
 
-def _lignes(e: Engine) -> Iterator[dict]:
+def _lignes(e: Engine, retouche=None) -> Iterator[dict]:
     meta = _tables(e)
     # Sous Postgres, toutes les tables lues au même instant, même si l'agent écrit pendant l'export.
     options = {"isolation_level": "REPEATABLE READ"} if e.dialect.name == "postgresql" else {}
     with e.connect().execution_options(**options) as c, c.begin():
         for table in meta.sorted_tables:
             for ligne in c.execute(select(table)).mappings():
-                yield {"table": table.name, "ligne": {k: _en_json(v) for k, v in ligne.items()}}
+                l = dict(ligne) if retouche is None else retouche(table.name, dict(ligne))
+                if l is not None:
+                    yield {"table": table.name, "ligne": {k: _en_json(v) for k, v in l.items()}}
 
 
 def _ouvrir(fichier: str | Path, mode: str, gz: bool):
     return gzip.open(fichier, mode + "t", encoding="utf-8") if gz else open(fichier, mode, encoding="utf-8")
 
 
-def exporter(url: str, fichier: str | Path, gz: bool | None = None) -> int:
+def exporter(url: str, fichier: str | Path, gz: bool | None = None, retouche=None) -> int:
     """Toutes les lignes de la base du client dans un fichier JSON Lines (compressé si `gz`, ou si le nom finit
-    par .gz) ; rend leur nombre."""
+    par .gz) ; rend leur nombre. `retouche(table, ligne)` change une ligne avant de l'écrire, ou rend None pour la laisser."""
     n = 0
     with _ouvrir(fichier, "w", str(fichier).endswith(".gz") if gz is None else gz) as f:
         f.write(json.dumps({"format": FORMAT}) + "\n")
-        for l in _lignes(moteur(url)):
+        for l in _lignes(moteur(url), retouche):
             f.write(json.dumps(l, ensure_ascii=False, default=str) + "\n")
             n += 1
     return n
@@ -385,7 +387,8 @@ class Journal:
     Jamais de texte de message ni de numéro de personne : un genre, une quantité, un détail technique.
     """
 
-    ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec")
+    # mise_a_jour_bloquee : le pilote ne peut plus avancer seul une mise à jour de l'image (retour non fait, ligne retouchée)
+    ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec", "mise_a_jour_bloquee")
 
     def __init__(self, url: str):
         self._e, self._t = _table(

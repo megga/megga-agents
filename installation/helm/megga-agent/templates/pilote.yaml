@@ -7,6 +7,7 @@
 {{- if not (or .Values.existingSecret .Values.pilotage.extraEnv) }}{{ fail "pilotage : l'adresse de la base, par existingSecret ou DATABASE_URL_FILE dans pilotage.extraEnv" }}{{ end }}
 {{- $maj := .Values.pilotage.misesAJour }}
 {{- if not (kindIs "bool" $maj) }}{{ fail "pilotage.misesAJour : true ou false" }}{{ end }}
+{{- if and $maj (not .Values.image.digest) }}{{ fail "pilotage.misesAJour demande image.digest : le retour arrière remet l'image d'avant par son empreinte" }}{{ end }}
 # Le pilote : le pilotage par MEGGA, toujours sortant (aucun Service, aucun port). Il lit l'état de
 # l'agent (/sante) et sa base, sans les clés des modèles ni celles de Meta. Ses pods ont leurs propres
 # étiquettes : ni le Service de l'agent ni son Deployment ne les prennent pour l'agent.

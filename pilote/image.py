@@ -158,8 +158,8 @@ class Registre:
                 raise RegistreInjoignable(f"registre : signature illisible ({r.status_code})")
             try:
                 couches = r.json().get("layers") or []
-            except ValueError as e:
-                raise ImageRefusee("signature mal formée") from e
+            except ValueError as e:  # une page d'un proxy plutôt que le registre : à réessayer
+                raise RegistreInjoignable("registre : réponse illisible") from e
             sortie = []
             for couche in couches[:10]:
                 if not isinstance(couche, dict) or couche.get("mediaType") != TYPE_SIGNATURE:
@@ -188,7 +188,14 @@ def verifier_signature(image: str, depot_: str, cle=None, url: str | None = None
 
     cle = cle or cle_image()
     empreinte = empreinte_de(image)
-    for contenu, signature in Registre(depot_, url, compte, jeton, transport).signatures(empreinte):
+    try:
+        trouvees = Registre(depot_, url, compte, jeton, transport).signatures(empreinte)
+    except pilotage.PilotageRefuse:
+        raise
+    except (ValueError, TypeError, AttributeError, KeyError) as e:
+        # Une page HTML d'un proxy, un JSON inattendu : à réessayer, avec la cause.
+        raise RegistreInjoignable(f"registre : réponse illisible ({type(e).__name__})") from e
+    for contenu, signature in trouvees:
         try:
             cle.verify(base64.b64decode(signature, validate=True), contenu, ec.ECDSA(hashes.SHA256()))
             d = json.loads(contenu)
@@ -206,8 +213,11 @@ def verifier_signature(image: str, depot_: str, cle=None, url: str | None = None
 
 
 def sauvegarder(url: str, dossier: str | Path, client: str, version: str, maintenant: float | None = None,
-                gardees: int = GARDEES) -> Path:
-    """Toute la base dans <dossier>/megga-<client>-<date>-avant-<version>.jsonl.gz ; garde les plus récentes."""
+                gardees: int = GARDEES, sans_ordre: int | None = None) -> Path:
+    """Toute la base dans <dossier>/megga-<client>-<date>-avant-<version>.jsonl.gz ; garde les plus récentes.
+
+    `sans_ordre` : la mise à jour qui part. Dans la sauvegarde, son ordre est en échec et la mise à jour en cours
+    n'existe pas : recharger cette base (parce que la nouvelle version l'a abîmée) ne la relance jamais."""
     dossier = Path(dossier)
     if not dossier.is_dir():
         raise RuntimeError(f"dossier des sauvegardes absent : {dossier}")
@@ -221,11 +231,21 @@ def sauvegarder(url: str, dossier: str | Path, client: str, version: str, mainte
         # Lisible par le seul pilote : la base entière, conversations comprises.
         provisoire.touch(mode=0o600)
         provisoire.chmod(0o600)
-        stockage.exporter(url, provisoire, gz=True)
+        stockage.exporter(url, provisoire, gz=True, retouche=None if sans_ordre is None else _sans(client, sans_ordre))
         os.replace(provisoire, final)
     finally:
         provisoire.unlink(missing_ok=True)
     return final
+
+
+def _sans(client: str, numero: int):
+    def retouche(table: str, ligne: dict) -> dict | None:
+        if table == "megga_reglages" and ligne.get("cle") == "mise_a_jour":
+            return None
+        if table == "megga_ordres" and ligne.get("client") == client and ligne.get("numero") == numero:
+            return {**ligne, "etat": "echec", "detail": "base rechargée depuis la sauvegarde d'avant cette mise à jour"}
+        return ligne
+    return retouche
 
 
 def sauvegardes(dossier: str | Path, client: str) -> list[Path]:

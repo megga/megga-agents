@@ -124,6 +124,8 @@ class MisesAJour:
     @classmethod
     def depuis(cls, env: dict, transport_kube=None) -> "MisesAJour":
         actif = oui(env.get("MISES_A_JOUR"), "MISES_A_JOUR", False)
+        if not actif:  # sans mises à jour, rien d'autre à lire : un réglage inutile n'empêche pas le pilote de démarrer
+            return cls(sauvegardes=env.get("PILOTE_SAUVEGARDES") or "/sauvegardes")
         r = cls(actif=actif, depot=images.depot(env.get("MEGGA_DEPOT")), registre_url=env.get("MEGGA_REGISTRE_URL") or None,
                 compte=env.get("REGISTRE_COMPTE") or None, jeton=env.get("REGISTRE_JETON") or None,
                 sauvegardes=env.get("PILOTE_SAUVEGARDES") or "/sauvegardes")
@@ -382,6 +384,33 @@ class Installation:
     def _detail(self, numero: int, detail: str, maintenant: float) -> None:
         self.ordres.changer(self.client, numero, "a_appliquer", detail, ("a_appliquer",), maintenant)
 
+    def _alerte(self, detail: str) -> None:
+        """Ce qui demande la main du client : remonte à MEGGA avec le suivi (alertes), et au journal du pilote."""
+        stockage.Journal(self.url).noter("mise_a_jour_bloquee", 1, pilotage.sans_donnees(detail))
+
+    def _image_de_megga(self, image: str | None) -> bool:
+        """Une image du dépôt de l'installation, nommée par son empreinte : la seule qu'un exécutant reçoive."""
+        return bool(image) and image.startswith(f"{self.maj.depot}@") and bool(images.REFERENCE.fullmatch(image))
+
+    def _sure(self, r: dict) -> bool:
+        """La mise à jour en cours est-elle intacte ? Elle est lue dans la base : avant de donner une image à
+        l'exécutant, l'image à installer est recalculée depuis l'ordre signé par MEGGA, et l'image d'avant doit
+        venir du même dépôt. Une ligne retouchée dans la base ne fait jamais tirer une autre image."""
+        l = self.ordres.lire(self.client, r.get("numero"))
+        try:
+            o = pilotage.ouvrir_ordre(l["jeton"], self.client, self.cle_megga) if l else None
+            attendue = images.reference((o or {}).get("contenu", {}).get("image"), self.maj.depot) if o else None
+        except pilotage.PilotageRefuse:
+            attendue = None
+        sure = (attendue is not None and o["genre"] == "image" and r.get("reference") == attendue
+                and (r.get("avant") is None or self._image_de_megga(r["avant"])))
+        if not sure:
+            log.warning("mise à jour en cours altérée dans la base : ignorée")
+            if self._poser_maj(None, r):
+                self._echec_image(r.get("numero"), "mise à jour en cours altérée dans la base : ignorée", self.horloge())
+                self._alerte("mise à jour en cours altérée dans la base : ignorée")
+        return sure
+
     def suivre_image(self, sante: dict, maintenant: float | None = None) -> None:
         """À chaque relevé : une image installée à la main est reconnue ; la mise à jour en cours avance."""
         maintenant = self.horloge() if maintenant is None else maintenant
@@ -389,9 +418,16 @@ class Installation:
             if sante.get("ok") and sante.get("version") == (pilotage.contenu(l["jeton"]).get("contenu") or {}).get("version"):
                 if self.ordres.changer(self.client, l["numero"], "applique", "installée par le client", ("propose",), maintenant):
                     self.noter("applique", l["numero"], "installée par le client")
-        if not self.maj.actif:
-            return
         r = self._maj()
+        if not self.maj.actif:
+            # MISES_A_JOUR passé à non : ce qui n'est pas parti est annulé ; une mise à jour lancée finit (surveillance, retour).
+            if r is None or r["phase"] in ("verifier", "prete"):
+                if r is not None:
+                    self._poser_maj(None, r)
+                for l in self.ordres.lister(self.client, 20, etats=("a_appliquer",)):
+                    if l["genre"] == "image":
+                        self._echec_image(l["numero"], "mises à jour par le pilote désactivées (MISES_A_JOUR=non)", maintenant)
+                return
         if r is None:
             r = self._prochaine(maintenant)
             if r is None:
@@ -412,15 +448,40 @@ class Installation:
                 self.lancer(self.maj.kube.image(self.maj.agent, "agent"), maintenant)
         elif r["phase"] == "lancee":
             if self.maj.kube and not r.get("en_place"):  # le changement d'image n'est pas passé : on le redemande
-                self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
-                if not self._poser_maj({**r, "en_place": True}, r):
+                if not self._sure(r):
                     return
-                r = {**r, "en_place": True}
+                if self.maj.kube.image(self.maj.agent, "agent") not in (r["avant"], r["reference"]):
+                    self._abandon(r, "l'image de l'agent a été changée hors du pilote", maintenant)
+                    return
+                self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
+                if not self._poser_maj({**r, "en_place": True, "depuis": self.horloge()}, r):
+                    return
+                r = {**r, "en_place": True, "depuis": self.horloge()}
             self._surveiller(r, sante, maintenant)
-        elif r["phase"] == "retour" and self.maj.kube:
-            if r.get("avant"):
-                self.maj.kube.poser(self.maj.agent, "agent", r["avant"])
-            self._retour_fait(r)
+        elif r["phase"] == "retour":
+            if self.maj.kube:
+                if not self._sure(r):
+                    return
+                en_place = self.maj.kube.image(self.maj.agent, "agent")
+                if en_place == r["reference"] and r.get("avant"):
+                    self.maj.kube.poser(self.maj.agent, "agent", r["avant"])
+                    self._retour_fait(r)
+                elif en_place != r.get("avant"):
+                    # Un « helm upgrade » est passé entre-temps : on n'écrase pas le choix du client.
+                    self._abandon(r, "l'image de l'agent a été changée hors du pilote : retour non fait", maintenant)
+                else:
+                    self._retour_fait(r)
+            elif maintenant - r["depuis"] > self.delai:
+                self._abandon(r, f"retour non fait en {self.delai / 60:.0f} minutes (registre, script de l'hôte ?)", maintenant,
+                              r.get("avant"))
+
+    def _abandon(self, r: dict, motif: str, maintenant: float, image: str | None = None) -> None:
+        """La mise à jour ne peut plus avancer seule : on la laisse, on le dit au client et à MEGGA. L'image à remettre
+        va au journal du pilote (une empreinte passerait pour un numéro dans une alerte)."""
+        if self._poser_maj(None, r):
+            self._echec_image(r["numero"], motif, maintenant)
+            self.noter("abandon", r["numero"], motif + (f" : remettre à la main l'image {image}" if image else ""))
+            self._alerte(f"ordre {r['numero']} : {motif}" + (" (l'image à remettre est au journal du pilote)" if image else ""))
 
     def _prochaine(self, maintenant: float) -> dict | None:
         """La plus récente image acceptée devient la mise à jour en cours ; les plus anciennes sont remplacées."""
@@ -442,7 +503,8 @@ class Installation:
         """L'ordre revérifié, puis la signature de l'image (cosign) : aucune image n'est tirée sans elle."""
         try:
             pilotage.lire_ordre(l["jeton"], self.base, self.cle_megga, maintenant)
-            reference = images.verifier_signature(r["image"], self.maj.depot, self.maj.cle, self.maj.registre_url,
+            image = (pilotage.contenu(l["jeton"]).get("contenu") or {}).get("image")  # celle de l'ordre signé
+            reference = images.verifier_signature(image, self.maj.depot, self.maj.cle, self.maj.registre_url,
                                                   self.maj.compte, self.maj.jeton, self.maj.transport)
         except images.RegistreInjoignable as e:
             if maintenant > l["expire"]:
@@ -471,19 +533,24 @@ class Installation:
         if l is None or l["etat"] != "a_appliquer":
             self._poser_maj(None, r)
             return None
-        # Sous Compose, revenir en arrière, c'est remettre l'image d'avant : il faut pouvoir la nommer par son empreinte.
-        if not self.maj.kube and not images.REFERENCE.fullmatch(actuelle or ""):
+        # Revenir en arrière, c'est remettre l'image d'avant : il faut la nommer par son empreinte, dans ce dépôt.
+        if not self._image_de_megga(actuelle):
             if self._poser_maj(None, r):
-                self._echec_image(r["numero"], "MEGGA_IMAGE (.env) doit nommer l'image par son empreinte (@sha256:…) : "
-                                  "sans elle, pas de retour arrière possible", maintenant)
+                self._echec_image(r["numero"], f"l'image de l'agent doit être nommée par son empreinte, dans {self.maj.depot} "
+                                  "(MEGGA_IMAGE, ou image.digest) : sans elle, pas de retour arrière possible", maintenant)
+            return None
+        if not self._sure(r):
             return None
         try:
-            fichier = images.sauvegarder(self.url, self.maj.sauvegardes, self.client, r["version"], maintenant)
+            # Dans la sauvegarde, cette mise à jour compte comme en échec : la recharger ne la relance pas.
+            fichier = images.sauvegarder(self.url, self.maj.sauvegardes, self.client, r["version"], maintenant,
+                                         sans_ordre=r["numero"])
         except Exception as e:  # disque plein, dossier absent, base en panne : pas de mise à jour sans sauvegarde
             if self._poser_maj(None, r):
                 self._echec_image(r["numero"], f"sauvegarde de la base impossible : {pilotage.sans_donnees(e)}", maintenant)
             return None
-        lancee = {**r, "phase": "lancee", "avant": actuelle or None, "sauvegarde": fichier.name, "depuis": maintenant,
+        # Le délai court après la sauvegarde, et repart quand l'image est en place (le pull peut être long).
+        lancee = {**r, "phase": "lancee", "avant": actuelle, "sauvegarde": fichier.name, "depuis": self.horloge(),
                   "en_place": False, "saines": 0}
         if not self._poser_maj(lancee, r):
             return self._maj()
@@ -491,8 +558,9 @@ class Installation:
         self.noter("lance", r["numero"], f"image {r['version']} : base sauvegardée ({fichier.name}), remplacement de l'image")
         if self.maj.kube:
             self.maj.kube.poser(self.maj.agent, "agent", lancee["reference"])
-            if self._poser_maj({**lancee, "en_place": True}, lancee):
-                lancee = {**lancee, "en_place": True}
+            place = {**lancee, "en_place": True, "depuis": self.horloge()}
+            if self._poser_maj(place, lancee):
+                lancee = place
         return lancee
 
     def _surveiller(self, r: dict, sante: dict, maintenant: float) -> None:
@@ -511,45 +579,48 @@ class Installation:
             if not r.get("en_place"):
                 pourquoi = "l'image n'a pas été remplacée"
             motif = f"l'agent ne répond pas sur l'image {r['version']} après {self.delai / 60:.0f} minutes ({pourquoi})"
-            retour = " ; retour à l'image d'avant" if r.get("avant") else " ; image d'avant inconnue"
             if self._poser_maj({**r, "phase": "retour", "depuis": maintenant}, r):
-                self._echec_image(r["numero"], pilotage.sans_donnees(motif + retour), maintenant)
+                self._echec_image(r["numero"], pilotage.sans_donnees(motif + " ; retour à l'image d'avant"), maintenant)
         elif saine or r.get("saines"):  # un relevé sain de plus, ou la série remise à zéro
             self._poser_maj({**r, "saines": r.get("saines", 0) + 1 if saine else 0}, r)
 
     def _retour_fait(self, r: dict) -> None:
         if self._poser_maj(None, r):
-            self.noter("retour", r["numero"], "l'agent est revenu à l'image d'avant" if r.get("avant") else "image d'avant inconnue")
+            self.noter("retour", r["numero"], "l'agent est revenu à l'image d'avant")
 
     def _suivre_pilote(self) -> None:
         """Sous Kubernetes, hors mise à jour : le pilote prend l'image de l'agent, une fois celle-ci en service."""
         if not self.maj.kube:
             return
         agent = self.maj.kube.image(self.maj.agent, "agent")
-        if agent and agent != self.maj.kube.image(self.maj.pilote, "pilote"):
+        if self._image_de_megga(agent) and agent != self.maj.kube.image(self.maj.pilote, "pilote"):
             self.noter("pilote", None, "le pilote prend l'image de l'agent")
             self.maj.kube.poser(self.maj.pilote, "pilote", agent)
 
     def image_cible(self, actuelle: str, maintenant: float | None = None) -> str:
         """Pour le script de l'hôte (Compose), qui donne l'image de l'agent : « rien », « attendre »,
-        « installer <image> » ou « revenir <image> ». Il ne fait que ce qu'on lui rend."""
+        « installer <image> » ou « revenir <image> ». Il ne fait que ce qu'on lui rend, après revérification."""
         maintenant = self.horloge() if maintenant is None else maintenant
-        r = self._maj() if self.maj.actif else None
+        r = self._maj()
         if r is None or self.maj.kube:
             return "rien"
         if r["phase"] == "verifier":
             return "attendre"
         if r["phase"] == "prete":
+            if not self.maj.actif:
+                return "rien"  # annulée au prochain relevé
             r = self.lancer(actuelle, maintenant)
             return f"installer {r['reference']}" if r and r["phase"] == "lancee" else "rien"
+        if not self._sure(r):
+            return "rien"
         if r["phase"] == "lancee":
             if actuelle != r["reference"]:
                 return f"installer {r['reference']}"
             if not r.get("en_place"):
-                self._poser_maj({**r, "en_place": True}, r)
+                self._poser_maj({**r, "en_place": True, "depuis": self.horloge()}, r)
             return "attendre"
         if r["phase"] == "retour":
-            if not r.get("avant") or actuelle == r["avant"]:
+            if actuelle == r["avant"]:
                 self._retour_fait(r)
                 return "rien"
             return f"revenir {r['avant']}"
