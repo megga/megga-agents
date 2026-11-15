@@ -57,21 +57,32 @@ class Conteneur extends DurableObject {
     return true;
   }
 
-  /** L'état du conteneur, sans rien de privé. */
+  /** L'état du conteneur et sa dernière alerte, sans rien de privé. */
   async etat() {
-    return { demarre: Boolean(this.ctx.container?.running) };
+    return { demarre: Boolean(this.ctx.container?.running), alerte: (await this.ctx.storage.get("alerte")) ?? null };
+  }
+
+  /** Garde la dernière panne (démarrage, transmission, rappels) pour le suivi : l'heure et un message technique. */
+  async noterAlerte(quoi, e) {
+    const message = String(e?.message ?? e).slice(0, 200);
+    await this.ctx.storage.put("alerte", { quand: Date.now(), quoi, message }).catch(() => {});
   }
 
   async fetch(requete) {
-    await this.pret();
     const url = new URL(requete.url);
-    url.protocol = "http:";
-    url.host = "container";
-    const transmise = new Request(url, requete);
-    transmise.headers.delete("host");
-    const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
-    await this.apres(url.pathname);
-    return reponse;
+    try {
+      await this.pret();
+      url.protocol = "http:";
+      url.host = "container";
+      const transmise = new Request(url, requete);
+      transmise.headers.delete("host");
+      const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
+      await this.apres(url.pathname);
+      return reponse;
+    } catch (e) {
+      await this.noterAlerte("transmission", e);
+      throw e;
+    }
   }
 
   async apres() {}
@@ -126,8 +137,38 @@ class AgentClient extends Conteneur {
     return true;
   }
 
+  /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
+  async suivre(chemin, recherche = "") {
+    if (!/^(\/conversations(\/\+?\d{6,20})?|\/alertes)?$/.test(chemin)) throw new Error("chemin de suivi");
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/suivi${chemin}${recherche}`, { headers: { "x-megga-interne": jeton } });
+    const texte = await r.text();
+    let donnees = null;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    return { statut: r.status, donnees };
+  }
+
   /** L'heure d'un rappel (ou d'une vérification, ou d'un redémarrage) : le conteneur envoie ce qui est échu. */
   async alarm() {
+    try {
+      await this.traiterAlarme();
+    } catch (e) {
+      await this.noterAlerte("rappels", e);
+      throw e; // l'alarme est retentée par la plateforme
+    }
+  }
+
+  async traiterAlarme() {
     const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
     if (await this.ctx.storage.get("a_redemarrer")) {
       const c = this.ctx.container;

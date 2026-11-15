@@ -16,6 +16,10 @@ Routes :
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
+  GET  /interne/suivi[?depuis=]                 volumes, modèles, échecs (jeton INTERNE_TOKEN)
+  GET  /interne/suivi/conversations[?limite=]   les personnes qui ont écrit
+  GET  /interne/suivi/conversations/{personne}  les derniers échanges avec elle
+  GET  /interne/suivi/alertes[?depuis=]         les échecs récents
 """
 
 from __future__ import annotations
@@ -32,6 +36,7 @@ from fastapi import FastAPI, Request, Response
 
 from . import config as configuration
 from . import stockage
+from . import suivi as suivi_agent
 from .agent import construire, modele
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
@@ -91,7 +96,7 @@ def _reecriture(conf, cles):
 
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
-          delai_vider: float = 100.0) -> FastAPI:
+          delai_vider: float = 100.0, journal=None, lecture=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais)."""
     env = dict(os.environ if env is None else env)
     os.environ.setdefault("AGNO_TELEMETRY", "false")
@@ -107,11 +112,15 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         reecrire = reecrire or _reecriture(conf, cles)
+    if env.get("DATABASE_URL"):
+        journal = journal or stockage.Journal(env["DATABASE_URL"])
+        lecture = lecture or stockage.Suivi(env["DATABASE_URL"])
     if expediteur is None:
         expediteur = Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
-    conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels)
+    conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
+                                  journal=journal)
     jeton_interne = env.get("INTERNE_TOKEN", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
@@ -165,6 +174,58 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         while conversations.taches and time.monotonic() < fin:
             await asyncio.wait(set(conversations.taches), timeout=fin - time.monotonic())
         return {"restantes": len(conversations.taches)}
+
+    def lisible(requete: Request) -> Response | None:
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if lecture is None or journal is None:
+            return Response("suivi indisponible", status_code=503)
+        return None
+
+    def borne(valeur: str | None, defaut: int, maximum: int) -> int:
+        try:
+            return max(1, min(int(valeur or defaut), maximum))
+        except ValueError:
+            return defaut
+
+    def date(valeur: str | None) -> float:
+        try:
+            return max(0.0, float(valeur or 0))
+        except ValueError:
+            return 0.0
+
+    @app.get("/interne/suivi")
+    async def interne_suivi(requete: Request):
+        if (refus := lisible(requete)) is not None:
+            return refus
+        depuis = date(requete.query_params.get("depuis"))
+        tours = await asyncio.to_thread(lecture.tours, depuis)
+        totaux = await asyncio.to_thread(journal.totaux, depuis)
+        attente = await asyncio.to_thread(rappels.en_attente) if rappels is not None else 0
+        return suivi_agent.resumer(conf, tours, totaux, attente, depuis)
+
+    @app.get("/interne/suivi/conversations")
+    async def interne_conversations(requete: Request):
+        if (refus := lisible(requete)) is not None:
+            return refus
+        limite = borne(requete.query_params.get("limite"), 50, 200)
+        return {"conversations": await asyncio.to_thread(lecture.conversations, limite)}
+
+    @app.get("/interne/suivi/conversations/{personne}")
+    async def interne_echanges(personne: str, requete: Request):
+        if (refus := lisible(requete)) is not None:
+            return refus
+        if not suivi_agent.PERSONNE.fullmatch(personne):
+            return Response("personne", status_code=400)
+        limite = borne(requete.query_params.get("limite"), 50, 200)
+        echanges = await asyncio.to_thread(lecture.echanges, personne, limite)
+        return {"personne": personne, "echanges": [suivi_agent.echange_lisible(e) for e in echanges]}
+
+    @app.get("/interne/suivi/alertes")
+    async def interne_alertes(requete: Request):
+        if (refus := lisible(requete)) is not None:
+            return refus
+        return {"alertes": await asyncio.to_thread(journal.alertes, date(requete.query_params.get("depuis")))}
 
     if env.get("JWT_VERIFICATION_KEY"):
         from agno.os import AgentOS

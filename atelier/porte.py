@@ -55,6 +55,11 @@ class Porte:
         return await self._appel("PUT", f"/admin/clients/{conf.id}/config",
                                  json={"version": version, "config": conf.model_dump(mode="json")})
 
+    async def suivi(self, ident: str, chemin: str = "", **params) -> dict:
+        """Le suivi d'un client, lu dans son conteneur (qui se réveille s'il dormait)."""
+        return await self._appel("GET", f"/admin/clients/{ident}/suivi{chemin}",
+                                 params={k: v for k, v in params.items() if v is not None} or None)
+
     async def etats(self, ident: str | None = None) -> dict[str, dict]:
         """L'état des clients dans l'annuaire (actif, version, conteneur) ; d'un seul si `ident`."""
         params = {"id": ident} if ident else None

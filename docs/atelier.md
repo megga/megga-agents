@@ -48,6 +48,25 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets`. Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
 
+## Le suivi
+
+Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client (il se réveille s'il dormait, quelques secondes), qui lit sa propre base.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours, tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente ; **coûts pour MEGGA seulement** |
+| `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
+| `GET /clients/{id}/conversations/{personne}` | tous | ses derniers échanges (ce qu'elle a dit, ce que l'agent a répondu), clés et jetons masqués |
+| `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; dernière panne du conteneur ; écart avec l'annuaire ; porte ou conteneur injoignable |
+| `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
+
+D'où viennent les chiffres :
+- les tours, les modèles (secours compris) et leurs jetons : les tours d'Agno, dans la base du client ;
+- les échecs autour d'un tour et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro ;
+- la dernière panne d'un conteneur (démarrage, transmission, rappels) : gardée par son objet, à la porte.
+
+Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
+
 ## Sur les fondations d'Agno
 
 Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_config`, `upsert_config`, `set_current_version`), vérifiés sur SQLite et Postgres : brouillon modifiable, version publiée figée, numéros jamais réutilisés, retour par `set_current_version`. Les routes HTTP d'AgentOS (`/components`, `/registry`) ne sont pas exposées : elles écrivent des agents Agno sans connaître notre configuration, et leurs droits suivent l'utilisateur du jeton, pas nos rôles.
@@ -62,4 +81,5 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.
 - **Agno 3.2** : sous Postgres, la table des versions a une colonne `deleted_at` que SQLite n'a pas ; l'export d'une base qui contient des versions ne se recharge pas encore dans SQLite. À régler avant de déménager la base de l'atelier.
+- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`) ; les zones suisse et client auront leur suivi par le pilotage (lot 6) ; MEGGA peut lire les conversations d'un client comme lui, à confirmer.
 - **Interface** : rien n'est figé côté écrans ; le catalogue et les erreurs (champ et message) sont faits pour qu'une interface les affiche telles quelles.

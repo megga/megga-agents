@@ -7,6 +7,8 @@
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
+//   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
+//                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
@@ -36,6 +38,8 @@ export async function recevoir(requete, env, ctx) {
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
+  const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
+  if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
     // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
@@ -132,6 +136,33 @@ async function clients(requete, env, seul) {
     tous.map((c) => (agentDe(env, c)?.etat() ?? Promise.resolve(null)).catch(() => null)),
   );
   return json({ clients: tous.map((c, i) => ({ ...c, conteneur: etats[i] })) });
+}
+
+/** Le suivi d'un client : la porte ne lit rien elle-même, elle transmet à son conteneur et rend la réponse. */
+async function suivre(requete, env, id, chemin, params) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  const gardes = new URLSearchParams();
+  for (const k of ["depuis", "limite"]) {
+    const v = params.get(k);
+    if (v !== null && /^\d{1,12}(\.\d+)?$/.test(v)) gardes.set(k, v);
+  }
+  const recherche = gardes.size ? `?${gardes}` : "";
+  let lu;
+  try {
+    lu = decodeURIComponent(chemin);
+  } catch {
+    return texte("chemin de suivi", 400);
+  }
+  try {
+    const { statut, donnees } = await agent.suivre(lu, recherche);
+    return json(donnees, statut);
+  } catch (e) {
+    const message = String(e?.message ?? e).slice(0, 200);
+    return json({ erreur: message === "chemin de suivi" ? message : "conteneur injoignable" }, message === "chemin de suivi" ? 400 : 503);
+  }
 }
 
 async function secretsAtelier(requete, env) {

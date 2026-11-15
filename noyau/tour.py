@@ -45,7 +45,8 @@ class Conversations:
     """Les conversations d'un client, une file par personne."""
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
-                 attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None):
+                 attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
+                 journal=None):
         self.conf = conf
         self.agent = agent
         self.exp = expediteur
@@ -56,6 +57,8 @@ class Conversations:
         self.seuil_regard = seuil_regard
         self.rappels = rappels
         self.debit = debit or Debit()
+        # Le journal de suivi (stockage.Journal) : échecs et volumes de voix, jamais de texte.
+        self.journal = journal
         self._boites: dict[str, _Boite] = {}
         self._verrous: dict[str, asyncio.Lock] = {}
         self.taches: set[asyncio.Task] = set()
@@ -124,8 +127,10 @@ class Conversations:
             reponse = EXCUSE if en_echec(sortie) else (getattr(sortie, "content", None) or "")
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
+                await self._noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
         except Exception as e:
             log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
+            await self._noter_journal("tour_echec", detail=type(e).__name__)
             reponse = EXCUSE
         if not reponse.strip():
             return
@@ -140,19 +145,24 @@ class Conversations:
         if self.voie is None or not self.voie.ecoute:
             return ""
         try:
-            return await self.voie.transcrire(await self.exp.telecharger(media_id))
+            texte = await self.voie.transcrire(await self.exp.telecharger(media_id))
+            await self._noter_journal("vocal_entendu")
+            return texte
         except Exception as e:
             log.error("vocal illisible (%s) : %s", self.conf.id, str(e)[:200])
+            await self._noter_journal("vocal_illisible", detail=type(e).__name__)
             return ""
 
     async def _dire(self, personne: str, reponse: str, entendu: str) -> bool:
         try:
             dit = await pour_la_voix(self.reecrire, nettoyer(reponse), entendu) if self.reecrire else reponse
             audio, ogg = await self.voie.dire(dit)
+            await self._noter_journal("voix_caracteres", len(dit))
             await self.exp.vocal(personne, audio, ogg)
             return True
         except Exception as e:
             log.error("voix en échec (%s), réponse écrite : %s", self.conf.id, str(e)[:200])
+            await self._noter_journal("voix_echec", detail=type(e).__name__)
             return False
 
     async def _ecrire(self, personne: str, texte: str) -> None:
@@ -160,6 +170,12 @@ class Conversations:
             await self.exp.texte(personne, nettoyer(masquer_secrets(texte)))
         except Exception as e:
             log.error("envoi en échec (%s) : %s", self.conf.id, str(e)[:200])
+            await self._noter_journal("envoi_echec", detail=type(e).__name__)
+
+    async def _noter_journal(self, genre: str, quantite: float = 1, detail: str = "") -> None:
+        """Le suivi ne fait jamais échouer un tour."""
+        if self.journal is not None:
+            await self._sans_echec(asyncio.to_thread(self.journal.noter, genre, quantite, detail))
 
     async def _noter(self, personne: str, quand: float) -> None:
         if self.contacts is not None and quand:
@@ -201,6 +217,7 @@ class Conversations:
                 bilan[voie] += 1
             except Exception as e:
                 log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
+                await self._noter_journal("rappel_echec", detail=type(e).__name__)
                 bilan["echec"] += 1
         return {"prochain": await asyncio.to_thread(self.rappels.prochain), **bilan}
 
