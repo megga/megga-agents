@@ -65,6 +65,8 @@ D'où viennent les chiffres :
 - les échecs autour d'un tour et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro ;
 - la dernière panne d'un conteneur (démarrage, transmission, rappels) : gardée par son objet, à la porte.
 
+MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
+
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 
 ## Sur les fondations d'Agno
@@ -81,5 +83,5 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.
 - **Agno 3.2** : sous Postgres, la table des versions a une colonne `deleted_at` que SQLite n'a pas ; l'export d'une base qui contient des versions ne se recharge pas encore dans SQLite. À régler avant de déménager la base de l'atelier.
-- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`) ; les zones suisse et client auront leur suivi par le pilotage (lot 6) ; MEGGA peut lire les conversations d'un client comme lui, à confirmer.
+- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`) ; les zones suisse et client auront leur suivi par le pilotage (lot 6).
 - **Interface** : rien n'est figé côté écrans ; le catalogue et les erreurs (champ et message) sont faits pour qu'une interface les affiche telles quelles.
