@@ -93,6 +93,16 @@ jobs:
       - run: uv venv --python 3.12 && uv pip install -e .
       - run: .venv/bin/python tests/compose/essai_pilote.py "$RUNNER_TEMP/essai-pilote"
 
+  mises-a-jour:
+    # De bout en bout : une image proposée, signée par cosign, acceptée, installée, puis une image en panne
+    # et le retour à celle d'avant ; un registre local à la place de ghcr.io.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/python tests/compose/essai_mise_a_jour.py "$RUNNER_TEMP/essai-maj"
+
   installation:
     runs-on: ubuntu-latest
     steps:
@@ -129,9 +139,24 @@ jobs:
           if helm template essai installation/helm/megga-agent -f $V --set-string pilotage.accord=peut-etre > /dev/null 2>&1; then echo "accord inconnu"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set pilotage.secret= > /dev/null 2>&1; then echo "pilote sans clé"; exit 1; fi
           if helm template essai installation/helm/megga-agent -f $V --set pilotage.mode=tout > /dev/null 2>&1; then echo "pilotage inconnu"; exit 1; fi
+          # les mises à jour par le pilote : un Role limité à deux Deployments nommés, un volume de sauvegardes ; rien sans
+          if grep -q "kind: Role" /tmp/rendu.yaml; then echo "droits sans mises à jour"; exit 1; fi
+          grep -q "automountServiceAccountToken: false" /tmp/rendu.yaml
+          helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true > /tmp/maj.yaml
+          grep -q 'resourceNames: \["essai-megga-agent", "essai-megga-agent-pilote"\]' /tmp/maj.yaml
+          grep -q 'verbs: \["get", "patch"\]' /tmp/maj.yaml
+          grep -q "claimName: essai-megga-agent-sauvegardes" /tmp/maj.yaml
+          grep -q 'name: MISES_A_JOUR, value: "oui"' /tmp/maj.yaml
+          test "$(grep -c 'megga.ai/image-valeurs' /tmp/maj.yaml)" = 2
+          if grep -q "ClusterRole" /tmp/maj.yaml; then echo "droits hors de l'espace de noms"; exit 1; fi
+          helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true \
+            --set pilotage.sauvegardes.existingClaim=mes-sauvegardes | grep -q "claimName: mes-sauvegardes"
+          if helm template essai installation/helm/megga-agent -f $V --set-string pilotage.misesAJour=oui > /dev/null 2>&1; then echo "misesAJour inconnu"; exit 1; fi
+          if helm template essai installation/helm/megga-agent -f $V --set pilotage.misesAJour=true --set image.digest= --set image.tag=0.2.0 > /dev/null 2>&1; then echo "misesAJour sans empreinte"; exit 1; fi
       - name: Le Docker Compose
         working-directory: installation/compose
         run: |
           cp exemple.env .env && sed -i 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD=essai/' .env
           touch secrets.env client.yaml
           docker compose config -q
+          bash -n mettre_a_jour.sh

@@ -90,7 +90,7 @@ Même code, même pack métier, choisis client par client.
 - Sans contenu : le suivi remonte l'état, les volumes, les coûts et les erreurs, jamais les conversations.
 - Borné : la console ne peut que changer un réglage prévu ou proposer une version. Aucune commande libre. Chaque ordre est signé par MEGGA, vérifié par l'installation, et inscrit au journal des deux côtés.
 
-**Les mises à jour** : un petit conteneur « pilote » à côté de l'agent (Docker Compose, ou une chart Helm) reçoit la version proposée. Il vérifie la signature de l'image, attend l'accord si le client l'a demandé, sauvegarde la base, lance la mise à jour et revient à la version d'avant si le contrôle de santé échoue.
+**Les mises à jour** : un petit conteneur « pilote » à côté de l'agent (Docker Compose, ou une chart Helm) reçoit la version proposée. Il vérifie la signature de l'image, attend l'accord si le client l'a demandé, sauvegarde la base, lance la mise à jour et revient à la version d'avant si le contrôle de santé échoue. Le pilote décide sans aucun droit : sous Compose, un petit script du serveur (lancé par cron) remplace l'image quand le pilote le demande, et rien d'autre ; sous Kubernetes, son compte de service ne peut changer que l'image de deux Deployments nommés (lot 6.4).
 
 **La maintenance que ça implique** :
 - deux versions soutenues à la fois (la dernière et la précédente) ;

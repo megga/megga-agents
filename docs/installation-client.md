@@ -6,7 +6,7 @@ C'est la même image signée que chez MEGGA. Deux façons de l'installer :
 - **Docker Compose**, sur un serveur : l'agent, sa base Postgres, une entrée HTTPS et le pilote (`installation/compose/`) ;
 - **Helm**, dans le Kubernetes du client, avec sa propre base Postgres (`installation/helm/megga-agent/`).
 
-Le pilote, à côté de l'agent, permet à MEGGA de suivre l'installation et, si le client le veut, d'en changer la configuration. Il appelle MEGGA, jamais l'inverse (voir « Le pilotage par MEGGA »).
+Le pilote, à côté de l'agent, permet à MEGGA de suivre l'installation et, si le client le veut, d'en changer la configuration et d'en installer les nouvelles versions. Il appelle MEGGA, jamais l'inverse (voir « Le pilotage par MEGGA » et « Les mises à jour de l'image »).
 
 ## Ce que MEGGA remet au client
 
@@ -40,6 +40,7 @@ Les secrets restent chez lui : en variables, ou en fichiers montés par Docker, 
 | `ELEVENLABS_API_KEY` | facultatif : écouter les vocaux et répondre de vive voix |
 | `DATABASE_URL` | Helm seulement : la base Postgres du client (Compose fournit la sienne) |
 | `PILOTE_CLE` | le pilote seulement : la clé de l'installation (voir « Le pilotage par MEGGA ») |
+| `REGISTRE_COMPTE`, `REGISTRE_JETON` | le pilote seulement, avec les mises à jour : le compte et le jeton de lecture du registre, pour vérifier la signature d'une image (`pilote.env`) |
 
 ## L'accès au registre
 
@@ -112,7 +113,7 @@ L'agent répond lui-même au défi de Meta et vérifie la signature de chaque we
 - **La base** : la sienne. Les migrations se jouent au démarrage ; une image démarre aussi sur une base migrée par la version suivante, pour qu'un retour arrière reste possible.
 - **Les sauvegardes** : celles de sa base (Compose : le volume `base`, ou `pg_dump`). L'outil d'export de MEGGA (`noyau/stockage.py`, `exporter` et `importer`) déplace un client entier, par exemple entre deux installations.
 - **La configuration** : avec `PILOTAGE=non`, toujours celle de `client.yaml` (redémarrer l'agent pour qu'il le relise). Avec `suivi` ou `complet`, la dernière version poussée par MEGGA et acceptée, tant qu'il y en a une (`python -m pilote revenir` ramène à `client.yaml`) ; seul `complet` en reçoit de nouvelles.
-- **Les mises à jour de l'image** : à la main pour l'instant (nouvelle empreinte, vérifiée, dans `.env` ou les valeurs Helm). MEGGA peut déjà en proposer une par le pilote, qui la note ; son installation par le pilote viendra avec les mises à jour signées (lot 6, partie 4).
+- **Les mises à jour de l'image** : par le pilote si le client le permet (passer `MISES_A_JOUR` à non en cours de route annule ce qui n'est pas parti ; une mise à jour lancée va au bout) (`MISES_A_JOUR=oui`, voir « Les mises à jour de l'image ») ; sinon à la main (nouvelle empreinte, vérifiée par `scripts/verifier_image.sh`, dans `.env` ou les valeurs Helm).
 
 ## Le pilotage par MEGGA
 
@@ -146,6 +147,33 @@ docker compose exec pilote python -m pilote journal       # ce qui s'est passé,
 
 Sous Kubernetes, les mêmes commandes : `kubectl exec deploy/<nom>-megga-agent-pilote -- python -m pilote ordres`.
 
-**Comment l'agent change de configuration** : le pilote note la nouvelle version dans la base de l'installation, signature comprise ; `client.yaml` reste en lecture seule et n'est jamais réécrit. Dans la minute, l'agent la voit, finit ses tours en cours et s'arrête ; Compose ou Kubernetes le relancent, et il sert la nouvelle version après en avoir revérifié la signature (une version retouchée dans la base ne sert jamais : l'agent reprend `client.yaml`). S'il ne la sert pas dans les 10 minutes, ou s'il la refuse à la vérification (une autre image, une autre clé), elle est marquée en échec et l'agent revient à la précédente encore valable, sinon à `client.yaml`. Accepter un ordre demande `suivi` ou `complet` : c'est le pilote qui surveille ces 10 minutes. Sous Kubernetes, chaque changement compte comme un redémarrage du conteneur (plusieurs coup sur coup allongent l'attente avant la relance). Le pilote n'a besoin ni de Docker ni de l'API de Kubernetes.
+**Comment l'agent change de configuration** : le pilote note la nouvelle version dans la base de l'installation, signature comprise ; `client.yaml` reste en lecture seule et n'est jamais réécrit. Dans la minute, l'agent la voit, finit ses tours en cours et s'arrête ; Compose ou Kubernetes le relancent, et il sert la nouvelle version après en avoir revérifié la signature (une version retouchée dans la base ne sert jamais : l'agent reprend `client.yaml`). S'il ne la sert pas dans les 10 minutes, ou s'il la refuse à la vérification (une autre image, une autre clé), elle est marquée en échec et l'agent revient à la précédente encore valable, sinon à `client.yaml`. Accepter un ordre demande `suivi` ou `complet` : c'est le pilote qui surveille ces 10 minutes. Sous Kubernetes, chaque changement compte comme un redémarrage du conteneur (plusieurs coup sur coup allongent l'attente avant la relance). Pour la configuration, le pilote n'a besoin ni de Docker ni de l'API de Kubernetes.
 
-**Une version d'image proposée** est notée et montrée (`python -m pilote ordres`) ; le client peut la refuser. Son installation par le pilote viendra au lot 6.4.
+**Une version d'image** : voir ci-dessous.
+
+## Les mises à jour de l'image
+
+MEGGA propose une nouvelle version de l'image par le pilote (avec `PILOTAGE=complet`). Avec `MISES_A_JOUR=oui`, le pilote l'installe ; sinon, elle est seulement proposée et le client l'installe à la main (le pilote la reconnaît quand l'agent tourne dessus).
+
+Avec `MISES_A_JOUR=oui`, chaque version suit le même chemin :
+1. **L'accord** du client, si `PILOTAGE_ACCORD=oui` : `python -m pilote ordres` montre l'image, `accepter <n>` ou `refuser <n>`.
+2. **La signature** : le pilote lit la signature de l'image dans le registre (il doit donc joindre `ghcr.io`, ou le miroir, en plus de MEGGA) et la vérifie avec la clé publique de MEGGA, dans l'image qui tourne déjà. C'est une seconde clé, indépendante de celle des ordres : un ordre signé ne suffit pas, l'image doit l'être aussi. Une image sans signature valable n'est jamais tirée.
+3. **La sauvegarde** de la base, juste avant : toute la base, par l'export de MEGGA, compressée, lisible par le seul pilote, dans le volume des sauvegardes (les 3 dernières restent ; `python -m pilote sauvegardes`). Sans sauvegarde, pas de mise à jour.
+4. **Le remplacement** de l'image de l'agent, seul : le pilote reste sur l'image d'avant et surveille.
+5. **Le contrôle de santé** : appliquée quand `/sante` répond sur la nouvelle version à deux relevés de suite (une version publiée ne se republie jamais : son numéro suffit à la reconnaître). Sinon, après `PILOTAGE_DELAI` (10 minutes par défaut), elle est en échec et l'agent revient à l'image d'avant. Le pilote prend ensuite la nouvelle image à son tour.
+
+Tout est inscrit au journal du pilote (`python -m pilote journal`) et chez MEGGA.
+
+**Le retour arrière ne touche pas à la base.** Les migrations sont additives et une image démarre sur une base migrée par la version suivante (deux versions soutenues) : l'image d'avant reprend la base telle quelle. MEGGA ne propose donc jamais une version qui saute une migration. La sauvegarde sert en dernier recours, à la main : `stockage.importer` la recharge dans une base neuve. Dans la sauvegarde, la mise à jour qui part compte déjà comme en échec : recharger cette base ne la relance pas.
+
+**Sous Docker Compose**, le pilote n'a aucun accès à Docker. C'est `mettre_a_jour.sh`, sur le serveur, qui remplace l'image quand le pilote le demande, et rien d'autre : il ne prend qu'une image nommée par son empreinte, l'écrit dans `.env` (un `docker compose up` plus tard la garde) et relance l'agent seul. À lancer chaque minute, par cron :
+
+```bash
+* * * * * /chemin/vers/installation/compose/mettre_a_jour.sh >> /var/log/megga-mises-a-jour.log 2>&1
+```
+
+Ou à la main, juste après `python -m pilote accepter <n>`. Dans `.env` : `MISES_A_JOUR=oui`, et `MEGGA_IMAGE` par son empreinte (`@sha256:…`) : c'est elle qu'on remet en cas de retour, et sans elle le pilote ne lance rien. Le script lit l'image du conteneur de l'agent, pas seulement `.env`, et un verrou laissé par une exécution interrompue s'efface au bout de 30 minutes. Dans `pilote.env`, le compte et le jeton de lecture remis par MEGGA (`REGISTRE_COMPTE=…`, `REGISTRE_JETON=…`) : le pilote lit la signature dans le registre ; le script, lui, tire l'image avec le `docker login` du serveur. Le script n'accepte qu'une image du dépôt de MEGGA (ou de `MEGGA_DEPOT`), nommée par son empreinte ; l'image d'avant, déjà sur le serveur, se remet sans le registre. Si le retour ne se fait pas dans le délai (registre en panne, script arrêté), le pilote le dit au client et à MEGGA, et l'image à remettre est à son journal.
+
+**Sous Kubernetes**, `pilotage.misesAJour: true` (avec `image.digest`) : le pilote reçoit un compte de service qui ne peut que lire et changer deux Deployments nommés, celui de l'agent et le sien ; aucun autre objet, rien hors de l'espace de noms. Il ne change que l'image. Kubernetes, lui, ne borne pas les champs : ce droit permet de changer tout le pod de ces deux Deployments, et un pilote compromis pourrait y monter un Secret de l'espace de noms. Le client qui le peut ferme cette porte par une ValidatingAdmissionPolicy n'acceptant de ce compte qu'un changement d'image. Les sauvegardes vont dans un volume (`pilotage.sauvegardes`, 5 Gio par défaut). Le jeton de lecture va dans le Secret du pilote (`REGISTRE_COMPTE`, `REGISTRE_JETON`). Après une mise à jour par le pilote, un `helm upgrade` garde l'image qu'il a posée tant que `image.digest` ne change pas dans les valeurs (le chart la relit dans le cluster) ; une nouvelle empreinte dans les valeurs l'emporte. Argo CD et Flux rendent le chart sans lire le cluster : avec eux, garder `misesAJour: false` et changer l'empreinte dans le dépôt.
+
+**Un miroir** : un client qui tire depuis son propre registre le donne par `MEGGA_DEPOT` (Compose) ou `image.repository` (Helm), avec les signatures copiées (`cosign copy`). L'empreinte, elle, ne change pas.

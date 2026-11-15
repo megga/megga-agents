@@ -6,7 +6,7 @@ garde son dernier relevé, et lui remet les ordres signés qui l'attendent.
 
   enregistrer   la clé publique de l'installation, à sa mise en service (MEGGA)
   revoquer      plus aucun relevé n'est accepté de cette clé
-  deposer       un ordre signé : une version de configuration (mise en service), ou une image proposée
+  deposer       un ordre signé : une version de configuration (mise en service), ou une version d'image
   releve        un relevé du pilote : son état, son suivi, ce que sont devenus les ordres ; rend ceux à remettre
 
 Tout est inscrit au journal du pilotage (megga_pilotage), comme chez le client.
@@ -119,7 +119,7 @@ class Pilotage:
                                 pilotage.DUREE_ORDRE, self.horloge(), minimum=recu if isinstance(recu, int) else 0)
         for n in o["remplaces"]:
             self.journal.noter(client, "remplace", n, f"remplacé par l'ordre {o['numero']} avant d'être remis")
-        quoi = f"configuration, version {contenu.get('version')}" if genre == "config" else f"image {contenu.get('version')} proposée"
+        quoi = f"configuration, version {contenu.get('version')}" if genre == "config" else f"image {contenu.get('version')}"
         self.journal.noter(client, "depose", o["numero"], f"{quoi}, par {auteur}")
         return o
 
@@ -183,6 +183,8 @@ class Pilotage:
             "silencieuse": inst["revoquee"] is None and (releve is None or maintenant - releve > SILENCE),
             "pilotage": etat.get("pilotage"),
             "accord": etat.get("accord"),
+            # Le pilote installe-t-il les images lui-même (MISES_A_JOUR=oui) ? Sinon, le client les installe à la main.
+            "mises_a_jour": etat.get("mises_a_jour"),
             "agent": {k: agent[k] for k in ("ok", "erreur", "version", "revision", "schema", "licence") if k in agent},
             "configuration": config,
             # La version servie par l'installation n'est pas celle en service dans l'atelier ; inconnue sans relevé,

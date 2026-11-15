@@ -3,7 +3,7 @@
 # vérifié la signature : Cloudflare ne tire pas depuis GitHub. Même image, même empreinte.
 #   scripts/vers_cloudflare.sh 0.2.0
 # Pour l'instant, wrangler deploy construit encore l'image depuis socle/Dockerfile ; cette copie
-# servira quand Cloudflare passera à l'image publiée (lot 6, partie 4, docs/deploiement.md).
+# servira quand Cloudflare passera à l'image publiée (docs/deploiement.md).
 set -euo pipefail
 version="${1:?version publiée, par exemple 0.2.0}"
 racine=$(cd "$(dirname "$0")/.." && pwd)

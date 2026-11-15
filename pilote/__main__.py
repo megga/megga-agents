@@ -5,8 +5,11 @@
   refuser <n>     refuse l'ordre n
   revenir         retire les configurations poussées par MEGGA : l'agent revient à client.yaml
   journal [n]     les n derniers événements du pilotage (30 par défaut)
+  sauvegardes     les sauvegardes de la base faites avant chaque mise à jour de l'image
   cle             la clé publique de l'installation, à remettre à MEGGA
   vivant          la sonde de santé du pilote
+  image --actuelle <image>   pour le script de l'hôte (installation/compose/mettre_a_jour.sh) : rien,
+                  attendre, installer <image> ou revenir <image>
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ import time
 
 ETATS = {
     "attente_accord": "attend votre accord",
-    "a_appliquer": "accepté, l'agent le prend dans la minute",
+    "a_appliquer": "accepté, en cours",
     "applique": "appliqué",
     "propose": "proposé",
     "refuse": "refusé",
@@ -81,8 +84,14 @@ def ordres(inst, ecrire) -> None:
             for ligne in differences(conf.model_dump(mode="json"), nouvelle) or ["aucun réglage ne change"]:
                 ecrire(f"    {ligne}")
             ecrire(f"    jusqu'au {date(l['expire'])} : python -m pilote accepter {l['numero']}, ou refuser {l['numero']}")
+        elif l["etat"] == "attente_accord" and o.get("genre") == "image":
+            ecrire(f"    {(o.get('contenu') or {}).get('image')}")
+            ecrire("    signature vérifiée, base sauvegardée, puis l'agent mis à jour ; retour à l'image d'avant si /sante échoue")
+            ecrire(f"    jusqu'au {date(l['expire'])} : python -m pilote accepter {l['numero']}, ou refuser {l['numero']}")
         elif l["etat"] == "propose":
-            ecrire(f"    son installation viendra avec les mises à jour signées ; refuser : python -m pilote refuser {l['numero']}")
+            ecrire(f"    {(o.get('contenu') or {}).get('image')}")
+            ecrire("    à installer à la main (MISES_A_JOUR=non : docs/installation-client.md) ; "
+                   f"refuser : python -m pilote refuser {l['numero']}")
 
 
 def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_megga=None) -> int:
@@ -95,7 +104,8 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
     from noyau import pilotage
     from noyau.environnement import charger
 
-    from .service import Installation, source_config
+    from . import image as images
+    from .service import Installation, MisesAJour, delai, source_config
 
     env = charger(dict(os.environ if env is None else env))
     if commande == "cle":
@@ -104,7 +114,7 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
             return 1
         ecrire(pilotage.en_texte(pilotage.cle_privee(env["PILOTE_CLE"]).public_key()))
         return 0
-    if commande not in ("ordres", "accepter", "refuser", "revenir", "journal"):
+    if commande not in ("ordres", "accepter", "refuser", "revenir", "journal", "sauvegardes", "image"):
         ecrire(__doc__.strip())
         return 2
     if not (env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")) or not env.get("DATABASE_URL"):
@@ -114,7 +124,11 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
         # Sans pilote qui tourne, personne ne verrait une configuration que l'agent ne prend pas (10 minutes).
         ecrire("Refusé : accepter un ordre demande PILOTAGE=suivi ou complet (le pilote surveille son application).")
         return 1
-    inst = Installation(env["DATABASE_URL"], configuration.lire(source_config(env)), cle_megga)
+    if commande == "image" and (env.get("PILOTAGE") or "non").strip().lower() not in ("suivi", "complet"):
+        ecrire("rien")
+        return 0
+    inst = Installation(env["DATABASE_URL"], configuration.lire(source_config(env)), cle_megga,
+                        maj=MisesAJour.depuis(env), delai=delai(env))
     if not inst.prete():
         ecrire("La base n'est pas encore prête : l'agent a-t-il démarré ?")
         return 1
@@ -128,6 +142,17 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
                        + (f" : {e['detail']}" if e["detail"] else ""))
         elif commande == "revenir":
             ecrire(inst.revenir())
+        elif commande == "sauvegardes":
+            liste = images.sauvegardes(inst.maj.sauvegardes, inst.client)
+            for f in liste:
+                ecrire(f"{f}  {f.stat().st_size / 1e6:.1f} Mo")
+            if not liste:
+                ecrire(f"Aucune sauvegarde dans {inst.maj.sauvegardes}.")
+        elif commande == "image":
+            if len(args) != 2 or args[0] != "--actuelle" or len(args[1]) > 300:
+                ecrire("python -m pilote image --actuelle <image de l'agent>")
+                return 2
+            ecrire(inst.image_cible(args[1].strip()))
         else:
             if len(args) != 1 or not re.fullmatch(r"[0-9]{1,9}", args[0]):
                 ecrire(f"python -m pilote {commande} <numéro de l'ordre>")

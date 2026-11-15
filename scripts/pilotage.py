@@ -13,6 +13,11 @@ installations hors Cloudflare (chez le client, zone suisse). Elle est distincte 
   .venv/bin/python scripts/pilotage.py installation <id-du-client> <adresse-de-la-porte> <clé publique>
       La mise en service d'une installation : enregistre dans l'atelier la clé publique qu'elle a
       remise (python -m pilote cle, chez le client). Rien de secret.
+
+  .venv/bin/python scripts/pilotage.py image <id-du-client> <adresse-de-la-porte> <version> <image>
+      Une version publiée (docs/deploiement.md, « Publier une version ») pour cette installation :
+      <image> est ghcr.io/megga/megga-agents@sha256:<empreinte>. Son pilote la vérifie et l'installe
+      si le client l'a permis (MISES_A_JOUR=oui), sinon elle lui est proposée.
 """
 
 from __future__ import annotations
@@ -96,6 +101,13 @@ def installation(client: str, porte: str, cle_publique: str) -> int:
     return _appel("PUT", f"{porte.rstrip('/')}/atelier/clients/{client}/installation", {"cle_publique": cle_publique})
 
 
+def image(client: str, porte: str, version: str, image_: str) -> int:
+    if not (pilotage.VERSION_IMAGE.fullmatch(version) and pilotage.IMAGE.fullmatch(image_)):
+        print("version 0.2.0 et image ghcr.io/megga/megga-agents@sha256:<empreinte> attendues")
+        return 2
+    return _appel("POST", f"{porte.rstrip('/')}/atelier/clients/{client}/installation/image", {"version": version, "image": image_})
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["cle"]:
@@ -104,5 +116,7 @@ if __name__ == "__main__":
         sys.exit(poser(a[1]))
     if a[:1] == ["installation"] and len(a) == 4:
         sys.exit(installation(a[1], a[2], a[3]))
+    if a[:1] == ["image"] and len(a) == 5:
+        sys.exit(image(a[1], a[2], a[3], a[4]))
     print(__doc__)
     sys.exit(2)

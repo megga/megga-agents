@@ -7,6 +7,7 @@ name: megga-agent
 services:
   agent:
     # L'image signée par MEGGA, par son empreinte (scripts/verifier_image.sh avant de la changer).
+    # Avec MISES_A_JOUR=oui, mettre_a_jour.sh la change ici (.env) quand le pilote le demande.
     image: ${MEGGA_IMAGE:?l'image signée, par empreinte, ghcr.io/megga/megga-agents@sha256:...}
     restart: unless-stopped
     env_file: [secrets.env]
@@ -44,7 +45,8 @@ services:
   pilote:
     # Le pilotage par MEGGA (docs/installation-client.md, « Le pilotage ») : la même image, toujours
     # sortant, aucun port. PILOTAGE (dans .env) : non, suivi ou complet. Ses seuls secrets : sa clé
-    # (pilote.env) et la base ; ni les clés des modèles ni celles de Meta.
+    # et la lecture du registre (pilote.env), et la base ; ni les clés des modèles ni celles de Meta.
+    # Aucun accès à Docker : les mises à jour de l'image passent par mettre_a_jour.sh, sur le serveur.
     image: ${MEGGA_IMAGE:?l'image signée, par empreinte, ghcr.io/megga/megga-agents@sha256:...}
     restart: unless-stopped
     env_file:
@@ -56,6 +58,10 @@ services:
       PILOTAGE_ACCORD: ${PILOTAGE_ACCORD:-oui}
       PILOTAGE_URL: ${PILOTAGE_URL:-https://megga-agents.api-963.workers.dev}
       PILOTAGE_INTERVALLE: ${PILOTAGE_INTERVALLE:-60}
+      PILOTAGE_DELAI: ${PILOTAGE_DELAI:-600}
+      MISES_A_JOUR: ${MISES_A_JOUR:-non}
+      MEGGA_DEPOT: ${MEGGA_DEPOT:-ghcr.io/megga/megga-agents}
+      PILOTE_SAUVEGARDES: /sauvegardes
       CLIENT_CONFIG_FILE: /config/client.yaml
       AGENT_URL: http://agent:8080
       DATABASE_URL: postgresql://megga@base:5432/megga
@@ -67,6 +73,8 @@ services:
         read_only: true
         bind:
           create_host_path: false
+      # Les sauvegardes de la base faites avant chaque mise à jour de l'image (les 3 dernières).
+      - sauvegardes:/sauvegardes
     depends_on:
       base:
         condition: service_healthy
@@ -108,3 +116,4 @@ services:
 volumes:
   base:
   certificats:
+  sauvegardes:
