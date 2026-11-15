@@ -36,9 +36,16 @@ class FauxAgent:
 class FauxExpediteur:
     def __init__(self):
         self.envois = []
+        self.autres = []
 
     async def texte(self, vers, texte):
         self.envois.append((vers, texte))
+
+    async def lu(self, message_id):
+        self.autres.append(("lu", message_id))
+
+    async def reaction(self, vers, message_id, emoji):
+        self.autres.append(("reaction", message_id, emoji))
 
 
 def corps(texte="Bonjour", ident="wamid.1", numero="100000000000001"):
@@ -58,7 +65,7 @@ def signe(c):
 def serveur(agent=None):
     agent = agent or FauxAgent()
     exp = FauxExpediteur()
-    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": SECRET}, agent=agent, expediteur=exp)
+    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": SECRET}, agent=agent, expediteur=exp, attente=0.01, seuil_regard=30)
     return app, agent, exp
 
 
@@ -114,7 +121,7 @@ def test_un_tour_en_echec_ne_casse_rien():
         assert t.post("/whatsapp", content=c, headers=signe(c)).status_code == 200
         t.portal.call(attendre(app))
         assert t.get("/sante").status_code == 200
-    assert exp.envois == []
+    assert len(exp.envois) == 1 and "souci technique" in exp.envois[0][1] and "panne" not in exp.envois[0][1]
 
 
 def test_deja():

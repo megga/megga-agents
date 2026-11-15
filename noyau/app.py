@@ -7,6 +7,7 @@ Variables d'environnement (jamais dans le dépôt) :
   META_APP_SECRET      la clé secrète de l'app Meta, pour vérifier la signature
   ANTHROPIC_API_KEY    Claude
   DEEPSEEK_API_KEY     le modèle de secours
+  ELEVENLABS_API_KEY   facultatif : écouter les vocaux et répondre de vive voix
   JWT_VERIFICATION_KEY facultatif : ouvre l'API d'AgentOS, protégée par jeton (console, mode 2)
 
 Routes :
@@ -16,7 +17,6 @@ Routes :
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
@@ -26,19 +26,14 @@ from fastapi import FastAPI, Request, Response
 
 from . import config as configuration
 from . import stockage
-from .agent import construire
-from .typographie import nettoyer
-from .whatsapp import Entrant, Expediteur, lire_entrants, signature_valide
+from .agent import construire, modele
+from .oral import consignes as consignes_orales
+from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
+from .voix import Voie
+from .whatsapp import Expediteur, lire_entrants, signature_valide
 
 log = logging.getLogger("megga")
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
-# Ce que reçoit la personne quand le tour échoue : jamais le texte d'une erreur technique.
-EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que possible."
-
-
-def en_echec(sortie) -> bool:
-    statut = getattr(sortie, "status", None)
-    return str(getattr(statut, "value", statut) or "").upper() in {"ERROR", "CANCELLED"}
 
 
 class Deja:
@@ -59,46 +54,50 @@ class Deja:
         return True
 
 
-def creer(env: dict[str, str] | None = None, agent=None, expediteur=None) -> FastAPI:
-    """`agent` et `expediteur` remplacent les vrais (essais)."""
+def _reecriture(conf, cles):
+    """Le modèle qui réécrit une réponse pour l'oral : un agent sans mémoire ni outils."""
+    from agno.agent import Agent
+
+    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+    oral = Agent(model=modele(nom, cles), instructions=consignes_orales(conf), telemetry=False, markdown=False)
+
+    async def reecrire(demande: str) -> str:
+        sortie = await oral.arun(demande)
+        if en_echec(sortie):
+            raise RuntimeError("réécriture en échec")
+        return getattr(sortie, "content", "") or ""
+
+    return reecrire
+
+
+def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
+          reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0) -> FastAPI:
+    """Les arguments nommés remplacent les vrais services (essais)."""
     env = dict(os.environ if env is None else env)
     os.environ.setdefault("AGNO_TELEMETRY", "false")
     source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
     if not source:
         raise RuntimeError("CLIENT_CONFIG manquante")
     conf = configuration.lire(source)
+    cles = {k: env.get(k, "") for k in CLES}
     if agent is None:
         if not env.get("DATABASE_URL"):
             raise RuntimeError("DATABASE_URL manquante")
-        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), {k: env.get(k, "") for k in CLES})
+        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles)
+        contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
+        reecrire = reecrire or _reecriture(conf, cles)
     if expediteur is None:
         expediteur = Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
+    if voie is None and env.get("ELEVENLABS_API_KEY"):
+        voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
+    conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard)
     secret = env.get("META_APP_SECRET")
     deja = Deja()
-    verrous: dict[str, asyncio.Lock] = {}
-    taches: set[asyncio.Task] = set()
-
-    async def repondre(m: Entrant) -> None:
-        # Un tour à la fois par personne, dans l'ordre d'arrivée.
-        async with verrous.setdefault(m.de, asyncio.Lock()):
-            try:
-                if not m.texte:
-                    reponse = "Je ne lis que les messages écrits pour le moment."
-                else:
-                    sortie = await agent.arun(m.texte, user_id=m.de, session_id=m.de)
-                    if en_echec(sortie):
-                        log.error("tour en échec (%s)", conf.id)
-                        reponse = EXCUSE
-                    else:
-                        reponse = getattr(sortie, "content", None) or ""
-                if reponse.strip():
-                    await expediteur.texte(m.de, nettoyer(reponse))
-            except Exception as e:  # le tour échoue, le conteneur continue
-                log.error("tour en échec (%s) : %s", conf.id, str(e)[:300])
 
     app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.config = conf
-    app.state.taches = taches
+    app.state.conversations = conversations
+    app.state.taches = conversations.taches
 
     @app.get("/sante")
     async def sante():
@@ -120,9 +119,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None) -> Fas
                 continue
             if not deja.nouveau(m.id):
                 continue
-            t = asyncio.create_task(repondre(m))
-            taches.add(t)
-            t.add_done_callback(taches.discard)
+            conversations.recevoir(m)
             lus += 1
         # Meta veut une réponse rapide : le tour se poursuit après.
         return Response(f"reçu {lus}", media_type="text/plain")

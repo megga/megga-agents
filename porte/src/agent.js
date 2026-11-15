@@ -11,7 +11,7 @@ import { clientParId } from "./annuaire.js";
 const PORT = 8080;
 const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes sans message
 export const SECRETS_CLIENT = ["DATABASE_URL"];
-const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
+const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 
 class AgentClient extends DurableObject {
   constructor(ctx, env) {

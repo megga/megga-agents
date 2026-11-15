@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import MetaData, and_, create_engine, delete, insert, select
+from sqlalchemy import Column, Float, MetaData, String, Table, and_, create_engine, delete, insert, select, text, update
 from sqlalchemy.engine import Engine
 
 FORMAT = 1
@@ -99,11 +99,21 @@ def exporter(url: str, fichier: str | Path) -> int:
     return n
 
 
+def preparer(url: str) -> None:
+    """Crée dans une base neuve toutes les tables : celles d'Agno et les nôtres."""
+    base = base_agno(url)
+    creer = getattr(base, "_create_all_tables", None)  # Agno ne crée ses tables qu'au premier usage
+    if creer:
+        creer()
+    Contacts(url)
+
+
 def importer(fichier: str | Path, url: str) -> int:
-    """Recharge un export dans une base dont les tables existent déjà (créées par Agno).
+    """Recharge un export dans une base, neuve ou non (les tables sont créées au besoin).
 
     Une ligne de même clé est remplacée : l'import peut être rejoué sans doublon.
     """
+    preparer(url)
     e = moteur(url)
     tables = {t.name: t for t in _tables(e).sorted_tables}
     n = 0
@@ -123,3 +133,37 @@ def importer(fichier: str | Path, url: str) -> int:
             c.execute(insert(table).values(valeurs))
             n += 1
     return n
+
+
+class Contacts:
+    """Nos propres tables, à côté de celles d'Agno (même schéma, préfixe megga_) :
+    pour chaque personne, l'heure de son dernier message, qui ouvre la fenêtre de
+    24 heures de WhatsApp. Elle doit survivre au sommeil du conteneur.
+    """
+
+    def __init__(self, url: str):
+        self._e = moteur(url)
+        pg = self._e.dialect.name == "postgresql"
+        meta = MetaData(schema=SCHEMA if pg else None)
+        self._t = Table(
+            "megga_contacts",
+            meta,
+            Column("personne", String(32), primary_key=True),
+            Column("dernier_entrant", Float, nullable=False),
+        )
+        with self._e.begin() as c:
+            if pg:
+                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+        meta.create_all(self._e)
+
+    def noter(self, personne: str, quand: float) -> None:
+        """Retient le message le plus récent de la personne."""
+        with self._e.begin() as c:
+            t = self._t
+            r = c.execute(update(t).where(t.c.personne == personne, t.c.dernier_entrant < quand).values(dernier_entrant=quand))
+            if r.rowcount == 0 and c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is None:
+                c.execute(insert(t).values(personne=personne, dernier_entrant=quand))
+
+    def dernier(self, personne: str) -> float | None:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.dernier_entrant).where(self._t.c.personne == personne)).scalar()
