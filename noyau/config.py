@@ -109,7 +109,7 @@ class Config(Strict):
     def outils_du_metier(self):
         hors = [o for o in self.outils if o not in METIERS[self.metier]]
         if hors:
-            raise ValueError(f"outils hors du métier {self.metier} : {', '.join(hors)}")
+            raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
         return self
 
     @field_validator("version")
@@ -123,7 +123,7 @@ class Config(Strict):
     @classmethod
     def sans_artefacts(cls, v: str) -> str:
         if re.search(r"[\u2014\u2013\u00b7]", v):
-            raise ValueError("ni tiret long ni point médian dans la configuration")
+            raise ValueError("Pas de tiret long ni de point médian.")
         return v
 
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { Atelier } from "../src/agent.js";
+import { AgentEurope, Atelier, jetonInterne } from "../src/agent.js";
 import { clientParNumero, inscrire, lister } from "../src/annuaire.js";
 import { recevoir } from "../src/index.js";
 
@@ -35,6 +35,11 @@ function liaison(journal, demarres = new Set(), enPanne = new Set()) {
         etat: async () => {
           journal.push({ j, nom, etat: true });
           return { demarre: demarres.has(nom) };
+        },
+        suivre: async (chemin, recherche) => {
+          journal.push({ j, nom, suivi: chemin, recherche });
+          if (chemin === "/panne") throw new Error("le conteneur ne répond pas");
+          return { statut: 200, donnees: { tours: 3 } };
         },
         poserSecrets: async (s) => {
           journal.push({ j, nom, secrets: Object.keys(s) });
@@ -169,11 +174,11 @@ function ctx({ running = false, secrets = {} } = {}) {
 test("l'atelier redémarre tout de suite, seulement s'il tourne", async () => {
   const a = ctx({ running: true });
   const atelier = new Atelier(a.ctx, {});
-  assert.deepEqual(await atelier.etat(), { demarre: true });
+  assert.deepEqual(await atelier.etat(), { demarre: true, alertes: [] });
   assert.equal(await atelier.redemarrer(), true);
   assert.equal(await atelier.redemarrer(), false);
   assert.deepEqual(a.journal, [["destroy"]]);
-  assert.deepEqual(await atelier.etat(), { demarre: false });
+  assert.deepEqual(await atelier.etat(), { demarre: false, alertes: [] });
 });
 
 test("l'atelier démarre en service « atelier », avec sa base et sans les secrets de Meta", async () => {
@@ -186,4 +191,96 @@ test("l'atelier démarre en service « atelier », avec sa base et sans les secr
   assert.deepEqual(o.env, { MEGGA_SERVICE: "atelier", DATABASE_URL: "postgresql://atelier", ADMIN_TOKEN: "admin", PORTE_URL: "https://porte", ANTHROPIC_API_KEY: "a", DEEPSEEK_API_KEY: "d" });
   const sans = new Atelier(ctx().ctx, envW);
   await assert.rejects(sans.demarrer(), /DATABASE_URL/);
+});
+
+test("le suivi d'un client : réservé à MEGGA, transmis à son conteneur, paramètres filtrés", async () => {
+  const journal = [];
+  const e = env(journal);
+  await put(e, "exemple", { version: 1, config: config() });
+  journal.length = 0;
+  const get = (chemin, jeton = "admin") => recevoir(new Request(`https://porte/admin/clients/${chemin}`, { headers: { authorization: `Bearer ${jeton}` } }), e);
+  assert.equal((await get("exemple/suivi", "faux")).status, 401);
+  assert.equal((await get("inconnu/suivi")).status, 404);
+  const r = await get("exemple/suivi?depuis=1700000000&limite=5&autre=x");
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { tours: 3 });
+  await get("exemple/suivi/conversations/%2B41790000000?depuis=abc");
+  await get("exemple/suivi/panne");
+  assert.equal((await get("exemple/suivi/%E0")).status, 400);
+  assert.deepEqual(journal.map((x) => [x.suivi, x.recherche]), [
+    ["", "?depuis=1700000000&limite=5"],
+    ["/conversations/+41790000000", ""],
+    ["/panne", ""],
+  ]);
+  const panne = await get("exemple/suivi/panne");
+  assert.equal(panne.status, 503);
+  assert.deepEqual(await panne.json(), { erreur: "conteneur injoignable" });
+});
+
+test("l'objet d'un client : suivi avec le jeton interne, chemins bornés, lecture récente gardée en mémoire", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async (u, o = {}) => {
+      const url = new URL(typeof u === "string" ? u : u.url);
+      vus.push([url.pathname + url.search, o.headers?.["x-megga-interne"]]);
+      return Response.json({ tours: vus.length });
+    },
+  });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  assert.deepEqual(await agent.suivre("/alertes", "?depuis=1"), { statut: 200, donnees: { tours: 1 } });
+  assert.deepEqual(vus, [["/interne/suivi/alertes?depuis=1", await jetonInterne("admin", "exemple")]]);
+  // la même lecture, tout de suite après : rendue de mémoire, le conteneur n'est pas sollicité
+  assert.deepEqual(await agent.suivre("/alertes", "?depuis=1"), { statut: 200, donnees: { tours: 1 } });
+  assert.equal(vus.length, 1);
+  await agent.suivre("/alertes", "?depuis=2");
+  assert.equal(vus.length, 2);
+  for (const mauvais of ["/../rappels", "/conversations/abc", "/autre"]) await assert.rejects(agent.suivre(mauvais), /chemin de suivi/);
+});
+
+test("un conteneur réveillé pour être lu se rendort vite, sauf si une conversation arrive", async () => {
+  const a = ctx({ running: false });
+  const sommeils = [];
+  a.ctx.container.setInactivityTimeout = async (ms) => sommeils.push(ms);
+  a.ctx.container.getTcpPort = () => ({ fetch: async () => Response.json({ tours: 0 }) });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {
+    a.ctx.container.running = true;
+  };
+  await agent.suivre("");
+  assert.deepEqual(sommeils, [2 * 60 * 1000]);
+  // endormi de nouveau ; cette fois un message arrive pendant la lecture
+  a.ctx.container.running = false;
+  agent.demarrer = async () => {
+    a.ctx.container.running = true;
+    agent.activite = Date.now() + 1;
+  };
+  await agent.suivre("/conversations");
+  assert.deepEqual(sommeils, [2 * 60 * 1000]);
+});
+
+test("les pannes d'un conteneur sont gardées, puis marquées résolues quand il répond de nouveau", async () => {
+  const a = ctx({ running: true });
+  a.ctx.container.getTcpPort = () => ({ fetch: async () => new Response("ok") });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {
+    throw new Error("secret du client manquant : DATABASE_URL");
+  };
+  await assert.rejects(agent.suivre(""));
+  await assert.rejects(agent.fetch(new Request("http://agent/interne/autre")));
+  let { alertes } = await agent.etat();
+  assert.deepEqual(alertes.map((x) => [x.quoi, x.resolue]), [["demarrage", null], ["transmission", null]]);
+  assert.match(alertes[0].message, /DATABASE_URL/);
+  // le secret est posé : le conteneur démarre et répond à /sante
+  delete agent.demarrer;
+  agent.environnement = async () => ({});
+  a.ctx.container.running = false;
+  await agent.fetch(new Request("http://agent/interne/autre"));
+  ({ alertes } = await agent.etat());
+  assert.equal(alertes.length, 2);
+  assert.ok(alertes.every((x) => x.resolue >= x.quand)); // gardées pour l'historique, mais réglées
+  for (let i = 0; i < 15; i++) await agent.noterAlerte("transmission", new Error(`panne ${i}`));
+  assert.equal((await agent.etat()).alertes.length, 10); // les dix dernières seulement
 });

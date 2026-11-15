@@ -16,16 +16,23 @@ import base64
 import datetime as dt
 import decimal
 import json
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import Column, Float, MetaData, String, Table, and_, create_engine, delete, insert, select, text, update
+from sqlalchemy import Column, Float, MetaData, String, Table, Text, and_, create_engine, delete, insert, select, text, update
 from sqlalchemy.engine import Engine
 
 FORMAT = 1
 # Le schéma Postgres des tables d'Agno (SQLite n'a pas de schéma).
 SCHEMA = "ai"  # celui d'Agno par défaut, qu'il emploie dans tous les cas
+
+
+# Un seul moteur (et une seule réserve de connexions) par base, partagé par tout le noyau :
+# les bases des clients partagent le calcul de Neon et son nombre de connexions.
+_MOTEURS: dict[str, Engine] = {}
+_VERROU = threading.Lock()
 
 
 def moteur(url: str) -> Engine:
@@ -35,7 +42,23 @@ def moteur(url: str) -> Engine:
         url = "postgresql+psycopg://" + url[len("postgresql://"):]
     if not (url.startswith("postgresql+psycopg://") or url.startswith("sqlite:///")):
         raise ValueError("DATABASE_URL : Postgres ou SQLite seulement")
-    return create_engine(url, pool_pre_ping=True)
+    with _VERROU:
+        if url not in _MOTEURS:
+            _MOTEURS[url] = create_engine(url, pool_pre_ping=True)
+        return _MOTEURS[url]
+
+
+def _table(url: str, nom: str, *colonnes: Column) -> tuple[Engine, Table]:
+    """Une de nos tables (préfixe megga_), créée au besoin, dans le schéma d'Agno sous Postgres."""
+    e = moteur(url)
+    pg = e.dialect.name == "postgresql"
+    meta = MetaData(schema=SCHEMA if pg else None)
+    t = Table(nom, meta, *colonnes)
+    if pg:
+        with e.begin() as c:
+            c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+    meta.create_all(e)
+    return e, t
 
 
 def base_agno(url: str):
@@ -107,6 +130,8 @@ def preparer(url: str) -> None:
         creer()
     Contacts(url)
     Rappels(url)
+    Journal(url)
+    Fil(url)
 
 
 def importer(fichier: str | Path, url: str) -> int:
@@ -143,19 +168,12 @@ class Contacts:
     """
 
     def __init__(self, url: str):
-        self._e = moteur(url)
-        pg = self._e.dialect.name == "postgresql"
-        meta = MetaData(schema=SCHEMA if pg else None)
-        self._t = Table(
+        self._e, self._t = _table(
+            url,
             "megga_contacts",
-            meta,
             Column("personne", String(32), primary_key=True),
             Column("dernier_entrant", Float, nullable=False),
         )
-        with self._e.begin() as c:
-            if pg:
-                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
-        meta.create_all(self._e)
 
     def noter(self, personne: str, quand: float) -> None:
         """Retient le message le plus récent de la personne."""
@@ -178,12 +196,9 @@ class Rappels:
     """
 
     def __init__(self, url: str):
-        self._e = moteur(url)
-        pg = self._e.dialect.name == "postgresql"
-        meta = MetaData(schema=SCHEMA if pg else None)
-        self._t = Table(
+        self._e, self._t = _table(
+            url,
             "megga_rappels",
-            meta,
             Column("id", String(36), primary_key=True),
             Column("personne", String(32), nullable=False, index=True),
             Column("quand", Float, nullable=False, index=True),
@@ -191,10 +206,6 @@ class Rappels:
             Column("etat", String(10), nullable=False, default="attente"),
             Column("cree", Float, nullable=False),
         )
-        with self._e.begin() as c:
-            if pg:
-                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
-        meta.create_all(self._e)
 
     def ajouter(self, personne: str, quand: float, texte: str) -> str:
         import time as _t
@@ -230,6 +241,13 @@ class Rappels:
         with self._e.begin() as c:
             c.execute(update(self._t).where(self._t.c.id == ident).values(etat=etat))
 
+    def en_attente(self) -> int:
+        from sqlalchemy import func
+
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(func.count()).where(t.c.etat.in_(("attente", "differe")))).scalar() or 0
+
     def prochain(self) -> float | None:
         from sqlalchemy import func
 
@@ -245,20 +263,13 @@ class Jetons:
     """
 
     def __init__(self, url: str):
-        self._e = moteur(url)
-        pg = self._e.dialect.name == "postgresql"
-        meta = MetaData(schema=SCHEMA if pg else None)
-        self._t = Table(
+        self._e, self._t = _table(
+            url,
             "megga_jetons",
-            meta,
             Column("empreinte", String(64), primary_key=True),
             Column("client", String(63), nullable=False, index=True),
             Column("cree", Float, nullable=False),
         )
-        with self._e.begin() as c:
-            if pg:
-                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
-        meta.create_all(self._e)
 
     @staticmethod
     def _empreinte(jeton: str) -> str:
@@ -285,3 +296,207 @@ class Jetons:
     def revoquer(self, client: str) -> int:
         with self._e.begin() as c:
             return c.execute(delete(self._t).where(self._t.c.client == client)).rowcount
+
+
+class Journal:
+    """Ce qu'Agno ne garde pas : les échecs autour d'un tour et les volumes de voix (table megga_journal).
+
+    Jamais de texte de message ni de numéro de personne : un genre, une quantité, un détail technique.
+    """
+
+    ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec")
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_journal",
+            Column("id", String(32), primary_key=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("genre", String(30), nullable=False),
+            Column("quantite", Float, nullable=False, default=1),
+            Column("detail", String(200), nullable=False, default=""),
+        )
+
+    def noter(self, genre: str, quantite: float = 1, detail: str = "", quand: float | None = None) -> None:
+        import time as _t
+
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=uuid.uuid4().hex, quand=quand or _t.time(), genre=genre[:30],
+                                             quantite=quantite, detail=detail[:200]))
+
+    def totaux(self, depuis: float) -> dict[str, dict]:
+        from sqlalchemy import func
+
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.genre, func.count(), func.sum(t.c.quantite)).where(t.c.quand >= depuis).group_by(t.c.genre))
+            return {g: {"nombre": n, "quantite": float(q or 0)} for g, n, q in lignes}
+
+    def alertes(self, depuis: float, limite: int = 100) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.quand, t.c.genre, t.c.detail).where(t.c.quand >= depuis, t.c.genre.in_(self.ALERTES))
+                               .order_by(t.c.quand.desc()).limit(limite))
+            return [dict(l._mapping) for l in lignes]
+
+
+class Fil:
+    """Le fil de chaque conversation, tel que la personne l'a vécu (table megga_fil).
+
+    Ce qu'elle a envoyé (texte, vocal transcrit) et ce qu'elle a reçu (réponses, vocaux,
+    rappels, messages du noyau), dans l'ordre. Même base et même confidentialité que
+    l'historique d'Agno, qui garde déjà ces textes.
+    """
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_fil",
+            Column("id", String(32), primary_key=True),
+            Column("personne", String(32), nullable=False, index=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("sens", String(8), nullable=False),  # recu, envoye
+            Column("genre", String(12), nullable=False),  # texte, vocal, rappel, modele
+            Column("texte", Text, nullable=False, default=""),
+        )
+
+    def noter(self, personne: str, sens: str, genre: str, texte: str, quand: float | None = None) -> None:
+        import time as _t
+
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=uuid.uuid4().hex, personne=personne, quand=quand or _t.time(),
+                                             sens=sens, genre=genre, texte=texte or ""))
+
+    def vide(self) -> bool:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.id).limit(1)).first() is None
+
+    def conversations(self, limite: int = 50) -> list[dict]:
+        from sqlalchemy import func
+
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.personne, func.count(), func.max(t.c.quand)).group_by(t.c.personne)
+                               .order_by(func.max(t.c.quand).desc()).limit(limite))
+            return [{"personne": p, "messages": n, "derniere": d} for p, n, d in lignes]
+
+    def messages(self, personne: str, limite: int = 50) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = list(c.execute(select(t.c.quand, t.c.sens, t.c.genre, t.c.texte).where(t.c.personne == personne)
+                                    .order_by(t.c.quand.desc(), t.c.id.desc()).limit(limite)))
+        return [dict(l._mapping) for l in reversed(lignes)]
+
+
+class Suivi:
+    """La lecture des tours d'Agno (table agno_runs) pour le suivi : volumes, modèles, et l'historique d'avant le fil.
+
+    Un tour = un message (ou un regroupement de messages) d'une personne et la réponse de l'agent.
+    """
+
+    def __init__(self, url: str):
+        self._e = moteur(url)
+        self._schema = SCHEMA if self._e.dialect.name == "postgresql" else None
+        self._table: Table | None = None
+
+    def _runs(self) -> Table | None:
+        """La table des tours, lue une fois dans le catalogue de la base (Agno la crée au premier tour)."""
+        if self._table is None:
+            meta = MetaData(schema=self._schema)
+            try:
+                meta.reflect(bind=self._e, only=["agno_runs"])
+            except Exception:
+                return None
+            self._table = meta.tables.get(f"{self._schema}.agno_runs" if self._schema else "agno_runs")
+        return self._table
+
+    @staticmethod
+    def _donnees(brut: Any) -> dict:
+        if isinstance(brut, dict):
+            return brut
+        try:
+            d = json.loads(brut or "{}")
+            return d if isinstance(d, dict) else {}
+        except (TypeError, ValueError):
+            return {}
+
+    def tours(self, depuis: float) -> list[dict]:
+        """Les tours depuis cette date : personne, heure, statut, modèles et jetons (sans texte).
+
+        Seules les métriques sont lues dans la base, pas les messages de chaque tour.
+        """
+        t = self._runs()
+        if t is None:
+            return []
+        from sqlalchemy.types import JSON
+
+        metriques = t.c.run_data["metrics"] if isinstance(t.c.run_data.type, JSON) else t.c.run_data
+        sortie = []
+        with self._e.connect() as c:
+            for l in c.execute(select(t.c.user_id, t.c.created_at, t.c.status, metriques.label("m")).where(t.c.created_at >= int(depuis))):
+                m = self._donnees(l.m)
+                if "metrics" in m and not isinstance(t.c.run_data.type, JSON):
+                    m = m.get("metrics") or {}
+                modeles = [x for liste in (m.get("details") or {}).values() for x in (liste or [])]
+                sortie.append({"personne": l.user_id, "quand": l.created_at, "statut": l.status, "modeles": modeles})
+        return sortie
+
+    def conversations(self, limite: int = 50) -> list[dict]:
+        """Les personnes qui ont écrit d'après les tours (avant le fil), la plus récente d'abord."""
+        from sqlalchemy import func
+
+        t = self._runs()
+        if t is None:
+            return []
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.user_id, func.count(), func.max(t.c.created_at)).where(t.c.user_id.is_not(None))
+                               .group_by(t.c.user_id).order_by(func.max(t.c.created_at).desc()).limit(limite))
+            return [{"personne": p, "messages": 2 * n, "derniere": d} for p, n, d in lignes]
+
+    def messages(self, personne: str, limite: int = 50, excuse: str = "") -> list[dict]:
+        """Le fil d'avant megga_fil, rebâti des tours : ce que la personne a dit, ce que l'agent a répondu.
+
+        Un tour en échec a valu à la personne l'excuse du noyau, pas le contenu du tour.
+        """
+        t = self._runs()
+        if t is None:
+            return []
+        with self._e.connect() as c:
+            # À la seconde près, deux tours se départagent par leur rang dans la conversation.
+            ordre = [t.c.created_at.desc()] + ([t.c.run_index.desc()] if "run_index" in t.c else [])
+            lignes = list(c.execute(select(t.c.created_at, t.c.status, t.c.run_data).where(t.c.user_id == personne)
+                                    .order_by(*ordre).limit(max(1, limite // 2))))
+        sortie = []
+        for l in reversed(lignes):
+            d = self._donnees(l.run_data)
+            entree = d.get("input")
+            brut = entree.get("input_content") if isinstance(entree, dict) else entree
+            echec = str(l.status or "").upper() in {"ERROR", "CANCELLED"}
+            sortie.append({"quand": l.created_at, "sens": "recu", "genre": "texte", "texte": "" if brut is None else str(brut)})
+            reponse = excuse if echec else str(d.get("content") or "")
+            if reponse:
+                sortie.append({"quand": l.created_at, "sens": "envoye", "genre": "texte", "texte": reponse})
+        return sortie[-limite:]
+
+
+class Reglages:
+    """Les réglages de l'atelier, en JSON par clé (table megga_reglages) : aujourd'hui, les tarifs."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_reglages",
+            Column("cle", String(40), primary_key=True),
+            Column("valeur", String(20000), nullable=False),
+        )
+
+    def lire(self, cle: str) -> Any:
+        with self._e.connect() as c:
+            v = c.execute(select(self._t.c.valeur).where(self._t.c.cle == cle)).scalar()
+        return json.loads(v) if v is not None else None
+
+    def ecrire(self, cle: str, valeur: Any) -> None:
+        donnees = json.dumps(valeur, ensure_ascii=False)
+        with self._e.begin() as c:
+            c.execute(delete(self._t).where(self._t.c.cle == cle))
+            c.execute(insert(self._t).values(cle=cle, valeur=donnees))

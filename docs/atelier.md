@@ -15,6 +15,25 @@ La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`
 
 Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
 
+## Les modèles par métier
+
+Un modèle (« gabarit » dans le code) pré-remplit une configuration complète : métier, ton, consignes, outils, voix par défaut. Le client choisit son métier, donne un prénom, et obtient un agent qui marche tel quel ; il peut ensuite l'affiner.
+
+| Modèle | Pour |
+|---|---|
+| `generaliste` | accueillir les clients, répondre, retenir, programmer des rappels |
+| `immobilier` | une agence : demandes d'achat, de vente, de location, critères, rappels ; la recherche de biens s'ajoute quand MEGGA branche le catalogue de l'agence |
+
+Un modèle ne touche jamais à ce qui tient au client (identifiant, entreprise, zone, numéro WhatsApp) ni aux réglages avancés de MEGGA (modèles de langue, catalogue, modèles Meta). Les deux usages passent par le même moteur : le client qui construit son seul agent, et MEGGA pour tous les clients.
+
+## Les erreurs
+
+Une configuration refusée rend, champ par champ, un message en français clair, prêt à montrer : « Le prénom doit faire 40 caractères au plus. », « Choisissez une voix dans la liste. », « Choisissez un métier : general ou immobilier. »…
+
+```json
+{"erreur": "configuration invalide", "details": [{"champ": "nom_agent", "message": "Le prénom doit faire 40 caractères au plus."}]}
+```
+
 ## Le parcours
 
 1. MEGGA crée le client d'une configuration complète : version 1, brouillon. Puis lui donne un jeton.
@@ -33,13 +52,15 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /catalogue` | tous | métiers, outils, zones, modèles, réglages du client |
+| `GET /gabarits` | tous | les modèles par métier et leurs réglages |
 | `GET /clients` | tous | les clients et leur état (annuaire, conteneur) ; un client ne voit que le sien |
-| `POST /clients` | MEGGA | `{config}` : un nouveau client |
+| `POST /clients` | MEGGA | `{config}`, ou `{gabarit, client: {id, entreprise, zone, numero_id}, nom_agent}` : un nouveau client |
 | `GET /clients/{id}` | tous | le client, sa version en service et sa configuration |
 | `GET /clients/{id}/versions` | tous | l'historique |
 | `GET /clients/{id}/versions/{v}` | tous | une version |
 | `POST /clients/{id}/valider` | tous | `{base?, changements}` : la configuration résultante, sans rien garder |
 | `POST /clients/{id}/versions` | tous | `{base?, changements}` : un brouillon |
+| `POST /clients/{id}/gabarit` | tous | `{gabarit, nom_agent?, base?}` : un brouillon d'après un modèle par métier |
 | `POST /clients/{id}/versions/{v}/essai` | tous | `{message, conversation?}` : la réponse de l'agent |
 | `POST /clients/{id}/versions/{v}/activer` | tous | `{forcer?}` : mise en service ou retour |
 | `POST /clients/{id}/reprise` | MEGGA | `{gere_par_megga}` : reprendre ou rendre la main |
@@ -47,6 +68,28 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `DELETE /clients/{id}/jetons` | MEGGA | retire ses jetons |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets`. Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+
+## Le suivi
+
+Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client, qui lit sa propre base. Un conteneur réveillé seulement pour être lu se rendort au bout de 2 minutes (15 après un vrai message) ; la porte garde une lecture récente en mémoire, jamais rangée (5 minutes pour l'activité et les alertes, 1 minute pour les conversations).
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours, tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente ; **coûts pour MEGGA seulement** |
+| `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
+| `GET /clients/{id}/conversations/{personne}` | tous | ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
+| `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
+| `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
+
+D'où viennent les chiffres :
+- les tours, les modèles (secours compris) et leurs jetons : les tours d'Agno, dans la base du client ; les jetons d'entrée sont comptés hors cache, quel que soit le fournisseur ;
+- les échecs et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro, seule source des échecs ;
+- les conversations : le fil du noyau (`megga_fil`), écrit en arrière-plan comme le journal, sans jamais retarder une réponse ; celles d'avant le fil se rebâtissent des tours d'Agno ;
+- les pannes d'un conteneur (démarrage, transmission, rappels) : les dix dernières, gardées par son objet à la porte, marquées résolues quand il répond de nouveau.
+
+MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
+
+Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 
 ## Sur les fondations d'Agno
 
@@ -59,7 +102,9 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Redémarrage** : un message arrivé pendant les quelques secondes entre la fin des tours et l'arrêt du conteneur peut rester sans réponse.
 - **Un numéro, un client** : `essai-megga` et `megga-estates` ont le même numéro ; la porte refusera d'activer le second tant que le premier le garde.
 - **Zone suisse et chez le client** : la mise en service y est notée mais pas poussée ; elle passera par le pilotage (lot 6).
+- **Inscription d'un client** : créer le compte (identifiant, entreprise, zone, numéro WhatsApp) reste à MEGGA ; le client règle ensuite son agent lui-même.
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.
 - **Agno 3.2** : sous Postgres, la table des versions a une colonne `deleted_at` que SQLite n'a pas ; l'export d'une base qui contient des versions ne se recharge pas encore dans SQLite. À régler avant de déménager la base de l'atelier.
+- **Suivi** : la réécriture d'une réponse pour l'oral passe par un petit modèle dont les jetons ne sont pas encore comptés ; les tarifs restent à saisir (`PUT /tarifs`) ; les zones suisse et client auront leur suivi par le pilotage (lot 6).
 - **Interface** : rien n'est figé côté écrans ; le catalogue et les erreurs (champ et message) sont faits pour qu'une interface les affiche telles quelles.

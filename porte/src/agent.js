@@ -16,6 +16,12 @@ const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes
 const VERIFICATION_MS = 90 * 1000;
 // Avant un redémarrage, le conteneur a ce temps pour finir les tours en cours.
 const VIDER_MS = 120 * 1000;
+// Le suivi : une lecture récente est rendue telle quelle (en mémoire seulement, jamais rangée),
+// et un conteneur réveillé seulement pour être lu se rendort vite.
+const CACHE_SUIVI_MS = 5 * 60 * 1000;
+const CACHE_CONVERSATIONS_MS = 60 * 1000;
+const SOMMEIL_SUIVI_MS = 2 * 60 * 1000;
+const ALERTES_MAX = 10;
 
 /** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
 export async function jetonInterne(admin, nom) {
@@ -57,21 +63,43 @@ class Conteneur extends DurableObject {
     return true;
   }
 
-  /** L'état du conteneur, sans rien de privé. */
+  /** L'état du conteneur et ses dernières pannes, sans rien de privé. */
   async etat() {
-    return { demarre: Boolean(this.ctx.container?.running) };
+    return { demarre: Boolean(this.ctx.container?.running), alertes: (await this.ctx.storage.get("alertes")) ?? [] };
+  }
+
+  /** Garde une panne (démarrage, transmission, rappels) pour le suivi : l'heure et un message technique. */
+  async noterAlerte(quoi, e) {
+    const message = String(e?.message ?? e).slice(0, 200);
+    const alertes = (await this.ctx.storage.get("alertes").catch(() => null)) ?? [];
+    alertes.push({ quand: Date.now(), quoi, message, resolue: null });
+    await this.ctx.storage.put("alertes", alertes.slice(-ALERTES_MAX)).catch(() => {});
+  }
+
+  /** Le conteneur répond de nouveau : les pannes en cours sont marquées résolues, avec l'heure. */
+  async resoudreAlertes() {
+    const alertes = (await this.ctx.storage.get("alertes")) ?? [];
+    if (!alertes.some((a) => !a.resolue)) return;
+    const maintenant = Date.now();
+    await this.ctx.storage.put("alertes", alertes.map((a) => (a.resolue ? a : { ...a, resolue: maintenant })));
   }
 
   async fetch(requete) {
-    await this.pret();
     const url = new URL(requete.url);
-    url.protocol = "http:";
-    url.host = "container";
-    const transmise = new Request(url, requete);
-    transmise.headers.delete("host");
-    const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
-    await this.apres(url.pathname);
-    return reponse;
+    this.activite = Date.now(); // une vraie requête (message, rappel) : le conteneur doit rester éveillé
+    try {
+      await this.pret();
+      url.protocol = "http:";
+      url.host = "container";
+      const transmise = new Request(url, requete);
+      transmise.headers.delete("host");
+      const reponse = await this.ctx.container.getTcpPort(PORT).fetch(transmise);
+      await this.apres(url.pathname);
+      return reponse;
+    } catch (e) {
+      await this.noterAlerte("transmission", e);
+      throw e;
+    }
   }
 
   async apres() {}
@@ -91,7 +119,10 @@ class Conteneur extends DurableObject {
       try {
         const r = await port.fetch("http://container/sante", { signal: AbortSignal.timeout(1000) });
         await r.body?.cancel();
-        if (r.ok) return;
+        if (r.ok) {
+          await this.resoudreAlertes().catch(() => {});
+          return;
+        }
         derniere = new Error(`santé ${r.status}`);
       } catch (e) {
         derniere = e;
@@ -126,8 +157,52 @@ class AgentClient extends Conteneur {
     return true;
   }
 
+  /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
+  async suivre(chemin, recherche = "") {
+    if (!/^(\/conversations(\/\+?\d{6,20})?|\/alertes)?$/.test(chemin)) throw new Error("chemin de suivi");
+    const cle = chemin + recherche;
+    const duree = chemin.startsWith("/conversations") ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
+    this.cacheSuivi ??= new Map();
+    const garde = this.cacheSuivi.get(cle);
+    if (garde && Date.now() - garde.quand < duree) return { statut: 200, donnees: garde.donnees };
+    const debut = Date.now();
+    const dormait = !this.ctx.container?.running;
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/suivi${chemin}${recherche}`, { headers: { "x-megga-interne": jeton } });
+    const texte = await r.text();
+    let donnees = null;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    if (r.status === 200) {
+      for (const [k, v] of this.cacheSuivi) if (Date.now() - v.quand >= CACHE_SUIVI_MS) this.cacheSuivi.delete(k);
+      this.cacheSuivi.set(cle, { quand: Date.now(), donnees });
+    }
+    // Réveillé seulement pour être lu : il se rendort vite, sauf si une vraie requête est arrivée entre-temps.
+    if (dormait && !((this.activite ?? 0) >= debut)) await this.ctx.container.setInactivityTimeout(SOMMEIL_SUIVI_MS).catch(() => {});
+    return { statut: r.status, donnees };
+  }
+
   /** L'heure d'un rappel (ou d'une vérification, ou d'un redémarrage) : le conteneur envoie ce qui est échu. */
   async alarm() {
+    this.activite = Date.now();
+    try {
+      await this.traiterAlarme();
+    } catch (e) {
+      await this.noterAlerte("rappels", e);
+      throw e; // l'alarme est retentée par la plateforme
+    }
+  }
+
+  async traiterAlarme() {
     const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
     if (await this.ctx.storage.get("a_redemarrer")) {
       const c = this.ctx.container;
