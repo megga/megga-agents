@@ -300,3 +300,35 @@ test("après un déploiement : chaque conteneur allumé repart sur la nouvelle i
   assert.deepEqual(journal.filter((x) => "redemarre" in x).map((x) => x.nom).sort(), ["dort", "exemple", "megga"]);
   assert.equal(r.atelier, false);
 });
+
+test("l'atelier ne s'arrête qu'entre deux requêtes : une mise en service en cours va au bout", async () => {
+  const a = ctx({ running: true });
+  let finir;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () => {
+      await new Promise((r) => (finir = r));
+      return Response.json({ version_en_service: 2 });
+    },
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const enCours = atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/activer", { method: "POST" }));
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(await atelier.redemarrer(), true); // demandé pendant la mise en service
+  assert.deepEqual(a.journal, []); // rien n'est coupé
+  finir();
+  const r = await enCours;
+  assert.deepEqual(await r.json(), { version_en_service: 2 }); // la réponse arrive entière
+  assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
+  assert.equal(await atelier.redemarrer(), false); // arrêté : plus rien à faire
+});
+
+test("le commit déployé (wrangler deploy --tag) est remis au conteneur", async () => {
+  const a = ctx({ secrets: { DATABASE_URL: "postgresql://atelier" } });
+  const envW = { ADMIN_TOKEN: "admin", PORTE_URL: "https://porte", VERSION_PORTE: { id: "v1", tag: "abc123def456" } };
+  await new Atelier(a.ctx, envW).demarrer();
+  assert.equal(a.journal[0][1].env.MEGGA_REVISION, "abc123def456");
+  const b = ctx({ secrets: { DATABASE_URL: "postgresql://atelier" } });
+  await new Atelier(b.ctx, { ...envW, VERSION_PORTE: { id: "v2", tag: "" } }).demarrer();
+  assert.equal("MEGGA_REVISION" in b.journal[0][1].env, false); // sans étiquette, l'image garde la sienne
+});

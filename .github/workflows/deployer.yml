@@ -31,4 +31,4 @@ jobs:
       - name: L'annuaire est à jour
         run: npx wrangler d1 migrations apply megga-agents-annuaire --remote
       - name: La porte et l'image des agents
-        run: npx wrangler deploy
+        run: npx wrangler deploy --tag "${GITHUB_SHA::12}"

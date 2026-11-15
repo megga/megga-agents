@@ -111,7 +111,13 @@ class Conteneur extends DurableObject {
 
   async demarrer() {
     const c = this.ctx.container;
-    if (!c.running) c.start({ enableInternet: true, env: await this.environnement() });
+    if (!c.running) {
+      const env = await this.environnement();
+      // Le commit déployé (wrangler deploy --tag), quand l'image construite par Cloudflare ne le connaît pas.
+      const revision = this.env.VERSION_PORTE?.tag;
+      if (revision) env.MEGGA_REVISION = revision;
+      c.start({ enableInternet: true, env });
+    }
     await c.setInactivityTimeout(INACTIVITE_MS);
     const port = c.getTcpPort(PORT);
     let derniere;
@@ -250,6 +256,31 @@ export class AgentEtatsUnis extends AgentClient {}
  * Sa base (versions des configurations, jetons des clients) se pose comme celle d'un client.
  */
 export class Atelier extends Conteneur {
+  /** L'atelier ne s'arrête qu'entre deux requêtes : une mise en service ou un essai en cours va au bout. */
+  async fetch(requete) {
+    this.enCours = (this.enCours ?? 0) + 1;
+    try {
+      const r = await super.fetch(requete);
+      // Lue en entier avant de rendre la main : un redémarrage ne coupe pas une réponse en route.
+      return new Response(await r.arrayBuffer(), r);
+    } finally {
+      this.enCours -= 1;
+      if (this.enCours === 0 && this.aRedemarrer) {
+        this.aRedemarrer = false;
+        await this.ctx.container?.destroy().catch(() => {});
+      }
+    }
+  }
+
+  async redemarrer() {
+    if (!this.ctx.container?.running) return false;
+    if (this.enCours) {
+      this.aRedemarrer = true; // à la fin de la dernière requête en cours
+      return true;
+    }
+    return super.redemarrer();
+  }
+
   async environnement() {
     const secrets = (await this.ctx.storage.get("secrets")) ?? {};
     if (!secrets.DATABASE_URL) throw new Error("secret de l'atelier manquant : DATABASE_URL");

@@ -1,6 +1,7 @@
 name: publier
 
-# Construit l'image une seule fois, la publie dans le registre de MEGGA et la signe.
+# Construit l'image une seule fois, la publie dans le registre de MEGGA et la signe. Le numéro
+# de version n'est posé qu'à la fin, sur une image essayée, signée et vérifiée.
 # Seulement à la main, depuis main, en écrivant « Publie ». Une version publiée ne se republie
 # pas : pour publier, changer la version dans pyproject.toml (docs/deploiement.md).
 on:
@@ -41,31 +42,36 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Une version publiée ne se republie pas
-        run: |
-          if docker manifest inspect "$IMAGE:${{ steps.v.outputs.version }}" > /dev/null 2>&1; then
-            echo "la version ${{ steps.v.outputs.version }} est déjà publiée : changer pyproject.toml"; exit 1
-          fi
-
       - uses: docker/setup-buildx-action@v3
 
-      - name: Construire et publier
+      - name: Une version publiée ne se republie pas
+        run: |
+          # Seule une réponse « introuvable » laisse passer ; une panne du registre arrête tout,
+          # pour qu'un numéro déjà publié ne soit jamais déplacé sur une autre image.
+          if sortie=$(docker buildx imagetools inspect "$IMAGE:${{ steps.v.outputs.version }}" 2>&1); then
+            echo "la version ${{ steps.v.outputs.version }} est déjà publiée : changer pyproject.toml"; exit 1
+          fi
+          if ! printf '%s' "$sortie" | grep -qiE "not found|manifest unknown|name unknown|denied|404"; then
+            echo "registre injoignable, on n'ose pas publier : $sortie"; exit 1
+          fi
+
+      - name: Construire et publier, par empreinte seule
         id: image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: socle/Dockerfile
           platforms: linux/amd64
-          push: true
+          # Sans numéro de version tant qu'elle n'est ni essayée, ni signée, ni vérifiée.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           # Un seul manifeste : la copie chez Cloudflare garde la même empreinte.
           provenance: false
           sbom: false
           build-args: |
             MEGGA_VERSION=${{ steps.v.outputs.version }}
             MEGGA_REVISION=${{ github.sha }}
-          tags: ${{ env.IMAGE }}:${{ steps.v.outputs.version }}
 
-      - name: L'image publiée démarre et dit sa version
+      - name: L'image démarre et dit sa version
         run: |
           REF="$IMAGE@${{ steps.image.outputs.digest }}"
           docker run -d --name essai -p 8080:8080 -e MEGGA_SERVICE=atelier \
@@ -91,6 +97,12 @@ jobs:
       - name: Vérifier avec la clé publique du dépôt
         run: |
           cosign verify --key socle/cosign.pub --insecure-ignore-tlog=true "$IMAGE@${{ steps.image.outputs.digest }}" > /dev/null
+
+      - name: Poser le numéro de version, sur la même empreinte
+        run: |
+          docker buildx imagetools create --prefer-index=false --tag "$IMAGE:${{ steps.v.outputs.version }}" "$IMAGE@${{ steps.image.outputs.digest }}"
+          pose=$(docker buildx imagetools inspect "$IMAGE:${{ steps.v.outputs.version }}" --format '{{json .Manifest.Digest}}' | tr -d '"')
+          test "$pose" = "${{ steps.image.outputs.digest }}" || { echo "empreinte changée en posant le numéro : $pose"; exit 1; }
 
       - name: Résumé
         run: |

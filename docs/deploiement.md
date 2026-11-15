@@ -52,7 +52,7 @@ Dans l'app Meta, retirer l'adresse du webhook : plus rien n'arrive à la porte. 
 
 Une seule image, construite une fois par version, signée, la même partout : Cloudflare, la zone suisse, chez le client.
 
-**La version** est celle de `pyproject.toml`. Chaque conteneur la montre sur `/sante`, avec le commit d'où vient l'image et la version de ses tables :
+**La version** est celle de `pyproject.toml`. Chaque conteneur la montre sur `/sante`, avec le commit d'où vient l'image et la version de ses tables. Chez Cloudflare, le commit vient de l'étiquette du déploiement (`wrangler deploy --tag <commit>`) :
 
 ```json
 {"ok": true, "version": "0.2.0", "revision": "<commit>", "config": 1, "schema": 1}
@@ -71,7 +71,7 @@ Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de p
 ### Publier une version
 
 1. Changer la version dans `pyproject.toml` (une PR, comme le reste). Une version publiée ne se republie jamais.
-2. GitHub, Actions, « publier », en écrivant « Publie » : l'image est construite une fois, publiée dans le registre privé de MEGGA (`ghcr.io/megga/megga-agents:<version>`, choisi par Julien le 15.11.2026), essayée (elle démarre et dit sa version), signée, puis vérifiée avec la clé publique du dépôt. Le résumé donne son empreinte.
+2. GitHub, Actions, « publier », en écrivant « Publie » : l'image est construite une fois et publiée dans le registre privé de MEGGA (`ghcr.io/megga/megga-agents`, choisi par Julien le 15.11.2026) par son empreinte seule ; elle est essayée (elle démarre et dit sa version), signée, vérifiée avec la clé publique du dépôt, et alors seulement elle reçoit son numéro (`:<version>`), sur la même empreinte. Un échec en route ne laisse aucune version numérotée. Le résumé donne l'empreinte.
 3. Pour la vérifier ailleurs (avant un déploiement, chez un client) :
 
    ```bash
@@ -79,6 +79,14 @@ Le mot de passe de la clé se saisit en masqué. La clé privée et son mot de p
    ```
 
 Cloudflare ne tire pas depuis GitHub : `scripts/vers_cloudflare.sh <version>` vérifie la signature et copie la même image (même empreinte) dans son registre. Pour l'instant, `wrangler deploy` construit encore l'image depuis `socle/Dockerfile` ; le passage de Cloudflare à l'image publiée viendra avec les mises à jour signées (lot 6, partie 4).
+
+### Déployer chez Cloudflare
+
+Depuis le Mac, avec l'étiquette du commit (le workflow « déployer » fait de même) :
+
+```bash
+cd porte && npx wrangler deploy --tag "$(git rev-parse --short=12 HEAD)"
+```
 
 ### Après un déploiement chez Cloudflare
 
@@ -88,4 +96,4 @@ Un conteneur déjà allumé garde l'ancienne image jusqu'à son sommeil (15 minu
 scripts/apres_deploiement.sh https://megga-agents.api-963.workers.dev
 ```
 
-Le script attend que les applications soient prêtes, puis demande à la porte (`POST /admin/redemarrer`) de faire repartir chaque conteneur allumé sur la nouvelle image : celui d'un client finit d'abord ses tours en cours ; celui de l'atelier repart tout de suite.
+Le script attend que les applications soient prêtes, puis demande à la porte (`POST /admin/redemarrer`) de faire repartir chaque conteneur allumé sur la nouvelle image : celui d'un client finit d'abord ses tours en cours ; celui de l'atelier, sa requête en cours (une mise en service va au bout).

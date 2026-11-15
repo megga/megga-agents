@@ -50,6 +50,8 @@
     "AgentEtatsUnis": { "type": "durable-object", "storage": "sqlite" },
     "Atelier": { "type": "durable-object", "storage": "sqlite" }
   },
+  // L'étiquette de la version déployée (wrangler deploy --tag <commit>), remise aux conteneurs.
+  "version_metadata": { "binding": "VERSION_PORTE" },
   // L'adresse publique de la porte : l'atelier l'appelle pour mettre une configuration en service.
   "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev" },
   // L'annuaire des clients (D1, juridiction UE, créé le 15.11.2026).

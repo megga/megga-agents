@@ -70,6 +70,39 @@ def test_migrations_au_demarrage(base):
                 c.execute(stockage.text(f'DROP TABLE {schema + "." if schema else ""}{nom}'))
 
 
+def test_une_base_d_avant_les_migrations_joue_ses_etapes(tmp_path):
+    """Nos tables sans megga_schema : la base est à la version de départ, ses étapes passent."""
+    url = f"sqlite:///{tmp_path}/ancienne.db"
+    stockage.Fil(url)  # une base d'un conteneur d'avant le lot 6
+    jouees = []
+    assert stockage.migrer(url, version=2, etapes={2: lambda c, s: jouees.append(2)}) == 2
+    assert jouees == [2]
+    neuve = f"sqlite:///{tmp_path}/neuve.db"  # une base vide : déjà à la version de l'image
+    assert stockage.migrer(neuve, version=2, etapes={2: lambda c, s: jouees.append("neuve")}) == 2
+    assert jouees == [2]
+
+
+def test_deux_demarrages_simultanes(tmp_path, monkeypatch):
+    """L'autre démarrage écrit la version entre la lecture et l'écriture : on relit au lieu de tomber."""
+    from sqlalchemy.exc import IntegrityError
+
+    url = f"sqlite:///{tmp_path}/course.db"
+    e, t = stockage._table_schema(url)
+    vraie = stockage.insert
+    appels = []
+
+    def course(table):
+        if getattr(table, "name", None) == "megga_schema" and not appels:
+            appels.append(1)
+            with e.begin() as c:  # l'autre conteneur, plus rapide
+                c.execute(vraie(t).values(cle="megga", version=1))
+        return vraie(table)
+
+    monkeypatch.setattr(stockage, "insert", course)
+    assert stockage.migrer(url) == stockage.SCHEMA_VERSION
+    assert appels == [1]
+
+
 def test_l_export_garde_la_version_des_tables(tmp_path):
     source = f"sqlite:///{tmp_path}/s.db"
     stockage.migrer(source)
@@ -100,10 +133,17 @@ def test_publier_seulement_a_la_main_et_signe():
     assert list(declencheurs) == ["workflow_dispatch"]
     job = w["jobs"]["publier"]
     assert "'Publie'" in job["if"] and "refs/heads/main" in job["if"]
-    etapes = " ".join(str(s.get("run", "")) + str(s.get("name", "")) for s in job["steps"])
-    for attendu in ("cosign sign", "cosign verify", "socle/cosign.pub", "déjà publiée", "/sante"):
-        assert attendu in etapes
+    etapes = [str(s.get("run", "")) + str(s.get("name", "")) + str(s.get("with", "")) for s in job["steps"]]
+    tout = " ".join(etapes)
+    for attendu in ("cosign sign", "cosign verify", "socle/cosign.pub", "déjà publiée", "/sante", "push-by-digest=true"):
+        assert attendu in tout
     assert w["permissions"] == {"contents": "read", "packages": "write"}
+    # le numéro de version n'est posé qu'après l'essai, la signature et la vérification, sur la même empreinte
+    rang = lambda mot: next(i for i, e in enumerate(etapes) if mot in e)  # noqa: E731
+    assert rang("/sante") < rang("cosign sign") < rang("cosign verify") < rang("imagetools create")
+    assert "--prefer-index=false" in etapes[rang("imagetools create")]
+    # une panne du registre n'est pas prise pour « pas encore publiée »
+    assert "registre injoignable" in etapes[rang("déjà publiée")]
 
 
 def test_dockerfile_porte_sa_version():
