@@ -24,6 +24,8 @@ from sqlalchemy import MetaData, and_, create_engine, delete, insert, select
 from sqlalchemy.engine import Engine
 
 FORMAT = 1
+# Le schéma Postgres des tables d'Agno (SQLite n'a pas de schéma).
+SCHEMA = "agno"
 
 
 def moteur(url: str) -> Engine:
@@ -71,9 +73,15 @@ def _depuis_json(v: Any) -> Any:
     return v
 
 
-def _lignes(e: Engine) -> Iterator[dict]:
-    meta = MetaData()
+def _tables(e: Engine) -> MetaData:
+    """Les tables d'Agno : le schéma SCHEMA sous Postgres, toute la base sous SQLite."""
+    meta = MetaData(schema=SCHEMA if e.dialect.name == "postgresql" else None)
     meta.reflect(bind=e)
+    return meta
+
+
+def _lignes(e: Engine) -> Iterator[dict]:
+    meta = _tables(e)
     with e.connect() as c:
         for table in meta.sorted_tables:
             for ligne in c.execute(select(table)).mappings():
@@ -97,8 +105,7 @@ def importer(fichier: str | Path, url: str) -> int:
     Une ligne de même clé est remplacée : l'import peut être rejoué sans doublon.
     """
     e = moteur(url)
-    meta = MetaData()
-    meta.reflect(bind=e)
+    tables = {t.name: t for t in _tables(e).sorted_tables}
     n = 0
     with open(fichier, encoding="utf-8") as f, e.begin() as c:
         entete = json.loads(f.readline() or "{}")
@@ -106,7 +113,7 @@ def importer(fichier: str | Path, url: str) -> int:
             raise ValueError("export d'un format inconnu")
         for brut in f:
             l = json.loads(brut)
-            table = meta.tables.get(l["table"])
+            table = tables.get(l["table"])
             if table is None:
                 raise ValueError(f"table absente de la base cible : {l['table']}")
             valeurs = {k: _depuis_json(v) for k, v in l["ligne"].items()}
