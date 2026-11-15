@@ -1,0 +1,48 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // La porte des agents MEGGA (zones Europe et États-Unis). Pas encore déployée :
+  // déploiement seulement sur « Fusionne et déploie » de Julien.
+  "name": "megga-agents",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  "workers_dev": true,
+  "preview_urls": false,
+  // Une application de conteneurs par zone, contrainte à sa juridiction.
+  // La même image partout (socle/Dockerfile) ; « basic » : 1/4 vCPU, 1 Gio.
+  "containers": [
+    {
+      "class_name": "AgentEurope",
+      "image": "../socle/Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic",
+      "max_instances": 50,
+      "constraints": { "jurisdiction": "eu" }
+    },
+    {
+      "class_name": "AgentEtatsUnis",
+      "image": "../socle/Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic",
+      "max_instances": 50,
+      "constraints": { "jurisdiction": "us" }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "AGENTS_EUROPE", "class_name": "AgentEurope" },
+      { "name": "AGENTS_ETATS_UNIS", "class_name": "AgentEtatsUnis" }
+    ]
+  },
+  "exports": {
+    "AgentEurope": { "type": "durable-object", "storage": "sqlite" },
+    "AgentEtatsUnis": { "type": "durable-object", "storage": "sqlite" }
+  },
+  // L'annuaire des clients ; base à créer au premier déploiement (wrangler d1 create).
+  "d1_databases": [
+    { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ]
+  // Secrets (wrangler secret put) : META_APP_SECRET, META_VERIFY_TOKEN, META_TOKEN,
+  // ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, ADMIN_TOKEN.
+}

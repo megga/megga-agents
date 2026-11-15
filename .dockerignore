@@ -1,0 +1,7 @@
+.venv
+.git
+porte/node_modules
+porte/.wrangler
+**/__pycache__
+tests
+docs

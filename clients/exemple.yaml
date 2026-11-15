@@ -1,0 +1,16 @@
+# Un exemple de configuration, sans aucun client réel.
+version: 1
+id: exemple
+nom_agent: Alix
+entreprise: Entreprise exemple
+zone: europe
+langue: fr
+fuseau: Europe/Paris
+ton: chaleureux et professionnel
+consignes: ""
+modeles:
+  principal: claude-sonnet-5-5
+  secours: deepseek-v4-pro
+whatsapp:
+  numero_id: "100000000000001"
+outils: []
