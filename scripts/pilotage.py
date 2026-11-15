@@ -74,7 +74,9 @@ def _appel(methode: str, url: str, corps: dict) -> int:
     """Un appel à la porte avec le jeton d'administration (trousseau) ; seule sa réponse s'affiche."""
     requete = urllib.request.Request(url, method=methode, data=json.dumps(corps).encode(),
                                      headers={"authorization": f"Bearer {_trousseau('megga-agents-admin')}",
-                                              "content-type": "application/json"})
+                                              "content-type": "application/json",
+                                              # Cloudflare refuse l'en-tête par défaut d'urllib (erreur 1010).
+                                              "user-agent": "megga-scripts"})
     try:
         with urllib.request.urlopen(requete, timeout=60) as r:
             print(r.read().decode()[:500])
