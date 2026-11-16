@@ -720,6 +720,29 @@ class Reseau:
             c.execute(update(r).where(r.c.id == str(ident)).values(close=time.time()))
         return dict(l._mapping)
 
+    def reprendre_demande(self, d: dict, propositions: list[dict], suite: dict | None = None) -> bool:
+        """Une demande reprise d'un autre agent (packs/immobilier/reprise.py), avec son identifiant et ses choix ;
+        faux si elle existe déjà."""
+        with self._e.begin() as c:
+            if c.execute(select(self._d.c.id).where(self._d.c.id == d["id"])).first() is not None:
+                return False
+            c.execute(insert(self._d).values(id=d["id"], partenaire=d["partenaire"], nom=d.get("nom", "")[:200], gestionnaire=d["gestionnaire"],
+                                             recherche=(d.get("recherche") or "")[:400], suite=(suite or {}).get("recherche", ""),
+                                             depuis=(suite or {}).get("depuis"), cree=d["cree"], statut=d.get("statut") or "nouvelle"))
+            for x in propositions:
+                c.execute(insert(self._p).values(demande=d["id"], rang=int(x["rang"]), reference=str(x["reference"])[:40], bien=_json(x.get("bien") or {}),
+                                                 choix=x.get("choix"), etat=x.get("etat"), decide=x.get("decide")))
+        return True
+
+    def reprendre_recherche(self, r: dict) -> bool:
+        """Une recherche gardée reprise d'un autre agent, avec son identifiant ; faux si elle existe déjà."""
+        with self._e.begin() as c:
+            if c.execute(select(self._r.c.id).where(self._r.c.id == r["id"])).first() is not None:
+                return False
+            c.execute(insert(self._r).values(id=r["id"][:16], partenaire=r["partenaire"], criteres=_json(r["criteres"]), resume=r["resume"][:400],
+                                             cree=r["cree"], derniere=r["derniere"], close=r.get("close")))
+        return True
+
     def oublier_partenaire(self, partenaire: str) -> None:
         """Un partenaire retiré : ses recherches ne sont plus suivies."""
         with self._e.begin() as c:
@@ -933,8 +956,9 @@ class Veilles:
             Column("cree", Float, nullable=False),
         )
 
-    def ajouter(self, personne: str, genre: str, donnees: dict, prochaine: float) -> str:
-        ident = f"{genre[0]}{_ident(6)}"
+    def ajouter(self, personne: str, genre: str, donnees: dict, prochaine: float, ident: str | None = None) -> str:
+        """`ident` : un identifiant donné (une reprise, packs/immobilier/reprise.py) ; sinon tiré au hasard."""
+        ident = ident or f"{genre[0]}{_ident(6)}"
         with self._e.begin() as c:
             c.execute(insert(self._t).values(id=ident, personne=personne, genre=genre, donnees=_json(donnees), prochaine=prochaine,
                                              cree=time.time()))
@@ -947,6 +971,10 @@ class Veilles:
         for l in lignes:
             l["donnees"] = _de_json(l["donnees"]) or {}
         return lignes
+
+    def existe(self, ident: str) -> bool:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.id).where(self._t.c.id == ident)).first() is not None
 
     def de(self, personne: str, genre: str | None = None) -> list[dict]:
         t = self._t

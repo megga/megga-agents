@@ -1,0 +1,249 @@
+{
+ "format": 1,
+ "cree": 1794824488271,
+ "gestionnaires": [
+  {
+   "numero": "+41791252627",
+   "compte": "greg@agence.ch",
+   "souvenirs": [
+    {
+     "id": 1,
+     "texte": "Les Martin cherchent une villa à Cologny, 5 chambres, budget CHF 10 M",
+     "sujet": "client",
+     "sens": null,
+     "cree": 1794824488246,
+     "modifie": 1794824488246
+    },
+    {
+     "id": 2,
+     "texte": "Greg préfère les vocaux le matin",
+     "sujet": "autre",
+     "sens": null,
+     "cree": 1794824488246,
+     "modifie": 1794824488246
+    }
+   ],
+   "regles": [
+    {
+     "id": 1,
+     "texte": "Pour Marbella, toujours la vidéo d'abord",
+     "portee": "marbella",
+     "qui": null,
+     "cree": 1794824488247
+    },
+    {
+     "id": 2,
+     "texte": "Pour la Suisse, jamais de prix dans le premier message",
+     "portee": "suisse",
+     "qui": null,
+     "cree": 1794824488247
+    },
+    {
+     "id": 3,
+     "texte": "Avec Marc, vouvoie toujours",
+     "portee": "personne",
+     "qui": "Marc Dupont",
+     "cree": 1794824488247
+    }
+   ],
+   "fil": {
+    "texte": "Greg attend la plaquette de la villa Olie.",
+    "date": 1794820888247
+   },
+   "filBrut": null,
+   "veilles": {
+    "v1": {
+     "recherche": "villa Cologny",
+     "mode": "simple",
+     "region": "suisse",
+     "sites": [],
+     "pour": "les Martin",
+     "frequence": "hebdomadaire",
+     "fin": 1796034088247,
+     "vus": [
+      "https://www.homegate.ch/acheter/4000123456"
+     ]
+    },
+    "v2": {
+     "recherche": "ancienne",
+     "mode": "simple",
+     "region": "suisse",
+     "sites": [],
+     "pour": null,
+     "frequence": "quotidienne",
+     "fin": 1794824487247,
+     "vus": []
+    }
+   },
+   "zones": {
+    "z1": {
+     "lieu": "Cologny",
+     "quartier": null,
+     "type": "villa",
+     "region": "suisse",
+     "restantes": 5,
+     "fin": 1797416488247,
+     "derniere": {
+      "n": 6,
+      "mediane": 28000
+     }
+    }
+   },
+   "entrant": null
+  }
+ ],
+ "registre": {
+  "partenaires": [
+   {
+    "numero": "+41795550101",
+    "nom": "Marc Dupont",
+    "agence": "Riviera Immobilier",
+    "par": "+41791252627",
+    "ajoute": 1794824488247,
+    "retire": null,
+    "famille": "Dupont"
+   },
+   {
+    "numero": "+41795550303",
+    "nom": "Sophie Bernard",
+    "agence": "",
+    "par": "+41791252627",
+    "ajoute": 1794824488247,
+    "retire": null,
+    "famille": "Bernard"
+   },
+   {
+    "numero": "+41795550404",
+    "nom": "Paul Retire",
+    "agence": "",
+    "par": "+41791252627",
+    "ajoute": 1794824488247,
+    "retire": 1794824488247,
+    "famille": "Retire"
+   }
+  ],
+  "regles": [
+   {
+    "numero": "+41795550101",
+    "regle": "lignes"
+   }
+  ],
+  "demandes": [
+   {
+    "id": "vuj353uh",
+    "partenaire": "+41795550101",
+    "courtier": "+41791252627",
+    "compte": "greg@agence.ch",
+    "recherche": "une maison à vendre, Cologny, 5 chambres",
+    "cree": 1794824488248,
+    "statut": "nouvelle"
+   },
+   {
+    "id": "7upx5wx6",
+    "partenaire": "+41795550303",
+    "courtier": "+41791252627",
+    "compte": "greg@agence.ch",
+    "recherche": "une maison à vendre, Cologny",
+    "cree": 1794824488254,
+    "statut": "nouvelle"
+   }
+  ],
+  "propositions": [
+   {
+    "demande": "vuj353uh",
+    "rang": 0,
+    "reference": "G8LR2DW8",
+    "bien": "{\"reference\":\"G8LR2DW8\",\"type\":\"Villa\",\"transaction\":\"vente\",\"commune\":\"Cologny\",\"chambres\":5,\"surface\":420}",
+    "choix": "lignes",
+    "etat": "livree",
+    "decide": 1794824488254
+   },
+   {
+    "demande": "vuj353uh",
+    "rang": 1,
+    "reference": "MBOL1E00",
+    "bien": "{\"reference\":\"MBOL1E00\",\"type\":\"Villa\",\"transaction\":\"vente\",\"commune\":\"Marbella\",\"chambres\":5,\"surface\":420}",
+    "choix": null,
+    "etat": null,
+    "decide": null
+   },
+   {
+    "demande": "7upx5wx6",
+    "rang": 0,
+    "reference": "G8LR2DW8",
+    "bien": "{\"reference\":\"G8LR2DW8\",\"type\":\"Villa\",\"transaction\":\"vente\",\"commune\":\"Cologny\",\"chambres\":5,\"surface\":420}",
+    "choix": null,
+    "etat": null,
+    "decide": null
+   }
+  ],
+  "recherches": [
+   {
+    "id": "r8dyuhkyx",
+    "partenaire": "+41795550303",
+    "criteres": "{\"reference\":null,\"transaction\":\"vente\",\"type\":\"maison\",\"communes\":[\"Cologny\"],\"budget\":10000000,\"devise\":\"CHF\",\"periode\":null,\"chambres\":5,\"surface\":null,\"vueLac\":true}",
+    "resume": "une maison à vendre, Cologny, budget CHF 10’000’000, 5 chambres",
+    "cree": 1794824488254,
+    "derniere": 1794824488254,
+    "close": null
+   }
+  ],
+  "suites": [
+   {
+    "demande": "7upx5wx6",
+    "recherche": "r8dyuhkyx",
+    "depuis": 1794738088254
+   }
+  ],
+  "bloques": [
+   {
+    "numero": "+41780000000",
+    "nom": "spam",
+    "par": "+41791252627",
+    "depuis": 1794824488247
+   }
+  ]
+ },
+ "carnets": {
+  "greg@agence.ch": {
+   "releves": [
+    {
+     "id": 1,
+     "nature": "avis",
+     "lieu": "Cologny",
+     "quartier": null,
+     "famille": "maison",
+     "devise": "CHF",
+     "prix": null,
+     "surface": null,
+     "prix_m2": 27500,
+     "bas": 25000,
+     "haut": 30000,
+     "texte": "entre 25 et 30 000",
+     "lien": null,
+     "date": 1794824488254,
+     "note": 1794824488254,
+     "par": "+41791252627"
+    },
+    {
+     "id": 2,
+     "nature": "annonce",
+     "lieu": "Cologny",
+     "quartier": null,
+     "famille": "maison",
+     "devise": "CHF",
+     "prix": 9800000,
+     "surface": 320,
+     "prix_m2": 30625,
+     "bas": null,
+     "haut": null,
+     "texte": null,
+     "lien": "https://www.homegate.ch/acheter/4000123456",
+     "date": 1794824488254,
+     "note": 1794824488254,
+     "par": "+41791252627"
+    }
+   ]
+  }
+ }
+}

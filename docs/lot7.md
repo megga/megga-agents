@@ -10,7 +10,7 @@ Alix FSP (dépôt `megga/fourseasonsproperties`, Worker `fourseasons-alix`) comp
 | **7.4 Partenaires et visiteurs** (fait) | registre, vitrine, rapprochement, accueil, questions transmises au courtier, demandes du site, envoi à un contact, blocages |
 | **7.5 Marché** (fait) | recherche sur les portails, veille, suivi de zones, carnet des prix |
 | **7.6 Comportements** (fait) | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
-| 7.7 Parité et bascule | les scénarios d'Alix en scénarios neutres, joués sur les deux (sur le socle par l'entrée par API), la copie des données, le numéro de test, la bascule sur accord |
+| **7.7 Parité et bascule** (parité et copie faites ; numéro et bascule à Julien) | les scénarios d'Alix en scénarios neutres, joués sur les deux, la copie des données, le numéro de test, la bascule sur accord |
 
 Décidé par Julien (16.11.2026) : Claude à la place de Gemini pour rédiger les annonces et regarder les photos (l'humeur d'un vocal, qui demandait Gemini, n'est pas reprise) ; ElevenLabs seul pour écouter et parler (ni Whisper ni Telnyx) ; la recherche sur les portails reste chez DeepSeek (7.5).
 
@@ -100,6 +100,14 @@ Un groupe d'outils de plus, `marche`, pour les gestionnaires seulement (`packs/i
 - **Les capacités** : pour un rôle qui a le groupe `travail`, ce que l'agent sait faire, d'après ses groupes et la configuration réelle (le formulaire s'il est publié, les partenaires et les visiteurs seulement s'ils peuvent écrire, la voix si elle est réglée) ; rien n'est promis qui n'est pas en service.
 - **La règle d'affichage** d'Alix (une idée par bloc, titres en gras, un bloc par bien, montants et surfaces écrits pareil, ni tableau, ni « # », ni point médian, ni tiret long) : dans les consignes de tout rôle qui a un outil du pack.
 - **Hors des 24 heures** : si le modèle Meta de l'usage manque, le modèle « message » (`modeles_meta.message`, sa variable : le nom de l'agent) annonce ce qui est gardé ; sa réponse rouvre les 24 heures et tout part aussitôt. Un rappel sans modèle « rappel » l'utilise aussi. Ce qui ne se garde pas (le suivi d'un visiteur) ne s'annonce pas.
+
+## 7.7 La parité et la bascule
+
+Décidé par Julien (16.11.2026) : une route d'export dans Alix pour copier ses données (le seul changement apporté à Alix avant la bascule) ; la parité jouée avec le vrai Claude et un juge ; le numéro de test créé par Julien, préparé ici. La marche à suivre complète : `docs/bascule-fsp.md`.
+
+- **La parité** (`parite/`) : les 36 cas du banc noté d'Alix en scénarios neutres (`cas.json` : qui écrit quoi, le temps qui passe, des critères vérifiés sur la trace ou lus par un juge). Les deux agents les jouent en local avec le vrai Claude : Alix par son propre banc (`alix.mjs`, sans rien modifier dans son dépôt), le socle tel que `creer` le construit, contre la vraie gestion du site servie en local (`socle.py`, `gestion.mjs`). Les mêmes critères et le même juge notent les deux (`noter.py`). Premier passage (16.11.2026, Claude Sonnet 5.5, juge Sonnet 5.5) : **Alix 89 / 100, socle 88 / 100** ; chacun gagne des cas que l'autre perd, à hauteur de ce que le juge varie d'un passage à l'autre (3 points pour Alix entre deux notations des mêmes traces). Le rapport : `docs/parite-7-7.md`. Pas de défaut du socle trouvé ; les écarts sont des choix de réponse du modèle (un visiteur qui revient n'est pas salué par son nom, une suite proposée différente). Un biais : le socle ne vide pas son historique avec le temps (Alix repart à neuf après 12 heures), les cas « le lendemain » (G06, G14, R01, M01, V08) lui sont plus faciles.
+- **La copie des données** : la route `GET /export` d'Alix (megga/fourseasonsproperties#132, en lecture seule, protégée par `EXPORT_CLE`, non déployée), jointe le temps de la copie par une adresse `workers.dev` ouverte puis refermée (décidé par Julien) ; l'import `python -m packs.immobilier.reprise export.json` (partenaires et leur règle, numéros bloqués, demandes et leurs choix, recherches gardées, souvenirs des gestionnaires dans la mémoire d'Agno, règles de travail, fil, veilles, zones, carnet du marché), une fois par base, identifiants gardés, dates converties ; refaite (`--encore`), elle ne double rien. Essayé sur un export produit par le vrai code d'Alix (`tests/donnees/export_alix.json`).
+- **Le numéro de test** et **la bascule** : la marche à suivre, les modèles Meta à soumettre et la décision qui reste (le numéro que le socle sert pour Four Seasons après la bascule) sont dans `docs/bascule-fsp.md`. Le mode relais d'Alix (transmettre au socle au lieu de répondre) est un second changement dans son dépôt, à faire seulement sur l'accord de Julien.
 
 ## Ce qui reste après le 7.4
 
