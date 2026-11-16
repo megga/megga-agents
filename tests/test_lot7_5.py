@@ -1,5 +1,7 @@
 """Lot 7.5 : le marché d'Alix FSP sur le socle (portails, veille, carnet des prix, suivi des zones)."""
 
+import datetime as dt
+from zoneinfo import ZoneInfo
 import json
 import re
 import time
@@ -205,7 +207,8 @@ def test_la_veille(m):
     tete, carte = m.exp.envois
     assert tete[2].startswith("Veille « villa Cologny » (les Martin) : 1 nouvelle(s) annonce(s). C'était la dernière recherche")
     assert carte[0] == "carte" and carte[2].endswith("https://www.homegate.ch/acheter/4000555555")
-    assert m.s.veilles.de(GREG) == [] and bilan["prochain"] is None  # trois semaines : finie
+    # Trois semaines : finie ; reste le passage des recherches clients, à 8 h ou 18 h.
+    assert m.s.veilles.de(GREG) == [] and dt.datetime.fromtimestamp(bilan["prochain"], ZoneInfo("Europe/Zurich")).hour in (8, 18)
     assert "pas de veille" in str(pytest.raises(ValueError, run, m.mo["annuler_veille"]("vxxxx", Tour(GREG, "g2"))).value)
 
 
@@ -285,7 +288,7 @@ def test_la_configuration_du_marche(tmp_path):
     app = creer(env)
     noms = {getattr(t, "__name__", "") for t in app.state.conversations.agents["gestionnaire"].tools}
     assert {"chercher_marche", "surveiller_marche", "noter_marche", "analyser_marche", "suivre_zone", "comparer_bien", "clients_pour_bien"} <= noms
-    assert len(app.state.conversations.echeances) == 2
+    assert len(app.state.conversations.echeances) == 3  # les questions, le marché, les recherches clients
     doc = next(t for t in app.state.conversations.agents["gestionnaire"].tools if getattr(t, "__name__", "") == "chercher_marche").__doc__
     assert "espagne (Espagne, Marbella)" in doc  # les régions viennent de la configuration
 

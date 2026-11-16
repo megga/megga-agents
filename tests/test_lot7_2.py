@@ -46,6 +46,8 @@ class FauxSite:
                                     "categorie": "Villa", "equipements": ["pool"]},
         }
         self.acces = {}
+        self.recherches = [{"id": "r1", "client": {"nom": "Les Martin"}, "criteres": {"communes": ["Cologny"], "budgetMax": 10000000},
+                            "biens": []}]
         self.appels = []
         self.recus = []
 
@@ -72,9 +74,12 @@ class FauxSite:
             if a is None:
                 return httpx.Response(404, json={"erreur": "annonce inconnue"})
             if suite == "" and r.method == "GET":
-                return httpx.Response(200, json={"annonce": a, "sha": "sha-1"})
+                return httpx.Response(200, json={"annonce": a, "sha": a.get("_sha", "sha-1")})
             if suite == "" and r.method == "PUT":
+                if corps.get("sha") != a.get("_sha", "sha-1"):  # comme la vraie gestion : une version périmée est refusée
+                    return httpx.Response(409, json={"erreur": "l'annonce a changé"})
                 a.update(corps["champs"])
+                a["_sha"] = f"sha-{int(a.get('_sha', 'sha-1')[4:]) + 1}"
                 return httpx.Response(200, json={"annonce": a})
             if suite == "" and r.method == "DELETE":
                 del self.annonces[slug]
@@ -100,9 +105,24 @@ class FauxSite:
                     return httpx.Response(200, json=self.acces.get(slug, {"prive": False}))
                 self.acces[slug] = corps
                 return httpx.Response(200, json={"annonce": a})
+            if suite == "/videos" and r.method == "POST":
+                a.setdefault("videos", []).append({"lien": corps["lien"], "titre": corps["titre"]})
+                return httpx.Response(200, json={"videos": len(a["videos"])})
+            if suite == "/videos" and r.method == "DELETE":
+                a["videos"].pop(corps["numero"] - 1)
+                return httpx.Response(200, json={"videos": len(a["videos"])})
             if suite == "/fiche":
                 return httpx.Response(200, json={"fiche": {"titre": a["titre"], "adresse": "Cologny", "prix": a["prix"],
                                                            "chiffres": [{"libelle": "Chambres", "valeur": "5"}]}})
+        if chemin == "/clients" and r.method == "GET":
+            return httpx.Response(200, json={"recherches": self.recherches})
+        m = re.fullmatch(r"/clients/recherches/([A-Za-z0-9_-]+)", chemin)
+        if m and r.method == "DELETE":
+            r_ = next((x for x in self.recherches if x["id"] == m.group(1)), None)
+            if r_ is None:
+                return httpx.Response(404, json={"erreur": "recherche inconnue"})
+            self.recherches.remove(r_)
+            return httpx.Response(200, json={"client": r_["client"]})
         if chemin == "/clients/recherches" and r.method == "POST":
             return httpx.Response(200, json={"recherche": {"id": "r1", "client": corps["client"], "criteres": corps.get("criteres", {}),
                                                           "biens": ["cologny-villa-lac"]}})
@@ -235,7 +255,12 @@ def test_les_garde_fous(alix):
     with pytest.raises(ValueError, match="rien à modifier"):
         run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1")))
     r = run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1"), titre="Villa lumineuse — face au lac", prix={"sur_demande": True}))
-    assert "Annonce enregistrée" in r
+    # Rien ne change avant son oui, au message suivant (relecture du 16.11.2026)
+    assert r.startswith("À confirmer (modifier") and "prix : CHF 9’500’000 devient" in r and "« Villa lumineuse, face au lac »" in r
+    assert site.annonces["cologny-villa-lac"]["titre"] == "Villa contemporaine avec vue sur le lac"
+    with pytest.raises(ValueError, match="pas encore répondu"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t1")))
+    assert "Annonce enregistrée" in run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
     assert site.annonces["cologny-villa-lac"]["titre"] == "Villa lumineuse, face au lac"
     assert site.annonces["cologny-villa-lac"]["prix"] == {"surDemande": True}
     assert garde.problemes({"titre": "Une belle villa au bord du lac"}) == []
@@ -283,7 +308,15 @@ def test_les_photos_d_une_annonce(alix):
     with pytest.raises(ValueError, match="au moins une photo"):
         run(o["retirer_photos"]("cologny-villa-lac", [1, 2, 3], t))
     r = run(o["retirer_photos"]("cologny-villa-lac", [1], t))
-    assert "il en reste 2" in r and "devient la couverture" in r
+    assert r.startswith("À confirmer : retirer la ou les photos 1 sur 3 (dont la couverture)")
+    assert len(site.annonces["cologny-villa-lac"]["photos"]) == 3  # rien avant son oui
+    r = run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
+    assert "il en reste 2" in r and "devient la couverture" in r and len(site.annonces["cologny-villa-lac"]["photos"]) == 2
+    # Les photos ont changé entre la préparation et le oui : rien n'est retiré à l'aveugle
+    run(o["retirer_photos"]("cologny-villa-lac", [1], Tour(GREG, "t3")))
+    run(o["couverture_photo"]("cologny-villa-lac", 2, Tour(GREG, "t3")))
+    with pytest.raises(ValueError, match="ont changé"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t4")))
 
 
 def test_un_mot_de_passe_ne_passe_jamais_par_le_modele(alix):
@@ -413,3 +446,51 @@ def test_les_mineurs_des_regles_et_du_catalogue():
     assert refusee("Ne jamais afficher le mot de passe") is None
     biens = lire_biens([{"ref": "A", "titre": "Villa", "transaction": "vente", "commune": "Cologny"}, "pas un bien", 42])
     assert [b.ref for b in biens] == ["A"]
+
+
+def test_une_video_et_une_recherche_se_confirment(alix):
+    """Relecture du 16.11.2026 : ajouter ou retirer une vidéo et supprimer la recherche d'un client attendent un oui, au
+    message suivant ; ce que l'outil montre vient du site (le nom du client, le titre de la vidéo)."""
+    o, site, *_ = alix
+    r = run(o["ajouter_video"]("cologny-villa-lac", "https://www.youtube.com/watch?v=abc", "Visite — jardin · lac", "Tour", Tour(GREG, "t1")))
+    assert r.startswith("À confirmer : ajouter à « Villa contemporaine") and "https://www.youtube.com/watch?v=abc" in r
+    assert "\u2014" not in r and "\u00b7" not in r and "videos" not in site.annonces["cologny-villa-lac"]
+    assert "Vidéo « Visite, jardin, lac » ajoutée" in run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
+    r = run(o["retirer_video"]("cologny-villa-lac", 1, Tour(GREG, "t3")))
+    assert r.startswith("À confirmer : retirer de « Villa contemporaine") and "Visite, jardin, lac" in r
+    assert len(site.annonces["cologny-villa-lac"]["videos"]) == 1
+    assert "il en reste 0" in run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t4")))
+    with pytest.raises(ValueError, match="aucune recherche r9"):
+        run(o["supprimer_recherche_client"]("r9", Tour(GREG, "t5")))
+    with pytest.raises(ValueError, match="identifiant d'une recherche"):
+        run(o["supprimer_recherche_client"]("r1/../x", Tour(GREG, "t5")))
+    r = run(o["supprimer_recherche_client"]("r1", Tour(GREG, "t5")))
+    assert "la recherche de Les Martin (" in r and "confirmer_action (slug « recherche-r1 »)" in r and site.recherches
+    assert run(o["confirmer_action"]("recherche-r1", Tour(GREG, "t6"))) == "Recherche de Les Martin supprimée." and not site.recherches
+
+
+def test_une_seule_action_attend_et_rien_ne_s_ecrase(alix):
+    """Relecture de la PR #48 : une deuxième action préparée dans le même tour est refusée (le oui ne lancerait que la
+    dernière) ; une annonce changée entre la préparation et le oui n'est pas écrasée."""
+    o, site, *_ = alix
+    run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1"), prix={"montant": 9000000, "devise": "CHF"}))
+    with pytest.raises(ValueError, match="une autre action attend déjà son oui"):
+        run(o["retirer_photos"]("cologny-villa-lac", [3], Tour(GREG, "t1")))
+    # La même action, corrigée dans le même tour, remplace la première
+    r = run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1"), prix={"montant": 9100000, "devise": "CHF"}))
+    assert "devient CHF 9’100’000" in r
+    # Un collègue change l'annonce depuis la gestion web avant le oui
+    site.annonces["cologny-villa-lac"]["_sha"] = "sha-7"
+    with pytest.raises(ValueError, match="a changé depuis"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
+    assert site.annonces["cologny-villa-lac"]["prix"] == "CHF 9’500’000"
+    # Préparé de nouveau, sur la version à jour : il passe
+    run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t3"), prix={"montant": 9100000, "devise": "CHF"}))
+    assert "Annonce enregistrée" in run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t4")))
+    # Au-delà de 15 minutes, une vidéo préparée n'est plus valable
+    run(o["ajouter_video"]("cologny-villa-lac", "https://vimeo.com/1", "Visite", "Tour", Tour(GREG, "t5")))
+    _, _, _, _, etats, _ = alix
+    etats.ecrire(GREG, "a_confirmer", {**etats.lire(GREG, "a_confirmer"), "quand": time.time() - 16 * 60})
+    with pytest.raises(ValueError, match="plus de 15 minutes"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t6")))
+    assert "videos" not in site.annonces["cologny-villa-lac"]

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from urllib.parse import parse_qs
 from zoneinfo import ZoneInfo
 
+from packs.immobilier.recherches import prochain_passage
+
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -534,16 +536,19 @@ def test_le_visiteur_prevenu_apres_six_heures(monde):
         await monde.accueil["demander_au_courtier"]("Visite ?", Tour(VISITEUR, "v1"), sujet="la visite", langue="en")
         q1, q2 = monde.s.questions.du_visiteur(VISITEUR, 0)
         monde.s.questions.repondre(q2["id"], None, prise=True)
-        tot = await c.envoyer_rappels_echus(time.time())
+        debut = time.time()
+        tot = await c.envoyer_rappels_echus(debut)
         tard = await c.envoyer_rappels_echus(q1["prevenir"] + 1)
         encore = await c.envoyer_rappels_echus(q1["prevenir"] + 2)
-        return q1, tot, tard, encore
+        return q1, tot, tard, encore, debut
 
-    q1, tot, tard, encore = run(essai())
-    assert tot["prochain"] == q1["prevenir"]  # la porte se réveille à l'heure du suivi
+    q1, tot, tard, encore, debut = run(essai())
+    # La porte se réveille à l'heure du suivi, ou plus tôt pour le passage des recherches clients (8 h, 18 h).
+    assert tot["prochain"] == min(q1["prevenir"], prochain_passage(debut, "Europe/Zurich"))
     suivis = [e[2] for e in monde.exp.pour(VISITEUR, "texte")]
     assert suivis == ["Notre courtier a bien reçu votre demande concernant la villa de Cologny et reviendra vers vous personnellement demain."]
-    assert tard["prochain"] is None and encore["prochain"] is None and monde.s.questions.lire(q1["id"])["prevenu"]
+    # Plus de suivi en attente : seul reste le passage des recherches clients.
+    assert tard["prochain"] == encore["prochain"] == prochain_passage(q1["prevenir"] + 1, "Europe/Zurich") and monde.s.questions.lire(q1["id"])["prevenu"]
 
 
 def test_un_visiteur_venu_par_api(monde):
