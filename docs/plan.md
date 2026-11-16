@@ -144,7 +144,7 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 
 **La bascule** : les scénarios de test d'Alix (`test/simulation-*.js`) passent sur les deux ; puis un numéro de test FSP sur le socle ; puis, sur accord, `fourseasons-alix` transmet au socle au lieu de répondre (changement dans le dépôt FSP, routeur intact). Souvenirs, partenaires et rappels sont copiés dans la base du client FSP. Retour arrière : une variable.
 
-**Le numéro de test FSP** (Julien, 16.11.2026) : créé dans le portefeuille Meta de Four Seasons Properties, sous le nom « Four Seasons Properties », puis son compte WhatsApp partagé avec MEGGA, pour que le socle y réponde. Pourquoi : chez Meta, le nom affiché doit avoir un lien visible avec l'entreprise qui possède le numéro (un portefeuille MEGGA qui affiche « Four Seasons Properties » passe mal, ce qui explique sans doute le numéro +1 650-710-7070 resté « Megga » ; l'état de sa revue se lit dans WhatsApp Manager) ; un nom approuvé reste attaché à son numéro ; un numéro ne change jamais de portefeuille, et le nouveau modèle de comptes ne migre plus de numéro entre comptes ni entre prestataires. À la bascule, rien ne migre : Greg garde son numéro, son nom, ses modèles et sa qualité ; soit `fourseasons-alix` transmet au socle, soit Four Seasons partage aussi le compte du numéro de Greg. Prérequis : un portefeuille Meta de Four Seasons où créer le numéro (aucun n'est visible depuis les accès de MEGGA aujourd'hui).
+**Le numéro de test FSP** (Julien, 16.11.2026) : un numéro neuf dans le portefeuille Meta de MEGGA, sous le nom « Four Seasons Properties » (le nom du numéro d'Alix FSP, +1 650 710 7070, a été approuvé dans ce même portefeuille), branché sur le socle. Il ne sert qu'aux essais. À la bascule, rien ne migre : le numéro d'Alix FSP reste où il est, avec son nom, ses modèles et sa qualité ; c'est l'agent qui change derrière lui. Ses webhooks arrivent aujourd'hui à l'app du routeur `megga-whatsapp`, qui les fait suivre à `fourseasons-alix` : soit son compte WhatsApp est abonné à l'app « Alix MEGGA » (la porte) et désabonné de celle du routeur, sans toucher au code du routeur ni d'Alix FSP ; soit `fourseasons-alix` transmet au socle. Retour arrière : l'abonnement inverse, ou la variable. Un nom affiché reste attaché à son numéro, et un numéro ne change jamais de portefeuille ; après l'approbation d'un nouveau nom, le numéro doit être réenregistré dans les 14 jours pour que le nom s'affiche.
 
 ## Les lots, une branche et une PR chacun
 
@@ -154,7 +154,7 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 4. **Pack immobilier**, puis l'agence de démo MEGGA Estates (faux biens, son propre numéro), quand Julien le décide.
 5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design.
 6. **Installation chez le client et zone suisse** : Docker Compose et chart Helm, conteneur pilote, canal de pilotage, mises à jour signées, guide, puis la zone suisse chez Exoscale et l'entrée par API. Avancé dès qu'un client suisse signe.
-7. **Alix FSP sur le socle** : parité, essai sur un numéro de test au nom de Four Seasons Properties, partagé avec MEGGA, bascule sur accord.
+7. **Alix FSP sur le socle** : parité, essai sur un numéro de test au nom de Four Seasons Properties, bascule sur accord.
 
 ## Décidé
 
