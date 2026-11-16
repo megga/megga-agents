@@ -1104,6 +1104,12 @@ def outils(s: Services) -> list:
         r = await g(compte, "PUT" if id else "POST", f"/clients/recherches/{id}" if id else "/clients/recherches", corps=corps)
         rech = r.get("recherche") or {}
         n = len(rech.get("biens") or [])
+        if rech.get("id"):
+            # Ce que l'outil vient de dire n'est pas redit au passage du soir ; ce qui arrive ensuite, si
+            # (recherches.py, relecture du 16.11.2026).
+            vues = s.etats.lire(qui(run_context)[0], "recherches_vues") or {}
+            vues[rech["id"]] = list(dict.fromkeys([*(vues.get(rech["id"]) or []), *(rech.get("biens") or [])]))[-500:]
+            s.etats.ecrire(qui(run_context)[0], "recherches_vues", vues)
         suite = f"{n} bien(s) correspondent : biens_pour_recherche pour les voir." if n else "Aucun bien ne correspond pour l'instant."
         return (f"Recherche {'modifiée' if id else 'enregistrée'} dans la gestion (id {rech.get('id')}) : "
                 f"{(rech.get('client') or {}).get('nom', '')}, {resume_criteres(rech.get('criteres') or {})}. {suite}")
@@ -1297,7 +1303,8 @@ def outils(s: Services) -> list:
         if s.redactrice is None or not hasattr(s.redactrice, "lire_pdf"):
             raise ValueError("la lecture des PDF n'est pas en service : demande les textes au courtier")
         if m["media_id"] not in lus:
-            pdf, _ = await pdf_lu(m["media_id"])
+            # Le PDF seul, sans en sortir les images (photos_du_pdf le fait s'il le faut) : moins de mémoire.
+            pdf = pdfs[m["media_id"]][0] if m["media_id"] in pdfs else await s.exp.telecharger(m["media_id"], PDF_MAX)
             texte = await s.redactrice.lire_pdf(pdf)
             if len(lus) >= 5:
                 del lus[next(iter(lus))]

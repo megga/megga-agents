@@ -45,7 +45,7 @@ def texte_nouveautes(nouveautes: list[tuple[str, list[dict]]]) -> str:
             if cites >= PAR_MESSAGE:
                 break
             cites += 1
-            lignes.append(f"- {court(b.get('titre'), 70)}, {b.get('localite', '')}{', ' + b['prix'] if b.get('prix') else ''}")
+            lignes.append(f"- {court(b.get('titre'), 70)}, {b.get('localite', '')}{', ' + str(b['prix']) if b.get('prix') else ''}")
         if lignes:
             blocs.append(f"*{court(nom, 60) or 'Un client'}*\n" + "\n".join(lignes))
     if cites < n:
@@ -90,21 +90,26 @@ class SuiviRecherches:
         except GestionErreur as e:
             raise ValueError(f"la gestion du site refuse : {e.message}") from e
         moi = (resume.get("moi") or {}).get("courtier")
+        if not moi:
+            return None  # un compte sans courtier ne suit les recherches de personne (relecture du 16.11.2026)
         annonces = {a.get("slug"): a for a in resume.get("annonces") or [] if not a.get("masquee")}
         vues = await asyncio.to_thread(s.etats.lire, numero, "recherches_vues") or {}
         apres, nouveautes = {}, []
         for r in clients.get("recherches") or []:
-            if moi and r.get("courtier") and r["courtier"] != moi:
+            if r.get("courtier") != moi:
                 continue  # celles d'un autre courtier (un admin les voit toutes) : à lui de les suivre
             slugs = [x for x in r.get("biens") or [] if x in annonces]
-            apres[r["id"]] = slugs
-            if r["id"] not in vues:
+            # Les biens vus s'ajoutent, ne se retirent jamais : une annonce masquée puis réaffichée, ou une réponse
+            # incomplète de la gestion, ne repasse pas pour une nouveauté.
+            deja = vues.get(r["id"])
+            apres[r["id"]] = list(dict.fromkeys([*(deja or []), *slugs]))[-500:]
+            if deja is None:
                 continue
-            neufs = [annonces[x] for x in slugs if x not in vues[r["id"]]]
+            neufs = [annonces[x] for x in slugs if x not in deja]
             if neufs:
                 nouveautes.append(((r.get("client") or {}).get("nom", ""), neufs))
-        await asyncio.to_thread(s.etats.ecrire, numero, "recherches_vues", apres)
         if not nouveautes:
+            await asyncio.to_thread(s.etats.ecrire, numero, "recherches_vues", apres)
             return None
         texte = texte_nouveautes(nouveautes)
         n = sum(len(b) for _, b in nouveautes)
@@ -114,4 +119,6 @@ class SuiviRecherches:
                 await s.conversations.envoyer_de_soi_meme(numero, [{"texte": texte}], "rapprochement", [annonce])
         else:
             await s.exp.texte(numero, texte)
+        # Notés vus seulement une fois le message parti : un envoi en échec les signale au passage suivant.
+        await asyncio.to_thread(s.etats.ecrire, numero, "recherches_vues", apres)
         return texte

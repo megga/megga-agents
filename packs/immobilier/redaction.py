@@ -92,7 +92,10 @@ class Redactrice:
         entière, puis les faits. Avant, l'agent ne voyait que « PDF reçu » (demande d'un courtier, 16.11.2026)."""
         if len(pdf) > PDF_LU_MAX:
             raise ValueError("PDF trop lourd pour être lu (20 Mo au plus) : demande les textes au courtier")
-        r = await self._le_client().messages.create(
+        client = self._le_client()
+        # Une plaquette scannée se lit lentement : un délai à elle, plus long que les 90 s des autres appels.
+        client = client.with_options(timeout=300) if hasattr(client, "with_options") else client
+        r = await client.messages.create(
             model=self.modele, max_tokens=8000, system=CONSIGNE_PDF,
             messages=[{"role": "user", "content": [
                 {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": base64.b64encode(pdf).decode()}},
@@ -102,6 +105,8 @@ class Redactrice:
         texte = "".join(getattr(b, "text", "") for b in r.content).strip()
         if not texte:
             raise ValueError("PDF illisible")
+        if getattr(r, "stop_reason", None) == "max_tokens":
+            texte += "\n\n(Document long : la transcription s'arrête ici. Dis-le au courtier s'il manque la fin.)"
         return texte
 
 

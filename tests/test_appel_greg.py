@@ -142,3 +142,52 @@ def test_le_message_des_nouveautes():
     t = texte_nouveautes([("M. Dupont", biens)])
     assert "10 nouveaux biens correspondent" in t and "Et 2 de plus" in t and t.endswith("Je prépare un message pour l'un d'eux ?")
     assert "—" not in t and "·" not in t
+
+
+# Relecture du 16.11.2026
+
+def test_un_envoi_en_echec_ne_perd_pas_les_nouveautes(alix):
+    _, s, site, exp, _ = alix
+    suivi = SuiviRecherches(s)
+    run(suivi.passer(GREG))  # premier passage : vu, rien envoyé
+    site.recherches[0]["biens"].append("marbella-villa-olie")
+    envoyer = exp.texte
+
+    async def panne(*a):
+        raise RuntimeError("Meta en panne")
+
+    exp.texte = panne
+    with pytest.raises(RuntimeError):
+        run(suivi.passer(GREG))
+    exp.texte = envoyer
+    assert "Villa andalouse" in run(suivi.passer(GREG))  # pas perdu : redit au passage suivant
+    assert run(suivi.passer(GREG)) is None
+
+
+def test_un_bien_masque_puis_reaffiche_n_est_pas_nouveau(alix):
+    _, s, site, exp, _ = alix
+    suivi = SuiviRecherches(s)
+    run(suivi.passer(GREG))
+    site.recherches[0]["biens"] = []  # réponse incomplète, ou bien masqué
+    assert run(suivi.passer(GREG)) is None
+    site.recherches[0]["biens"] = ["cologny-villa-lac"]
+    assert run(suivi.passer(GREG)) is None and exp.envois == []
+
+
+def test_une_recherche_creee_est_vue_tout_de_suite(alix):
+    o, s, site, exp, _ = alix
+    run(o["recherche_client"](Tour(GREG, "t1"), client={"nom": "M. Dupont"}))  # r1 : cologny-villa-lac, déjà dit
+    site.recherches = [{"id": "r1", "courtier": "greg", "client": {"nom": "M. Dupont"}, "biens": ["cologny-villa-lac", "marbella-villa-olie"]}]
+    t = run(SuiviRecherches(s).passer(GREG))
+    assert "Villa andalouse" in t and "Villa contemporaine" not in t
+
+
+def test_la_lecture_coupee_le_dit():
+    class Client:
+        def __init__(self):
+            self.messages = self
+
+        async def create(self, **k):
+            return type("R", (), {"content": [type("B", (), {"text": "Description\nUne villa"})()], "stop_reason": "max_tokens"})()
+
+    assert "la transcription s'arrête ici" in run(Redactrice("cle", "Agence", client=Client()).lire_pdf(b"%PDF"))
