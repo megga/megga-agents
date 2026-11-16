@@ -6,7 +6,7 @@
 	}
 	handle /api/messages {
 		request_body {
-			max_size 16KB
+			max_size 16KiB
 		}
 		reverse_proxy agent:8080
 	}

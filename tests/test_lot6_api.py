@@ -134,12 +134,59 @@ def test_le_debit_par_cle(sqlite):
 def test_le_debit_par_personne(sqlite):
     t, agent, _, app = agent_api(sqlite)
     app.state.conversations.debit = Debit(maximum=1, fenetre=600)
-    _, entete = nouvelle_cle(sqlite)
+    _, entete = nouvelle_cle(sqlite, par_minute=3)
     assert t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "x"}).status_code == 200
-    r = t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "y"})
-    assert r.status_code == 429 and r.headers["retry-after"] == "60"
+    # L'attente dite est la vraie (la fenêtre de la personne est de 10 minutes), et le refus n'est pas noté
+    for _ in range(3):
+        r = t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "encore"})
+        assert r.status_code == 429 and r.json()["erreur"] == "trop de messages pour cette personne"
+        assert 590 <= int(r.headers["retry-after"]) <= 600
+    asyncio.run(attendre(app)())
+    assert [m["texte"] for m in stockage.Fil(sqlite).messages("api:dossier:p1")] == ["x", "Bonjour, je suis Alix."]
+    # Les refus pour la personne n'usent pas le débit de la clé (3 par minute) : les autres passent
     assert t.post("/api/messages", headers=entete, json={"personne": "p2", "texte": "x"}).status_code == 200
-    assert len(agent.appels) == 2
+    assert t.post("/api/messages", headers=entete, json={"personne": "p3", "texte": "x"}).status_code == 200
+    assert t.post("/api/messages", headers=entete, json={"personne": "p4", "texte": "x"}).status_code == 429
+    assert len(agent.appels) == 3
+
+
+def test_le_debit_libre_et_attente():
+    d = Debit(maximum=2, fenetre=60)
+    assert d.libre("a", 0) and d.attente("a", 0) == 1
+    assert d.permis("a", 0) and d.permis("a", 10)
+    assert not d.libre("a", 20) and not d.libre("a", 20)  # regarder ne compte pas
+    assert d.attente("a", 20) == 40
+    assert d.libre("a", 61) and d.attente("a", 61) == 1
+
+
+def test_sans_whatsapp_rien_ne_part():
+    from noyau.whatsapp import SansWhatsApp
+
+    exp = SansWhatsApp()
+    for appel in (exp.texte("p", "x"), exp.modele("p", "m", "fr", []), exp.lu("w"), exp.reaction("p", "w", ""),
+                  exp.vocal("p", b"", True), exp.telecharger("m")):
+        with pytest.raises(RuntimeError, match="WhatsApp"):
+            asyncio.run(appel)
+    assert not hasattr(exp, "autre")
+
+
+def test_avec_l_api_d_agentos_nos_routes_restent_ouvertes(sqlite):
+    """JWT_VERIFICATION_KEY ouvre l'API d'AgentOS, gardée par jeton ; nos routes gardent leur propre garde."""
+    from agno.agent import Agent
+
+    from test_lot5 import FauxModele
+
+    agent = Agent(id="exemple", model=FauxModele(), telemetry=False)
+    _, entete = nouvelle_cle(sqlite)
+    app = creer({"CLIENT_CONFIG": json.dumps(CONF), "DATABASE_URL": sqlite, "INTERNE_TOKEN": "interne", "META_APP_SECRET": "s",
+                 "JWT_VERIFICATION_KEY": "cle-publique-essai"}, agent=agent, expediteur=FauxExpediteur())
+    t = TestClient(app)
+    assert t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "Bonjour"}).status_code == 200
+    assert t.get("/sante").status_code == 200
+    assert t.post("/whatsapp", content=b"{}").text == "signature"  # la garde de Meta, pas celle d'AgentOS
+    assert t.get("/interne/cles", headers={"x-megga-interne": "interne"}).status_code == 200
+    assert t.get("/interne/suivi/conversations/api%3Adossier%3Ap1", headers={"x-megga-interne": "interne"}).status_code == 200
+    assert t.get("/agents").status_code == 401  # l'API d'AgentOS demande son jeton
 
 
 def test_un_tour_en_echec(sqlite):
@@ -313,10 +360,13 @@ def test_un_client_sans_whatsapp_dans_l_atelier(atelier):
 def test_l_image_precedente_ne_recoit_pas_de_configuration_sans_whatsapp():
     from atelier.app import trop_ancienne
 
-    assert trop_ancienne("0.2.0", configuration.SANS_WHATSAPP_DEPUIS)
-    assert not trop_ancienne("0.3.0", configuration.SANS_WHATSAPP_DEPUIS)
-    assert not trop_ancienne("1.0.0", configuration.SANS_WHATSAPP_DEPUIS)
-    assert not trop_ancienne(None, configuration.SANS_WHATSAPP_DEPUIS)  # inconnue : l'installation jugera
+    minimum = configuration.SANS_WHATSAPP_SCHEMA
+    assert minimum == stockage.SCHEMA_VERSION  # l'image de ce code sert une configuration sans WhatsApp
+    assert trop_ancienne({"version": "0.2.0", "schema": 1}, minimum)
+    assert not trop_ancienne({"version": "0.2.0", "schema": 2}, minimum)  # le numéro de version n'y fait rien
+    assert not trop_ancienne({"version": "0.4.0", "schema": 3}, minimum)
+    for inconnu in (None, {}, {"schema": None}, {"schema": "1"}, {"schema": True}):
+        assert not trop_ancienne(inconnu, minimum)  # inconnu : l'installation jugera
 
 
 # La base : la personne s'élargit (migration 2), lisible par l'image précédente

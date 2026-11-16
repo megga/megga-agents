@@ -76,7 +76,7 @@ Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée 
 
 Un logiciel du client parle à son agent sans WhatsApp, à l'adresse `https://api.megga.ai/api/<client>/messages` (`docs/api.md`, pour le développeur). Les clés se créent ici pour un client servi par la porte : l'atelier tire la clé, la rend une seule fois, et n'en envoie que l'empreinte (SHA-256) au conteneur du client, par la porte. L'empreinte est gardée dans la base du client (`megga_cles_api`), jamais dans l'atelier : une clé se vérifie là où elle sert, se retire sans redémarrage, et suit le client s'il déménage. Hors Cloudflare, l'atelier refuse (`409`) : les clés se créent sur l'installation (`python -m noyau.cles`), rien n'entrant chez le client.
 
-Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `whatsapp`, et l'annuaire pas de numéro. Hors Cloudflare, une telle version n'est pas envoyée à une installation qui sert une image d'avant 0.3.0 (elle exigerait un numéro).
+Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `whatsapp`, et l'annuaire pas de numéro. Hors Cloudflare, une telle version n'est pas envoyée à une installation dont l'agent sert une image d'avant ce lot (nos tables en version 1, d'après son dernier relevé) : elle exigerait un numéro.
 
 ## Le suivi
 

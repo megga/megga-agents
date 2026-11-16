@@ -315,14 +315,21 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return erreur(400, "personne : un identifiant de 1 à 40 caractères (lettres, chiffres, . _ -), avec au moins une lettre ; jamais un numéro de téléphone")
         if not isinstance(texte, str) or not texte.strip() or len(texte) > entree_api.TEXTE_MAX:
             return erreur(400, f"texte : de 1 à {entree_api.TEXTE_MAX} caractères")
-        if not debit_cles.permis(cle):
-            conversations._noter_journal("api_debit", detail=cle["id"])
-            attente = debit_cles.attente(cle)
-            return erreur(429, "trop de messages pour cette clé", attente=attente, entetes={"retry-after": str(attente)})
-        tour = await conversations.repondre_api(entree_api.personne_interne(cle["logiciel"], personne), texte.strip())
-        if tour is None:
-            conversations._noter_journal("api_debit", detail="personne")
-            return erreur(429, "trop de messages pour cette personne", attente=60, entetes={"retry-after": "60"})
+        qui = entree_api.personne_interne(cle["logiciel"], personne)
+
+        def trop(de: str, attente: int) -> JSONResponse:
+            conversations.noter_journal("api_debit", detail=cle["id"] if de == "clé" else "personne")
+            return erreur(429, f"trop de messages pour cette {de}", attente=attente, entetes={"retry-after": str(attente)})
+
+        # Les deux débits sont regardés avant d'en compter aucun : un refus n'use pas l'autre.
+        if not debit_cles.libre(cle):
+            return trop("clé", debit_cles.attente(cle))
+        if not conversations.debit.libre(qui):
+            return trop("personne", conversations.debit.attente(qui))
+        debit_cles.permis(cle)
+        tour = await conversations.repondre_api(qui, texte.strip())
+        if tour is None:  # une autre requête de la même personne est passée entre-temps
+            return trop("personne", conversations.debit.attente(qui))
         reponse, echec = tour
         if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse
             return erreur(503, "l'agent n'a pas pu répondre", reponse=reponse)
@@ -441,9 +448,15 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     if env.get("JWT_VERIFICATION_KEY"):
         from agno.os import AgentOS
+        from agno.os.authz import Authorization
 
         os.environ.setdefault("JWT_VERIFICATION_KEY", env["JWT_VERIFICATION_KEY"])
-        return AgentOS(agents=[agent], base_app=app, authorization=True, telemetry=False).get_app()
+        # Le jeton d'AgentOS ne protège que l'API d'AgentOS : nos routes ont leur propre garde (signature
+        # de Meta, clé du logiciel, jeton interne), et /sante sert aux sondes.
+        propres = [r.path for r in app.routes if hasattr(r, "path")]
+        exclues = sorted({p.split("{", 1)[0] + "*" if "{" in p else p for p in propres})
+        return AgentOS(agents=[agent], base_app=app, authorization=Authorization(excluded_route_paths=exclues),
+                       telemetry=False).get_app()
     return app
 
 

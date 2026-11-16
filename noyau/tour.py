@@ -146,12 +146,12 @@ class Conversations:
             sortie = await self.agent.arun(entendu, user_id=personne, session_id=personne)
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
-                self._noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
+                self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
                 return EXCUSE, True
             return getattr(sortie, "content", None) or "", False
         except Exception as e:
             log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
-            self._noter_journal("tour_echec", detail=type(e).__name__)
+            self.noter_journal("tour_echec", detail=type(e).__name__)
             return EXCUSE, True
 
     async def repondre_api(self, personne: str, texte: str) -> tuple[str, bool] | None:
@@ -159,17 +159,17 @@ class Conversations:
 
         Pas de regroupement d'attente (le logiciel envoie un message entier), pas de rappels. Les tours d'une
         même personne passent l'un après l'autre. Rend (réponse, échec), ou None si le débit de la personne
-        est dépassé.
+        est dépassé : rien n'est alors noté, le logiciel renverra le même message.
         """
         lance = asyncio.current_task()
         if lance is not None:  # un arrêt en douceur attend aussi les tours par API
             self.taches.add(lance)
         try:
             async with self._verrous.setdefault(personne, asyncio.Lock()):
-                await self._sans_echec(self._noter(personne, time.time()))
-                self._noter_fil(personne, "recu", "texte", texte)
                 if not self.debit.permis(personne):
                     return None
+                await self._sans_echec(self._noter(personne, time.time()))
+                self._noter_fil(personne, "recu", "texte", texte)
                 brute, echec = await self._executer(personne, texte)
                 reponse = nettoyer(masquer_secrets(brute))
                 self._noter_fil(personne, "envoye", "texte", reponse)
@@ -183,24 +183,24 @@ class Conversations:
             return ""
         try:
             texte = await self.voie.transcrire(await self.exp.telecharger(media_id))
-            self._noter_journal("vocal_entendu")
+            self.noter_journal("vocal_entendu")
             return texte
         except Exception as e:
             log.error("vocal illisible (%s) : %s", self.conf.id, str(e)[:200])
-            self._noter_journal("vocal_illisible", detail=type(e).__name__)
+            self.noter_journal("vocal_illisible", detail=type(e).__name__)
             return ""
 
     async def _dire(self, personne: str, reponse: str, entendu: str) -> bool:
         try:
             dit = await pour_la_voix(self.reecrire, nettoyer(reponse), entendu) if self.reecrire else reponse
             audio, ogg = await self.voie.dire(dit)
-            self._noter_journal("voix_caracteres", len(dit))
+            self.noter_journal("voix_caracteres", len(dit))
             await self.exp.vocal(personne, audio, ogg)
             self._noter_fil(personne, "envoye", "vocal", dit)
             return True
         except Exception as e:
             log.error("voix en échec (%s), réponse écrite : %s", self.conf.id, str(e)[:200])
-            self._noter_journal("voix_echec", detail=type(e).__name__)
+            self.noter_journal("voix_echec", detail=type(e).__name__)
             return False
 
     async def _ecrire(self, personne: str, texte: str) -> None:
@@ -210,7 +210,7 @@ class Conversations:
             self._noter_fil(personne, "envoye", "texte", envoye)
         except Exception as e:
             log.error("envoi en échec (%s) : %s", self.conf.id, str(e)[:200])
-            self._noter_journal("envoi_echec", detail=type(e).__name__)
+            self.noter_journal("envoi_echec", detail=type(e).__name__)
 
     def _plus_tard(self, f, *args) -> None:
         """Une écriture de suivi, en arrière-plan : jamais sur le chemin d'une réponse, jamais en échec visible."""
@@ -218,7 +218,7 @@ class Conversations:
 
     # L'heure est prise ici, pas à l'écriture : en arrière-plan, l'ordre du fil resterait sinon au hasard.
 
-    def _noter_journal(self, genre: str, quantite: float = 1, detail: str = "") -> None:
+    def noter_journal(self, genre: str, quantite: float = 1, detail: str = "") -> None:
         if self.journal is not None:
             self._plus_tard(self.journal.noter, genre, quantite, detail, time.time())
 
@@ -269,7 +269,7 @@ class Conversations:
                 bilan[voie] += 1
             except Exception as e:
                 log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
-                self._noter_journal("rappel_echec", detail=type(e).__name__)
+                self.noter_journal("rappel_echec", detail=type(e).__name__)
                 bilan["echec"] += 1
         return {"prochain": await asyncio.to_thread(self.rappels.prochain), **bilan}
 

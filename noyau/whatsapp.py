@@ -184,8 +184,24 @@ class Expediteur:
 class SansWhatsApp:
     """L'expéditeur d'un agent branché seulement par API : rien ne part sur WhatsApp."""
 
-    def __getattr__(self, nom):
-        async def refus(*_a, **_k):
-            raise RuntimeError("cet agent n'a pas de numéro WhatsApp")
+    @staticmethod
+    def _refus():
+        raise RuntimeError("cet agent n'a pas de numéro WhatsApp")
 
-        return refus
+    async def texte(self, vers: str, texte: str) -> dict:
+        self._refus()
+
+    async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:
+        self._refus()
+
+    async def reaction(self, vers: str, message_id: str, emoji: str) -> dict:
+        self._refus()
+
+    async def lu(self, message_id: str) -> dict:
+        self._refus()
+
+    async def vocal(self, vers: str, audio: bytes, ogg: bool) -> dict:
+        self._refus()
+
+    async def telecharger(self, media_id: str, maximum: int = MEDIA_MAX) -> bytes:
+        self._refus()

@@ -82,7 +82,7 @@ from noyau import api as entree_api
 from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
-from noyau.config import SANS_WHATSAPP_DEPUIS, Config
+from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
 from . import gabarits, regles
@@ -99,12 +99,11 @@ ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 CONVERSATION = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
-def trop_ancienne(version, minimum: tuple[int, ...]) -> bool:
-    """Une version d'image connue (« 0.2.0 ») d'avant ce minimum ; inconnue ou illisible : on ne sait pas, faux."""
-    try:
-        return tuple(int(x) for x in str(version).split(".")[:3]) < minimum
-    except ValueError:
-        return False
+def trop_ancienne(agent: dict | None, schema_minimum: int) -> bool:
+    """L'agent d'une installation, d'après son dernier relevé, sert-il une image d'avant ce schéma de nos tables ?
+    Inconnu (pas de relevé, agent muet) : on ne sait pas, faux ; l'installation jugera l'ordre elle-même."""
+    schema = (agent or {}).get("schema")
+    return isinstance(schema, int) and not isinstance(schema, bool) and schema < schema_minimum
 
 
 @dataclass(frozen=True)
@@ -391,9 +390,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
         if conf.whatsapp is None:
             # Deux versions soutenues : l'image précédente exige un numéro et refuserait l'ordre.
-            image = ((await bd(installation_de, ident, courante) or {}).get("agent") or {}).get("version")
-            if trop_ancienne(image, SANS_WHATSAPP_DEPUIS):
-                raise Refus(409, f"l'installation sert l'image {image}, qui exige un numéro WhatsApp : installez d'abord une image récente")
+            agent = (await bd(installation_de, ident, courante) or {}).get("agent")
+            if trop_ancienne(agent, SANS_WHATSAPP_SCHEMA):
+                raise Refus(409, f"l'installation sert l'image {agent.get('version')}, qui exige un numéro WhatsApp : installez d'abord une image récente")
         en_cours = await bd(canal.en_cours, ident, numero)
         if en_cours is not None:
             raise Refus(409, f"l'ordre {en_cours} porte déjà cette version à l'installation")

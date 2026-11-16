@@ -8,6 +8,9 @@ dependencies = [
   "anthropic==2.8.0",
   "openai>=1.0",
   "fastapi==0.163.1",
+  # Pour l'API d'AgentOS (JWT_VERIFICATION_KEY) : sa garde par jeton et ses formulaires.
+  "pyjwt==2.15.1",
+  "python-multipart==0.0.33",
   "uvicorn>=0.30",
   "sqlalchemy[asyncio]==2.1.8",
   "psycopg[binary]>=3.2",

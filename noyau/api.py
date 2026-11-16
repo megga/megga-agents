@@ -17,7 +17,6 @@ from __future__ import annotations
 import hashlib
 import re
 import secrets
-import time
 
 from .garde import Debit
 
@@ -67,17 +66,18 @@ class DebitCles:
     def __init__(self):
         self._debits: dict[str, Debit] = {}
 
-    def permis(self, cle: dict, maintenant: float | None = None) -> bool:
+    def _debit(self, cle: dict) -> Debit:
         d = self._debits.get(cle["id"])
         if d is None or d.maximum != cle["par_minute"]:
             d = self._debits[cle["id"]] = Debit(cle["par_minute"], 60)
-        return d.permis(cle["id"], maintenant)
+        return d
+
+    def libre(self, cle: dict, maintenant: float | None = None) -> bool:
+        return self._debit(cle).libre(cle["id"], maintenant)
+
+    def permis(self, cle: dict, maintenant: float | None = None) -> bool:
+        return self._debit(cle).permis(cle["id"], maintenant)
 
     def attente(self, cle: dict, maintenant: float | None = None) -> int:
         """Les secondes avant qu'un tour se libère (Retry-After)."""
-        d = self._debits.get(cle["id"])
-        q = d._tours.get(cle["id"]) if d else None
-        if not q:
-            return 1
-        maintenant = time.monotonic() if maintenant is None else maintenant
-        return max(1, int(q[0] + 60 - maintenant + 0.999))
+        return self._debit(cle).attente(cle["id"], maintenant)
