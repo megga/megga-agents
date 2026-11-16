@@ -37,11 +37,12 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 `packs/immobilier/annonces.py` : 32 outils, pour le rôle qui a le groupe `annonces` (les gestionnaires), tous au nom du compte de la personne dans la gestion du site. Ce qu'un outil garde d'un tour à l'autre (le brouillon, l'action à confirmer) est dans la base du client (`megga_etats`), pas en mémoire : un conteneur endormi ne perd rien.
 - **Lire** : `lister_annonces`, `voir_annonce`, `chercher_biens` (budget, chambres, surface, communes, type, équipements, mots).
 - **Créer** : `preparer_annonce` rassemble les faits (ce qui est déjà dit est gardé), fait rédiger les textes par Claude d'après les mots du courtier et ses photos (`redaction.py`), et montre le brouillon ; `creer_annonce` ne le crée qu'au message suivant, puis range les photos et la plaquette PDF.
-- **Modifier** : `modifier_annonce`, `reecrire_annonce` (à confirmer) ; `masquer_annonce`, `supprimer_annonce`, toujours à confirmer : `confirmer_action` refuse dans le tour même qui a préparé, et au-delà de 15 minutes (une action abandonnée ne se rejoue pas ; de même un brouillon prêt et un envoi à un contact).
+- **Modifier** : `modifier_annonce` et `reecrire_annonce`, à confirmer (l'outil dit ce qui va changer, prix compris) ; `masquer_annonce`, `supprimer_annonce`, toujours à confirmer : `confirmer_action` refuse dans le tour même qui a préparé, et au-delà de 15 minutes (une action abandonnée ne se rejoue pas ; de même un brouillon prêt et un envoi à un contact).
 - **Garde-fous** (`garde.py`) : ni tiret long ni point médian ; jamais un nom de `gestion.noms_interdits` ni une consigne (« PDF », « brouillon ») dans un texte ; un titre ni trop court ni une liste de mots.
 - **Photos et documents** : `ajouter_photos`, `couverture_photo`, `ordonner_photos`, `retirer_photos`, `ajouter_document`, d'après les médias reçus (« média 3 ») et les numéros de `voir_annonce`.
 - **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
-- **Vidéos** : `ajouter_video` (par lien), `envoyer_video`, `retirer_video`.
+- **Vidéos** : `ajouter_video` (par lien, à confirmer), `envoyer_video`, `retirer_video`.
+- **À confirmer aussi** (décidé par Julien, 16.11.2026) : `retirer_photos`, et `supprimer_recherche_client` (`confirmer_action` avec « recherche-<id> »). Rien de ce qui change le site public ou la gestion ne se fait d'un seul appel.
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
 - **Clients** : `recherche_client`, `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
 

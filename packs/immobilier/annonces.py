@@ -48,6 +48,7 @@ CONSIGNES = """Les annonces du site (outils d'annonces) :
 - N'invente jamais un prix, une surface, une adresse ni un équipement.
 - Créer une annonce : rassemble seulement ce qui manque (commune, type, vente ou location, prix, adresse ; le quartier pour un site à part), en une seule question. Appelle preparer_annonce avec les faits, les médias (la couverture d'abord) et les mots du courtier (notes) ; n'écris les textes toi-même que s'il te les dicte. Montre le brouillon tel que l'outil le rend, et n'appelle creer_annonce qu'à son oui, au message suivant. Pour une correction, rappelle preparer_annonce avec le seul changement ; pour « réécris la description », ajoute rediger.
 - Réécrire une annonce en ligne : reecrire_annonce, puis confirmer_action au message suivant, après son oui.
+- Modifier une annonce (textes, prix, référence), retirer des photos, ajouter une vidéo et supprimer la recherche d'un client se préparent aussi : l'outil dit ce qui va changer, redis-le, et n'appelle confirmer_action qu'au message suivant, après son oui.
 - Masquer, afficher ou supprimer passent toujours par confirmer_action, au message suivant, après un oui explicite. « Cacher », « masquer » : masquer_annonce ; « verrouiller » : acces_annonce. Supprimer seulement s'il dit « définitivement » ; dans le doute, masquer.
 - Les photos se rangent dans l'ordre reçu ; leurs numéros changent après chaque retouche : relis-les avec voir_annonce.
 - Un PDF : ajouter_document, avec des titres courts en français et en anglais (« Plaquette », « Brochure »).
@@ -304,7 +305,8 @@ def outils(s: Services) -> list:
     async def modifier_annonce(slug: str, run_context: RunContext, titre: str = "", titre_en: str = "", accroche: str = "",
                                accroche_en: str = "", description: str = "", description_en: str = "", reference: str = "",
                                prix: dict | None = None) -> str:
-        """Modifie les textes, la référence ou le prix d'une annonce en ligne (vide : inchangé).
+        """Prépare de modifier les textes, la référence ou le prix d'une annonce en ligne (vide : inchangé) ; rien ne
+        change avant confirmer_action, à son oui, au message suivant.
 
         Args:
             slug: l'identifiant de l'annonce.
@@ -317,7 +319,7 @@ def outils(s: Services) -> list:
             reference: la nouvelle référence (40 caractères au plus).
             prix: {montant (entier), devise CHF|EUR|AED} ou {sur_demande: true}.
         """
-        _, compte = qui(run_context)
+        personne, compte = qui(run_context)
         textes = garde.nettoyer({"titre": titre, "titre_en": titre_en, "accroche": accroche, "accroche_en": accroche_en,
                                  "description": description, "description_en": description_en})
         champs: dict = {"en": {}}
@@ -339,10 +341,22 @@ def outils(s: Services) -> list:
         if not champs:
             raise ValueError("rien à modifier")
         garde.verifier(textes, s.noms_interdits)
-        sha = (await lire(compte, slug)).get("sha")
-        r = await g(compte, "PUT", f"/annonces/{slug}", corps={"sha": sha, "champs": champs})
-        a = r.get("annonce") or {}
-        return f"Annonce enregistrée : {a.get('titre', slug)}, {a.get('prix', '')}. Le site sera à jour dans quelques minutes."
+        a = (await lire(compte, slug)).get("annonce") or {}
+        # Ce qui va changer sur le site public, à confirmer (relecture du 16.11.2026) : une consigne glissée dans un texte
+        # lu ne change plus une annonce en ligne d'un seul appel.
+        preparer(personne, run_context, {"action": "modifier", "slug": slug, "champs": champs})
+        lignes = [f"À confirmer (modifier « {a.get('titre', slug)} ») :"]
+        if "prix" in champs:
+            lignes.append(f"- prix : {a.get('prix', '?')} devient {texte_prix(lire_prix(prix))}")
+        if "reference" in champs:
+            lignes.append(f"- référence : {a.get('reference') or 'aucune'} devient {champs['reference']}")
+        for k, nom in (("titre", "titre"), ("accroche", "accroche"), ("description", "description")):
+            if k in champs:
+                lignes.append(f"- {nom} : « {court(textes[k], 300)} »")
+            if k in champs.get("en", {}):
+                lignes.append(f"- {nom} anglais : « {court(textes[k + '_en'], 300)} »")
+        lignes.append("Redis ce qui va changer, demande un oui explicite, puis confirmer_action au message suivant.")
+        return "\n".join(lignes)
 
     async def preparer_annonce(run_context: RunContext, commune: str = "", categorie: str = "", transaction: str = "",
                                adresse: str = "", quartier: str = "", prix: dict | None = None, surface: int | None = None,
@@ -564,11 +578,13 @@ def outils(s: Services) -> list:
                 "n'appelle confirmer_action qu'au message suivant, après ce oui.")
 
     async def confirmer_action(slug: str, run_context: RunContext) -> str:
-        """Fait l'action préparée (masquer, afficher, supprimer, réécrire, verrouiller, mot de passe), à son oui explicite,
-        au message suivant celui qui l'a préparée.
+        """Fait l'action préparée (modifier, retirer des photos, ajouter une vidéo, masquer, afficher, supprimer, réécrire,
+        verrouiller, mot de passe, supprimer la recherche d'un client), à son oui explicite, au message suivant celui qui
+        l'a préparée.
 
         Args:
-            slug: l'identifiant de l'annonce de l'action préparée (ou « site », ou le préfixe d'un site, pour un mot de passe).
+            slug: l'identifiant de l'annonce de l'action préparée (ou « site », ou le préfixe d'un site, pour un mot de passe ;
+                ou « recherche-<id> » pour la recherche d'un client).
         """
         personne, compte = qui(run_context)
         attente = s.etats.lire(personne, "a_confirmer")
@@ -590,6 +606,22 @@ def outils(s: Services) -> list:
         if action == "supprimer":
             r = await g(compte, "DELETE", f"/annonces/{slug}")
             return f"Annonce « {r.get('titre', slug)} » supprimée. Le site sera à jour dans quelques minutes."
+        if action == "modifier":
+            sha = (await lire(compte, slug)).get("sha")
+            r = await g(compte, "PUT", f"/annonces/{slug}", corps={"sha": sha, "champs": attente["champs"]})
+            a = r.get("annonce") or {}
+            return f"Annonce enregistrée : {a.get('titre', slug)}, {a.get('prix', '')}. Le site sera à jour dans quelques minutes."
+        if action == "retirer des photos":
+            if await photos_annonce(compte, slug) != attente["avant"]:
+                raise ValueError("les photos de l'annonce ont changé depuis : relis-les (voir_annonce) et prépare de nouveau")
+            return await ecrire_photos(compte, slug, attente["avant"], attente["apres"], attente["phrase"])
+        if action == "ajouter une vidéo":
+            v = attente["video"]
+            r = await g(compte, "POST", f"/annonces/{slug}/videos", corps=v)
+            return f"Vidéo « {v['titre']} » ajoutée à l'annonce ({r.get('videos', 1)} vidéo(s)). Visible sur le site dans quelques minutes."
+        if action == "supprimer la recherche":
+            r = await g(compte, "DELETE", f"/clients/recherches/{attente['recherche']}")
+            return f"Recherche de {(r.get('client') or {}).get('nom', 'ce client')} supprimée."
         r = await g(compte, "PUT", f"/annonces/{slug}/visibilite", corps={"masquee": action == "masquer"})
         titre = (r.get("annonce") or {}).get("titre", slug)
         if action == "masquer":
@@ -685,13 +717,13 @@ def outils(s: Services) -> list:
         return await ecrire_photos(compte, slug, avant, [avant[i - 1] for i in ordre], "Les photos sont dans le nouvel ordre.")
 
     async def retirer_photos(slug: str, numeros: list[int], run_context: RunContext) -> str:
-        """Retire des photos d'une annonce.
+        """Prépare de retirer des photos d'une annonce ; confirmer_action à son oui, au message suivant.
 
         Args:
             slug: l'identifiant de l'annonce.
             numeros: les numéros des photos à retirer.
         """
-        _, compte = qui(run_context)
+        personne, compte = qui(run_context)
         avant = await photos_annonce(compte, slug)
         numeros_valides(numeros, len(avant))
         if len(numeros) >= len(avant):
@@ -700,7 +732,9 @@ def outils(s: Services) -> list:
         phrase = f"Photo(s) {', '.join(map(str, sorted(numeros)))} retirée(s), il en reste {len(apres)}."
         if 1 in numeros:
             phrase += " La suivante devient la couverture."
-        return await ecrire_photos(compte, slug, avant, apres, phrase)
+        preparer(personne, run_context, {"action": "retirer des photos", "slug": slug, "avant": avant, "apres": apres, "phrase": phrase})
+        return (f"À confirmer : retirer la ou les photos {', '.join(map(str, sorted(numeros)))} sur {len(avant)}"
+                f"{' (dont la couverture)' if 1 in numeros else ''}. Demande un oui explicite, puis confirmer_action au message suivant.")
 
     # Accès et mots de passe : jamais un mot de passe dans ce que lit le modèle
 
@@ -842,7 +876,8 @@ def outils(s: Services) -> list:
     # Vidéos
 
     async def ajouter_video(slug: str, lien: str, titre: str, titre_en: str, run_context: RunContext) -> str:
-        """Ajoute à une annonce une vidéo par son lien (YouTube, Vimeo, une adresse https).
+        """Prépare d'ajouter à une annonce une vidéo par son lien (YouTube, Vimeo, une adresse https) ; confirmer_action à
+        son oui, au message suivant.
 
         Args:
             slug: l'identifiant de l'annonce.
@@ -850,11 +885,14 @@ def outils(s: Services) -> list:
             titre: un titre court en français.
             titre_en: le même en anglais.
         """
-        _, compte = qui(run_context)
+        personne, compte = qui(run_context)
         if not re.fullmatch(r"https://\S{4,500}", lien or ""):
             raise ValueError("lien : une adresse https. Une vidéo reçue en fichier se range pour l'instant depuis la gestion du site.")
-        r = await g(compte, "POST", f"/annonces/{slug}/videos", corps={"lien": lien, "titre": titre[:120], "titre_en": titre_en[:120]})
-        return f"Vidéo « {titre} » ajoutée à l'annonce ({r.get('videos', 1)} vidéo(s)). Visible sur le site dans quelques minutes."
+        a = (await lire(compte, slug)).get("annonce") or {}
+        preparer(personne, run_context, {"action": "ajouter une vidéo", "slug": slug, "video": {"lien": lien, "titre": titre[:120],
+                                                                                              "titre_en": titre_en[:120]}})
+        return (f"À confirmer : ajouter à « {a.get('titre', slug)} » la vidéo « {court(titre, 120)} », lien {lien}. Redis le lien, "
+                "demande un oui explicite, puis confirmer_action au message suivant.")
 
     async def retirer_video(slug: str, numero: int, run_context: RunContext) -> str:
         """Retire une vidéo d'une annonce.
@@ -1121,14 +1159,17 @@ def outils(s: Services) -> list:
                          f" (slug {b.get('slug')})" for b in biens)
 
     async def supprimer_recherche_client(id: str, run_context: RunContext) -> str:
-        """Supprime la recherche d'un client.
+        """Prépare de supprimer la recherche d'un client ; confirmer_action (slug « recherche-<id> ») à son oui.
 
         Args:
             id: l'identifiant de la recherche.
         """
-        _, compte = qui(run_context)
-        r = await g(compte, "DELETE", f"/clients/recherches/{id}")
-        return f"Recherche de {(r.get('client') or {}).get('nom', 'ce client')} supprimée."
+        personne, _ = qui(run_context)
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", str(id or "")):
+            raise ValueError("id : l'identifiant d'une recherche (lister_recherches_clients)")
+        preparer(personne, run_context, {"action": "supprimer la recherche", "slug": f"recherche-{id}", "recherche": id})
+        return (f"À confirmer : supprimer la recherche {id}. Demande un oui explicite, puis confirmer_action (slug « recherche-{id} ») "
+                "au message suivant.")
 
     async def lire_bien_prive(slug: str, run_context: RunContext) -> str:
         """Les informations privées d'un bien : propriétaire, mandat, recherches de clients qui y correspondent.

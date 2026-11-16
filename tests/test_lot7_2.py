@@ -235,7 +235,12 @@ def test_les_garde_fous(alix):
     with pytest.raises(ValueError, match="rien à modifier"):
         run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1")))
     r = run(o["modifier_annonce"]("cologny-villa-lac", Tour(GREG, "t1"), titre="Villa lumineuse — face au lac", prix={"sur_demande": True}))
-    assert "Annonce enregistrée" in r
+    # Rien ne change avant son oui, au message suivant (relecture du 16.11.2026)
+    assert r.startswith("À confirmer (modifier") and "prix : CHF 9’500’000 devient" in r and "« Villa lumineuse, face au lac »" in r
+    assert site.annonces["cologny-villa-lac"]["titre"] == "Villa contemporaine avec vue sur le lac"
+    with pytest.raises(ValueError, match="pas encore répondu"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t1")))
+    assert "Annonce enregistrée" in run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
     assert site.annonces["cologny-villa-lac"]["titre"] == "Villa lumineuse, face au lac"
     assert site.annonces["cologny-villa-lac"]["prix"] == {"surDemande": True}
     assert garde.problemes({"titre": "Une belle villa au bord du lac"}) == []
@@ -283,7 +288,15 @@ def test_les_photos_d_une_annonce(alix):
     with pytest.raises(ValueError, match="au moins une photo"):
         run(o["retirer_photos"]("cologny-villa-lac", [1, 2, 3], t))
     r = run(o["retirer_photos"]("cologny-villa-lac", [1], t))
-    assert "il en reste 2" in r and "devient la couverture" in r
+    assert r.startswith("À confirmer : retirer la ou les photos 1 sur 3 (dont la couverture)")
+    assert len(site.annonces["cologny-villa-lac"]["photos"]) == 3  # rien avant son oui
+    r = run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
+    assert "il en reste 2" in r and "devient la couverture" in r and len(site.annonces["cologny-villa-lac"]["photos"]) == 2
+    # Les photos ont changé entre la préparation et le oui : rien n'est retiré à l'aveugle
+    run(o["retirer_photos"]("cologny-villa-lac", [1], Tour(GREG, "t3")))
+    run(o["couverture_photo"]("cologny-villa-lac", 2, Tour(GREG, "t3")))
+    with pytest.raises(ValueError, match="ont changé"):
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t4")))
 
 
 def test_un_mot_de_passe_ne_passe_jamais_par_le_modele(alix):
@@ -413,3 +426,25 @@ def test_les_mineurs_des_regles_et_du_catalogue():
     assert refusee("Ne jamais afficher le mot de passe") is None
     biens = lire_biens([{"ref": "A", "titre": "Villa", "transaction": "vente", "commune": "Cologny"}, "pas un bien", 42])
     assert [b.ref for b in biens] == ["A"]
+
+
+def test_une_video_et_une_recherche_se_confirment(alix):
+    """Relecture du 16.11.2026 : ajouter une vidéo (un lien sur le site public) et supprimer la recherche d'un client
+    attendent un oui, au message suivant."""
+    o, site, *_ = alix
+    r = run(o["ajouter_video"]("cologny-villa-lac", "https://www.youtube.com/watch?v=abc", "Visite", "Tour", Tour(GREG, "t1")))
+    assert r.startswith("À confirmer : ajouter à « Villa contemporaine") and "https://www.youtube.com/watch?v=abc" in r
+    assert not [a for a in site.appels if a[0] == "POST" and a[1].endswith("/videos")]
+    with pytest.raises(ValueError, match="route inconnue POST /annonces/cologny-villa-lac/videos"):  # le faux site n'a pas de vidéos
+        run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))  # mais l'appel part, après le oui
+    r = run(o["supprimer_recherche_client"]("r1", Tour(GREG, "t3")))
+    assert "confirmer_action (slug « recherche-r1 »)" in r
+    assert not [a for a in site.appels if a[0] == "DELETE" and "/clients/recherches/" in a[1]]
+    with pytest.raises(ValueError, match="identifiant d'une recherche"):
+        run(o["supprimer_recherche_client"]("r1/../x", Tour(GREG, "t3")))
+    run(o["supprimer_recherche_client"]("r1", Tour(GREG, "t3")))
+    try:
+        run(o["confirmer_action"]("recherche-r1", Tour(GREG, "t4")))
+    except ValueError:
+        pass  # le faux site ne connaît peut-être pas la route : seul compte que l'appel parte, après le oui
+    assert [a for a in site.appels if a[0] == "DELETE" and a[1] == "/clients/recherches/r1"]
