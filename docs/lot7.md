@@ -55,6 +55,10 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 - `fiche_pdf` : la fiche d'une annonce du site (par son identifiant ou sa référence) ou d'un bien qui n'y est pas (ses photos reçues et ce qu'en dit le courtier, les textes rédigés au besoin) ; anonyme par défaut (ni contact, ni référence, ni ligne qui nomme la marque), de marque sur demande, sans prix pour un partenaire (aucun montant nulle part, « 4.5 M CHF » et « 4’500’000 » compris, et l'adresse réduite à la commune), en français ou en anglais ; Claude choisit la couverture et les plus belles photos (`redaction.Choisisseuse`, à la place de Gemini), sauf s'il faut garder l'ordre. Le PDF part dans la conversation.
 - `photos_du_pdf` : les photos d'une plaquette PDF reçue (ni petites, ni allongées, ni grises, ni en double ; en JPEG tel quel ou en PNG refait), qui deviennent des médias comme des photos reçues (`pdf:<média du PDF>#<rang>`), reprises du PDF quand un outil s'en sert.
 
+## Le journal des conversations (16.11.2026)
+
+Le courtier demande « avec qui as-tu parlé aujourd'hui ? » : l'outil `activite` (groupe visiteurs) liste les personnes qui ont écrit (la table `megga_contacts`, qui garde désormais leur nom WhatsApp, colonne `nom` ajoutée d'elle-même), avec leur numéro, leur rôle et ce qu'elles ont écrit (le fil, `megga_fil`) ; `qui` donne le détail d'une personne. Ni les gestionnaires, ni les logiciels par API. La page « Alix » de la gestion reste à faire : elle lira la même chose par une route du socle.
+
 ## 7.4 Les partenaires et les visiteurs
 
 Quatre groupes d'outils de plus, par rôle (`Role.outils`) ; ceux qui agissent au nom d'un compte de gestion (`annonces`, `partenaires`, `visiteurs`) ne vont qu'au rôle gestionnaire, la configuration refuse le reste.
