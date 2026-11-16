@@ -440,11 +440,13 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     # L'entrée par API : les clés des logiciels
 
     def cles_par_porte(qui: Identite, ident: str) -> None:
-        client_de(qui, ident)
+        c = client_de(qui, ident)
         if zone_de(ident) not in regles.ZONES_PORTE:
             raise Refus(409, "hors Cloudflare, les clés se créent chez le client : python -m noyau.cles creer <logiciel> (docs/api.md)")
         if porte is None:
             raise Refus(503, "porte non réglée (PORTE_URL)")
+        if c.get("current_version") is None:
+            raise Refus(409, "mettez d'abord une version de l'agent en service : ses clés se gardent dans sa base")
 
     async def appel_cles(ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
         try:
@@ -469,7 +471,14 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             debit = entree_api.par_minute(corps.get("par_minute"))
         except ValueError as e:
             raise Refus(400, str(e)) from e
+        if qui.role == "client" and debit > entree_api.PAR_MINUTE:
+            # Le débit protège la facture des modèles : au-delà du débit par défaut, c'est à MEGGA de le régler.
+            raise Refus(403, f"par_minute : au plus {entree_api.PAR_MINUTE} ; davantage se demande à MEGGA")
         await bd(cles_par_porte, qui, ident)
+        if qui.role == "client":
+            en_service = [c for c in (await appel_cles(ident)).get("cles", []) if not c.get("retiree")]
+            if len(en_service) >= entree_api.CLES_CLIENT_MAX:
+                raise Refus(409, f"{entree_api.CLES_CLIENT_MAX} clés en service au plus : retirez-en une, ou demandez à MEGGA")
         cle_id, cle, empreinte = entree_api.nouvelle_cle()
         await appel_cles(ident, "POST", corps={"id": cle_id, "logiciel": logiciel, "empreinte": empreinte, "par_minute": debit})
         log.info("clé %s créée pour %s (%s, %s)", cle_id, ident, logiciel, qui.role)

@@ -19,7 +19,7 @@ L'adresse :
 - hébergé par MEGGA : `https://api.megga.ai/api/<client>/messages` (`<client>` : l'identifiant donné par MEGGA) ; en secours, `https://megga-agents.api-963.workers.dev/api/<client>/messages` ;
 - installé chez le client : `https://<son-domaine>/api/messages`.
 
-La réponse arrive dans la même requête, une fois le tour de l'agent fini : quelques secondes, parfois plus de 30. Prévoir un délai d'attente de 120 secondes.
+La réponse arrive dans la même requête, une fois le tour de l'agent fini : quelques secondes, parfois plus de 30. L'agent abandonne un tour au bout de 110 secondes (`503`, avec l'excuse) : prévoir un délai d'attente de 120 secondes.
 
 ## Les champs
 
@@ -51,7 +51,7 @@ Toujours en JSON : `{"erreur": "..."}`.
 
 ## Les limites
 
-- Par clé : 30 messages par minute par défaut (réglable à la création, de 1 à 600).
+- Par clé : 30 messages par minute par défaut ; MEGGA peut en régler davantage, jusqu'à 600.
 - Par personne : 20 messages par 10 minutes, comme sur WhatsApp.
 - Les messages d'une même personne passent l'un après l'autre : ne pas en envoyer un second avant la réponse au premier.
 - Pas encore : les vocaux, la réponse au fil de l'eau, les rappels (l'agent dit qu'il ne peut pas en programmer ici).

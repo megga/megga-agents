@@ -328,7 +328,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return trop("personne", conversations.debit.attente(qui))
         debit_cles.permis(cle)
         tour = await conversations.repondre_api(qui, texte.strip())
-        if tour is None:  # une autre requête de la même personne est passée entre-temps
+        if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue
+            debit_cles.rendre(cle)
             return trop("personne", conversations.debit.attente(qui))
         reponse, echec = tour
         if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse

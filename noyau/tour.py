@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from dataclasses import dataclass, field
 
+from .api import DELAI_TOUR
 from .config import Config
 from .garde import TROP, Debit, masquer_secrets
 from .oral import pour_la_voix
@@ -29,6 +31,7 @@ log = logging.getLogger("megga")
 EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que possible."
 NON_COMPRIS = "Je n'ai pas pu écouter ce vocal. Pouvez-vous me l'écrire ?"
 REGARD = "\U0001F440"
+REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
 
 
 def en_echec(sortie) -> bool:
@@ -47,7 +50,7 @@ class Conversations:
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
-                 journal=None, fil=None):
+                 journal=None, fil=None, delai_api: float = DELAI_TOUR):
         self.conf = conf
         self.agent = agent
         self.exp = expediteur
@@ -58,13 +61,16 @@ class Conversations:
         self.seuil_regard = seuil_regard
         self.rappels = rappels
         self.debit = debit or Debit()
+        # Un tour par API ne retient pas la personne plus longtemps que le logiciel n'attend.
+        self.delai_api = delai_api
         # Le suivi, écrit en arrière-plan : il ne retarde ni ne fait échouer un tour.
         # Le journal (stockage.Journal) : échecs et volumes de voix, jamais de texte.
         # Le fil (stockage.Fil) : les messages tels que la personne les a vécus.
         self.journal = journal
         self.fil = fil
         self._boites: dict[str, _Boite] = {}
-        self._verrous: dict[str, asyncio.Lock] = {}
+        # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
+        self._verrous: dict[str, list] = {}
         self.taches: set[asyncio.Task] = set()
 
     def _lancer(self, coro) -> asyncio.Task:
@@ -85,8 +91,22 @@ class Conversations:
         b = self._boites.pop(personne)
         await self._tour(personne, b.messages)
 
+    @contextlib.asynccontextmanager
+    async def _a_son_tour(self, personne: str):
+        """Les tours d'une même personne passent l'un après l'autre. Le verrou est oublié quand plus personne
+        ne l'attend : un logiciel peut amener autant de personnes qu'il veut sans que la mémoire grossisse."""
+        entree = self._verrous.setdefault(personne, [asyncio.Lock(), 0])
+        entree[1] += 1
+        try:
+            async with entree[0]:
+                yield
+        finally:
+            entree[1] -= 1
+            if entree[1] == 0 and self._verrous.get(personne) is entree:
+                del self._verrous[personne]
+
     async def _tour(self, personne: str, messages: list[Entrant]) -> None:
-        async with self._verrous.setdefault(personne, asyncio.Lock()):
+        async with self._a_son_tour(personne):
             dernier = messages[-1]
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
             await self._sans_echec(self.exp.lu(dernier.id))
@@ -165,12 +185,17 @@ class Conversations:
         if lance is not None:  # un arrêt en douceur attend aussi les tours par API
             self.taches.add(lance)
         try:
-            async with self._verrous.setdefault(personne, asyncio.Lock()):
+            async with self._a_son_tour(personne):
                 if not self.debit.permis(personne):
                     return None
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
-                brute, echec = await self._executer(personne, texte)
+                try:
+                    brute, echec = await asyncio.wait_for(self._executer(personne, texte), self.delai_api)
+                except asyncio.TimeoutError:
+                    log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
+                    self.noter_journal("tour_echec", detail="delai")
+                    brute, echec = EXCUSE, True
                 reponse = nettoyer(masquer_secrets(brute))
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
@@ -263,6 +288,13 @@ class Conversations:
         if self.rappels is None:
             return {"prochain": None, **bilan}
         for r in await asyncio.to_thread(self.rappels.echus, maintenant):
+            if self.conf.whatsapp is None:
+                # Un agent sans WhatsApp (seulement par API) ne peut rien envoyer : un rappel d'avant est
+                # annulé, au lieu d'échouer à chaque passage.
+                await asyncio.to_thread(self.rappels.marquer, r["id"], "annule")
+                self.noter_journal("rappel_echec", detail="sans WhatsApp")
+                bilan["echec"] += 1
+                continue
             try:
                 voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel")
                 await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
@@ -271,7 +303,11 @@ class Conversations:
                 log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
                 self.noter_journal("rappel_echec", detail=type(e).__name__)
                 bilan["echec"] += 1
-        return {"prochain": await asyncio.to_thread(self.rappels.prochain), **bilan}
+        prochain = await asyncio.to_thread(self.rappels.prochain)
+        if bilan["echec"] and prochain is not None:
+            # Un rappel en échec reste à envoyer : il est retenté dans 5 minutes, pas en boucle.
+            prochain = max(prochain, maintenant + REESSAI_RAPPEL)
+        return {"prochain": prochain, **bilan}
 
     @staticmethod
     async def _sans_echec(coro) -> None:

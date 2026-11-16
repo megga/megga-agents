@@ -41,8 +41,13 @@ def principal(args: list[str], env: dict[str, str] | None = None, ecrire=print) 
         except ValueError as e:
             ecrire(str(e) if str(e).startswith("par_minute") else f"par_minute : un nombre de 1 à {api.PAR_MINUTE_MAX}")
             return 2
-        ident, cle, empreinte = api.nouvelle_cle()
-        cles.ajouter(ident, reste[0], empreinte, debit)
+        for _ in range(3):  # un identifiant déjà pris (très improbable) : on en tire un autre
+            ident, cle, empreinte = api.nouvelle_cle()
+            if cles.ajouter(ident, reste[0], empreinte, debit):
+                break
+        else:
+            ecrire("La clé n'a pas pu être enregistrée : réessayez.")
+            return 1
         ecrire(f"Clé {ident} pour {reste[0]} ({debit} messages par minute). Elle ne sera plus jamais montrée :")
         ecrire(cle)
         return 0

@@ -44,13 +44,26 @@ TROP = "Vous m'écrivez beaucoup en peu de temps. Je reprends dans quelques minu
 class Debit:
     """Au plus `maximum` tours par personne sur `fenetre` secondes."""
 
+    BALAYAGE = 1000  # tous les combien de tours on oublie les personnes silencieuses
+
     def __init__(self, maximum: int = 20, fenetre: float = 600):
         self.maximum, self.fenetre = maximum, fenetre
         self._tours: dict[str, deque] = {}
         self._prevenu: dict[str, float] = {}
+        self._comptes = 0
+
+    def _balayer(self, maintenant: float) -> None:
+        """Oublie ce qui est sorti de la fenêtre : une personne venue une fois ne reste pas en mémoire."""
+        for personne in [p for p, q in self._tours.items() if not q or maintenant - q[-1] > self.fenetre]:
+            del self._tours[personne]
+        for personne in [p for p, t in self._prevenu.items() if maintenant - t >= self.fenetre]:
+            del self._prevenu[personne]
 
     def permis(self, personne: str, maintenant: float | None = None) -> bool:
         maintenant = time.monotonic() if maintenant is None else maintenant
+        self._comptes += 1
+        if self._comptes % self.BALAYAGE == 0:
+            self._balayer(maintenant)
         q = self._tours.setdefault(personne, deque())
         while q and maintenant - q[0] > self.fenetre:
             q.popleft()
@@ -66,6 +79,12 @@ class Debit:
         while q and maintenant - q[0] > self.fenetre:
             q.popleft()
         return not q or len(q) < self.maximum
+
+    def rendre(self, personne: str) -> None:
+        """Rend le dernier tour compté (un tour compté qui n'a finalement pas eu lieu)."""
+        q = self._tours.get(personne)
+        if q:
+            q.pop()
 
     def attente(self, personne: str, maintenant: float | None = None) -> int:
         """Les secondes avant qu'un tour se libère (au moins 1) : l'en-tête Retry-After."""
