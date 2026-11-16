@@ -61,6 +61,10 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 
 `packs/immobilier/recherches.py` : à 8 h et 18 h (heure de l'agence), une échéance relit les recherches de la gestion (`GET /clients`) ; les biens nouveaux depuis le passage précédent sont signalés au courtier de la recherche, en un message (usage `rapprochement`, modèle `fsp_agent_suivi_maj` hors des 24 heures). Une recherche jamais vue ne prévient pas ; celles d'un autre courtier non plus.
 
+## Le journal des conversations (16.11.2026)
+
+Le courtier demande « avec qui as-tu parlé aujourd'hui ? » : l'outil `activite` (groupe visiteurs) liste les personnes qui ont écrit (la table `megga_contacts`, qui garde désormais leur nom WhatsApp, colonne `nom` ajoutée d'elle-même), avec leur numéro, leur rôle et ce qu'elles ont écrit (le fil, `megga_fil`) ; `qui` donne le détail d'une personne. Ni les gestionnaires, ni les logiciels par API. La page « Alix » de la gestion reste à faire : elle lira la même chose par une route du socle.
+
 ## 7.4 Les partenaires et les visiteurs
 
 Quatre groupes d'outils de plus, par rôle (`Role.outils`) ; ceux qui agissent au nom d'un compte de gestion (`annonces`, `partenaires`, `visiteurs`) ne vont qu'au rôle gestionnaire, la configuration refuse le reste.

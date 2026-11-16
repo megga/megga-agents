@@ -160,7 +160,7 @@ class Conversations:
         async with self._a_son_tour(personne):
             dernier = messages[-1]
             premier = await self._premier(personne, role)
-            await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
+            await self._sans_echec(self._noter(personne, max(m.envoye for m in messages), dernier.profil))
             await self._sans_echec(self.exp.lu(dernier.id))
             livres = {"n": 0}
             await self._sans_echec(self._rappels_differes(personne, livres))
@@ -421,9 +421,9 @@ class Conversations:
         if self.fil is not None:
             self._plus_tard(self.fil.noter, personne, sens, genre, texte or "", time.time())
 
-    async def _noter(self, personne: str, quand: float) -> None:
+    async def _noter(self, personne: str, quand: float, nom: str = "") -> None:
         if self.contacts is not None and quand:
-            await asyncio.to_thread(self.contacts.noter, personne, quand)
+            await asyncio.to_thread(self.contacts.noter, personne, quand, nom)
 
     async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str, variable: str | None = None) -> str:
         """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance). Hors des 24 heures, le modèle

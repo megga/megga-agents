@@ -10,6 +10,9 @@
 //   POST /site/:client/(bien|demande)
 //                                  le site d'un client (lot 7.4) : un bien entré en ligne, une demande d'information
 //                                  d'une fiche ; transmis tel quel, la clé du site (SITE_CLE) vérifiée par le conteneur
+//   GET  /site/:client/journal[?jours=]
+//                                  le journal des conversations, pour la page « Alix » de la gestion du site
+//                                  (16.11.2026) ; même clé, vérifiée par le conteneur ; la réponse n'est gardée nulle part
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
 //                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
@@ -63,6 +66,8 @@ export async function recevoir(requete, env, ctx) {
   if (api) return messageApi(requete, env, api[1]);
   const site = url.pathname.match(/^\/site\/([^/]+)\/(bien|demande)$/);
   if (site) return messageSite(requete, env, site[1], site[2]);
+  const journalSite = url.pathname.match(/^\/site\/([^/]+)\/journal$/);
+  if (journalSite) return lireJournal(requete, env, journalSite[1], url);
   const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
   if (cles) return clesApi(requete, env, cles[1], cles[2] ?? "");
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
@@ -137,6 +142,28 @@ async function messageSite(requete, env, id, route) {
     return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
   } catch (e) {
     console.error("message du site en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "agent injoignable" }, 503);
+  }
+}
+
+/**
+ * Le journal des conversations d'un client, pour la gestion de son site : lu dans le conteneur, rendu tel quel, jamais
+ * gardé (no-store). Sans clé bien formée, rien ne réveille le conteneur.
+ */
+async function lireJournal(requete, env, id, url) {
+  if (requete.method !== "GET") return json({ erreur: "méthode : GET" }, 405);
+  if (!CLE_SITE.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
+  const jours = /^[0-9]{1,2}$/.test(url.searchParams.get("jours") ?? "") ? url.searchParams.get("jours") : "1";
+  const client = idValide(id) ? await clientParId(env.ANNUAIRE, id) : null;
+  const agent = client && agentDe(env, client);
+  if (!agent) return json({ erreur: "agent inconnu" }, 404);
+  try {
+    const r = await agent.fetch(new Request(`http://agent/site/journal?${new URLSearchParams({ jours })}`, {
+      headers: { authorization: requete.headers.get("authorization") },
+    }));
+    return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
+  } catch (e) {
+    console.error("journal du site en échec", id, String(e?.message ?? e).slice(0, 200));
     return json({ erreur: "agent injoignable" }, 503);
   }
 }

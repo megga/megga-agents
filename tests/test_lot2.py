@@ -83,7 +83,7 @@ class FauxContacts:
     def __init__(self, dernier=None):
         self.notes, self._dernier = [], dernier
 
-    def noter(self, personne, quand):
+    def noter(self, personne, quand, nom=""):
         self.notes.append((personne, quand))
 
     def dernier(self, personne):
