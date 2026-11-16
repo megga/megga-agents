@@ -43,6 +43,14 @@ def regles_pour(conf, role=None) -> dict[str, str]:
     return {**conf.approbations, **(role.approbations if role is not None else {})}
 
 
+def equipe(gestionnaires) -> list[str]:
+    """Les gestionnaires tels que les conversations les nomment (« +41… ») : c'est sous ce nom que leur fenêtre de
+    24 heures se retrouve (noyau/tour.py, envoyer_de_soi_meme) ; sous un autre, le message attendrait au lieu de partir."""
+    from .whatsapp import chiffres
+
+    return [f"+{chiffres(n)}" for n in (gestionnaires or {})]
+
+
 def nom(outil) -> str | None:
     return getattr(outil, "name", None) or getattr(outil, "__name__", None)
 
