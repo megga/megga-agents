@@ -10,7 +10,7 @@ from test_lot6_pilote import MEGGA, activer, canal, nouvelle_version, releve_sig
 
 from atelier import gabarits, regles
 from noyau import config as configuration
-from noyau import connecteurs, stockage, version
+from noyau import banc, connecteurs, stockage, version
 from noyau.app import creer
 from pilote import service as pilote_service
 from test_lot9_3 import Contexte, FaussesConversations
@@ -208,11 +208,20 @@ def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
     from test_lot5 import FauxModele
     from test_lot9_2 import FauxVectoriseur
 
-    from noyau import banc
-
     conf = configuration.lire({**CONF, "outils": ["connaissances", "leads"]})
     agent = banc.agent_d_essai({}, principal=FauxModele(), vectoriseur=FauxVectoriseur())(
         conf, tmp_path / "cas", [{"titre": "Horaires", "texte": "Ouvert du lundi au vendredi, de 8 h à 18 h."}])
     noms = {getattr(o, "__name__", getattr(o, "name", "")) for o in agent.tools}
     assert {"chercher_dans_les_documents", "enregistrer_lead"} <= noms
     assert [d["titre"] for d in stockage.Connaissances(f"sqlite:///{tmp_path / 'cas'}/banc.db").documents()] == ["Horaires"]
+
+
+# Les cas du banc de chaque nouveau métier
+
+
+@pytest.mark.parametrize("metier", NOUVEAUX)
+def test_chaque_nouveau_metier_a_son_modele_et_ses_cas(metier):
+    if metier not in {g["metier"] for g in gabarits.lister()}:
+        pytest.skip("modèle pas encore écrit")
+    propres = [c for c in banc.scenarios(metier) if c["id"][0] == metier[0].upper()]
+    assert len(propres) >= 3
