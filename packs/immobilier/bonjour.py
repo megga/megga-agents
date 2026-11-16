@@ -3,8 +3,9 @@ joie ») : chaque jour à l'heure réglée (Config.bonjour, heure du client), l'
 mots chaleureux pour bien commencer la journée. Claude les écrit, différents chaque jour ; sans lui, une phrase d'une
 courte liste. Chacun peut l'arrêter, le reprendre ou changer l'heure (outil mot_du_matin).
 
-Hors des 24 heures de WhatsApp, il ne part que par un modèle Meta « bonjour » s'il est réglé ; sinon il n'est pas
-gardé pour plus tard : un « bonjour » de la veille n'a plus de sens.
+Hors des 24 heures de WhatsApp (le courtier n'a pas écrit depuis la veille), il ne part que par un modèle Meta
+« bonjour » s'il est réglé ; sinon ce matin-là est sauté, sans appel à Claude, et noté au journal du suivi : un
+« bonjour » gardé pour plus tard n'aurait plus de sens. Un seul mot par jour, même si l'heure change.
 """
 
 from __future__ import annotations
@@ -13,7 +14,10 @@ import asyncio
 import datetime as dt
 import logging
 import re
+import time
 from zoneinfo import ZoneInfo
+
+from noyau.whatsapp import fenetre_ouverte
 
 from agno.run import RunContext
 
@@ -29,7 +33,8 @@ envoies un petit mot sur WhatsApp pour bien commencer sa journée.
 - Deux ou trois phrases courtes, en français, en le tutoyant. Tu peux saluer le jour ({jour}) ou la saison, glisser
   une touche d'humour léger ou une pensée positive sur son métier (les visites, les clients, les belles maisons).
 - Au plus un émoji. Pas de liste, pas de titre, pas de guillemets, ni tiret long ni point médian.
-- Rien d'inventé sur son agenda ou ses affaires, pas de conseil, pas de question.
+- Rien d'inventé : ni sur son agenda ou ses affaires, ni sur la météo, une fête ou un événement. Pas de conseil, pas
+  de question, pas de préambule (« Voici… »).
 - Chaque matin différent : jamais la même idée que ces derniers mots :
 {derniers}
 Réponds seulement par le message."""
@@ -54,9 +59,17 @@ def prochain(maintenant: float, heure: str, fuseau: str) -> float:
     return t.timestamp()
 
 
+EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+
+
 def propre(texte: str) -> str | None:
-    """Le mot écrit par Claude, s'il tient : une à quatre phrases, sans artefact ; sinon None."""
-    t = re.sub(r"\s*[\u2014\u2013]\s*", ", ", str(texte or "")).replace("\u00b7", " ")
+    """Le mot écrit par Claude, s'il tient à la consigne : une à quatre phrases, au plus un émoji, sans question, sans
+    préambule ni point médian ; sinon None (la phrase de secours part)."""
+    brut = str(texte or "")
+    if (len(EMOJI.findall(brut)) > 1 or "?" in brut or re.search(r"[\u00b7\u2022\u22c5]", brut)
+            or re.match(r"\s*voici\b", brut, re.I) or ":" in brut[:40]):
+        return None
+    t = re.sub(r"\s*[\u2014\u2013]\s*", ", ", brut)
     t = " ".join(t.split()).strip(" \"«»")
     if not 30 <= len(t) <= 400 or re.search(r"[#*|<>{}\[\]]", t):
         return None
@@ -85,6 +98,10 @@ class Bonjour:
             prevu = await asyncio.to_thread(s.etats.lire, numero, "bonjour_prochain")
             if prevu is None or prevu > maintenant + 2 * 86400:
                 prevu = prochain(maintenant, r["heure"], s.fuseau)
+                # Déjà reçu aujourd'hui (l'heure vient de changer) : à partir de demain.
+                if await asyncio.to_thread(s.etats.lire, numero, "bonjour_jour") == self.jour(maintenant) and \
+                        self.jour(prevu) == self.jour(maintenant):
+                    prevu = prochain(prevu, r["heure"], s.fuseau)
                 await asyncio.to_thread(s.etats.ecrire, numero, "bonjour_prochain", prevu)
             if prevu <= maintenant:
                 suivant = prochain(maintenant, r["heure"], s.fuseau)
@@ -94,9 +111,29 @@ class Bonjour:
                         await self.envoyer(numero, maintenant)
                     except Exception as e:
                         logging.getLogger("megga").error("mot du matin en échec : %s", str(e)[:200])
+                        self.journal("bonjour_echec", type(e).__name__)
                 prevu = suivant
             prochaines.append(prevu)
         return min(prochaines) if prochaines else None
+
+    def jour(self, t: float) -> str:
+        return dt.datetime.fromtimestamp(t, ZoneInfo(self.s.fuseau)).date().isoformat()
+
+    def journal(self, genre: str, detail: str = "") -> None:
+        conv = self.s.conversations
+        if conv is not None and hasattr(conv, "noter_journal"):
+            conv.noter_journal(genre, detail=detail)
+
+    async def joignable(self, numero: str) -> bool:
+        """Le mot peut-il partir ? Dans les 24 heures du dernier message du courtier, ou par un modèle Meta « bonjour »."""
+        conv = self.s.conversations
+        if conv is None:
+            return True
+        if getattr(getattr(conv, "conf", None), "modeles_meta", {}).get("bonjour"):
+            return True
+        contacts = getattr(conv, "contacts", None)
+        dernier = await asyncio.to_thread(contacts.dernier, numero) if contacts is not None else None
+        return fenetre_ouverte(dernier, time.time())
 
     async def ecrire(self, numero: str, maintenant: float) -> str:
         s = self.s
@@ -106,10 +143,10 @@ class Bonjour:
         texte = None
         if s.assistante is not None and hasattr(s.assistante, "_texte"):
             try:
-                texte = propre(await s.assistante._texte(
+                texte = propre(await asyncio.wait_for(s.assistante._texte(
                     CONSIGNE.format(entreprise=s.marque or "l'agence", jour=jour,
                                     derniers="\n".join(f"- {d}" for d in derniers[-GARDES:]) or "- (aucun)"),
-                    f"Écris le mot de ce {jour}.", 300))
+                    f"Écris le mot de ce {jour}.", 300), 25))
             except Exception as e:
                 logging.getLogger("megga").warning("mot du matin sans Claude : %s", str(e)[:200])
         if texte is None:
@@ -117,9 +154,14 @@ class Bonjour:
         await asyncio.to_thread(s.etats.ecrire, numero, "bonjour_derniers", [*derniers, texte][-GARDES:])
         return texte
 
-    async def envoyer(self, numero: str, maintenant: float) -> str:
-        texte = await self.ecrire(numero, maintenant)
+    async def envoyer(self, numero: str, maintenant: float) -> str | None:
+        """Le mot du jour, s'il peut partir ; sinon rien (ni Claude, ni mot rangé) et une ligne au journal."""
         s = self.s
+        if not await self.joignable(numero):
+            self.journal("bonjour_attente", "hors des 24 heures, sans modèle")
+            return None
+        texte = await self.ecrire(numero, maintenant)
+        await asyncio.to_thread(s.etats.ecrire, numero, "bonjour_jour", self.jour(maintenant))
         if s.conversations is not None:
             async with s.conversations.entre_les_tours(numero):
                 await s.conversations.envoyer_de_soi_meme(numero, [{"texte": texte}], "bonjour", ["un petit mot pour bien commencer la journée"],
@@ -149,7 +191,7 @@ class Bonjour:
             r = {"actif": bool(actif), "heure": heure.strip() or r["heure"]}
             await asyncio.to_thread(s.s.etats.ecrire, numero, "bonjour", r)
             await asyncio.to_thread(s.s.etats.ecrire, numero, "bonjour_prochain", None)
-            return (f"Le mot du matin arrivera chaque jour à {r['heure'].replace(':', ' h ')}." if r["actif"]
+            return (f"Le mot du matin arrivera chaque jour à {r['heure'].replace(':', ' h ')}, si tu m'as écrit depuis la veille." if r["actif"]
                     else "Le mot du matin est arrêté. Il suffit de me le redemander pour le reprendre.")
 
         return [mot_du_matin]

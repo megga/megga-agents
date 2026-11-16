@@ -103,7 +103,7 @@ def capacites(conf, role) -> str:
                   + (" ; tes façons de travailler, apprises quand tu me corriges, que tu peux lister ou retirer ; le point quand tu le demandes" if "travail" in g else "")
                   + (" ; des rappels à la date et l'heure voulues" if "rappels" in g else "") + ".")
     if getattr(conf, "bonjour", None) and "travail" in g:
-        themes.append(f"Le mot du matin : chaque jour vers {conf.bonjour.replace(':', ' h ')}, un petit message plein de bonne humeur ; on peut l'arrêter ou changer l'heure.")
+        themes.append("Le mot du matin : chaque matin, un petit message plein de bonne humeur ; on peut l'arrêter ou changer l'heure.")
     if conf.voix.voix:
         themes.append("La voix : comprendre les messages vocaux et répondre en vocal.")
     return "Tes capacités, telles qu'elles sont en service :\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(themes, 1))

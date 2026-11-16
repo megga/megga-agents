@@ -104,3 +104,57 @@ def test_le_mot_est_propre():
     assert propre("court") is None and propre("# Titre\n- liste de choses à faire aujourd'hui") is None
     for t in SECOURS:
         assert propre(t) == t and "—" not in t and "·" not in t
+
+
+# Relecture du 16.11.2026
+
+class Conversations:
+    def __init__(self, dernier, modele=False):
+        import contextlib
+        import types
+
+        self._dernier, self.envois, self.journal = dernier, [], []
+        self.conf = types.SimpleNamespace(modeles_meta={"bonjour": object()} if modele else {})
+        self.contacts = types.SimpleNamespace(dernier=lambda personne: self._dernier)
+        self.entre_les_tours = lambda personne: contextlib.nullcontext()
+
+    async def envoyer_de_soi_meme(self, personne, messages, usage, variables=None, langue="", garder=True):
+        self.envois.append((personne, messages[0]["texte"], usage, garder))
+        return "libre"
+
+    def noter_journal(self, genre, quantite=1, detail=""):
+        self.journal.append((genre, detail))
+
+
+def test_hors_des_24_heures_rien_ne_part_et_claude_n_est_pas_appele(monde):
+    import time as t
+
+    b, s, exp = monde
+    s.conversations = Conversations(dernier=t.time() - 3 * 86400)
+    assert run(b.envoyer(GREG, heure(16, 8))) is None
+    assert s.assistante.appels == [] and s.conversations.envois == [] and s.conversations.journal[0][0] == "bonjour_attente"
+    assert s.etats.lire(GREG, "bonjour_derniers") is None
+    s.conversations = Conversations(dernier=t.time() - 3600)  # Greg a écrit il y a une heure
+    assert run(b.envoyer(GREG, heure(16, 8))) and s.conversations.envois[0][2:] == ("bonjour", False)
+    s.conversations = Conversations(dernier=None, modele=True)  # un modèle Meta « bonjour » réglé : il part
+    assert run(b.envoyer(GREG, heure(17, 8)))
+
+
+def test_changer_l_heure_ne_donne_pas_un_second_mot_le_meme_jour(monde):
+    b, s, exp = monde
+    (outil,) = b.outils()
+    run(b.echeance(heure(16, 7)))
+    run(b.echeance(heure(16, 8, 1)))
+    assert len(exp.envois) == 1
+    run(outil(True, Tour(GREG, "t1"), heure="09:00"))
+    assert run(b.echeance(heure(16, 8, 30))) == heure(17, 9)
+    run(b.echeance(heure(16, 9, 1)))
+    assert len(exp.envois) == 1
+
+
+def test_le_mot_tient_a_la_consigne():
+    assert propre("Bonjour ! Quelle belle journée 🌞🏡✨ pour faire de belles visites.") is None  # trois émojis
+    assert propre("Bonjour ! Prêt pour une belle journée pleine de rencontres ?") is None  # une question
+    assert propre("Voici ton mot du jour : belle journée à toi, pleine de joie.") is None
+    assert propre("Bonjour aux courtier·ère·s, belle journée pleine de joie.") is None
+    assert propre("Bonjour ! Belle journée à toi, pleine de joie et de beaux projets ☀️")
