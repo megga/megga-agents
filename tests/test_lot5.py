@@ -134,7 +134,12 @@ def test_regles_client():
     c = regles.appliquer("client", base, {"nom_agent": "Lea", "ton": "direct", "voix": "EST9Ui6982FZPSi7gCHi"}, None)
     assert (c.nom_agent, c.ton, c.voix.voix) == ("Lea", "direct", "EST9Ui6982FZPSi7gCHi")
     assert c.modeles == Config.model_validate(base).modeles  # le reste est repris de la base
-    for interdit in ({"modeles": {"principal": "claude-opus-5-5"}}, {"zone": "etats-unis"}, {"consignes": "x"}, {"catalogue": "demo:x"}):
+    # ses modèles, le client les choisit dans le catalogue (lot 9.5) ; hors du catalogue, refusés
+    assert regles.appliquer("client", base, {"modeles": {"principal": "mistral-large-latest", "secours": None}}, None).modeles.principal == "mistral-large-latest"
+    with pytest.raises(regles.Refus) as e:
+        regles.appliquer("client", base, {"modeles": {"principal": "gpt-9"}}, None)
+    assert e.value.statut == 400
+    for interdit in ({"modeles": {"oral": "claude-haiku-5-5"}}, {"zone": "etats-unis"}, {"consignes": "x"}, {"catalogue": "demo:x"}):
         with pytest.raises(regles.Refus) as e:
             regles.appliquer("client", base, interdit, None)
         assert e.value.statut == 403
@@ -214,6 +219,8 @@ def test_le_parcours_du_client(atelier):
     assert r.status_code == 200 and r.json()["config"]["nom_agent"] == "Lea"
     assert len(t.get("/atelier/clients/exemple/versions", headers=client).json()["versions"]) == 1
     r = t.post("/atelier/clients/exemple/valider", headers=client, json={"changements": {"modeles": {"principal": "x"}}})
+    assert r.status_code == 400  # un modèle hors du catalogue (le client choisit les siens, lot 9.5)
+    r = t.post("/atelier/clients/exemple/valider", headers=client, json={"changements": {"catalogue": "demo:x"}})
     assert r.status_code == 403
 
     v2 = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {"nom_agent": "Lea", "ton": "direct"}}).json()

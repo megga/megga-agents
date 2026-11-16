@@ -7,8 +7,8 @@ D'après l'étude de marché du 16.11.2026 (le catalogue des fonctionnalités in
 | **9.1 Approbations et journal d'audit** (fait) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
 | **9.2 Base de connaissances** (fait) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
 | **9.3 Transfert vers un humain** (fait) | passer la main à un collaborateur avec un résumé, puis la reprendre |
-| **9.4 Leads et connecteurs** (cette PR) | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
-| 9.5 Le client et ses chiffres | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
+| **9.4 Leads et connecteurs** (fait) | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
+| **9.5 Le client et ses chiffres** (cette PR) | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
 | 9.6 Banc d'essai par pack | les scénarios de `parite/` généralisés, mesurés en pass^k à chaque version |
 
 Décidé avec Thomas (16.11.2026) : une PR par sous-lot ; d'abord ce qui ne demande aucun compte externe (les agendas Google et Microsoft viendront après) ; la recherche par le sens calculée par un modèle embarqué dans l'image ; le choix des modèles laissé au client plutôt qu'un secours imposé.
@@ -141,3 +141,25 @@ Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{i
 - Les connecteurs prêts à l'emploi (Google Workspace, Microsoft 365, HubSpot) passent par leurs serveurs MCP et leurs comptes : à brancher client par client, avec un jeton.
 - Une erreur rendue par un serveur MCP comme du texte (et non comme une panne) compte une action accordée comme « faite » : à affiner avec les vrais serveurs.
 - Le renvoi d'un lead en échec depuis la console.
+
+## 9.5 Le client et ses chiffres
+
+**Pourquoi.** Seuls 4 % des responsables du service client ont obtenu le retour sur investissement attendu de l'IA (Gartner, 4.11.2026) : la « valeur floue » est la première cause d'abandon. Et la transparence est une obligation : dire qu'on parle à une IA (AI Act, article 50, depuis le 2.08.2026 ; nLPD), remettre ou effacer les données d'une personne qui le demande.
+
+**Ce que l'agent fait gagner** (`GET /atelier/clients/{id}/valeur?jours=30`, pour le client comme pour MEGGA). Sur la période : les conversations (les personnes qui ont écrit), celles résolues sans humain (sans transfert à l'équipe, 9.3) et leur part, celles transmises, les leads et les leads chauds (score 4 ou 5, 9.4), les actions accordées, refusées ou en attente (9.1), et les minutes gagnées : les conversations résolues sans humain multipliées par `Config.minutes_par_conversation` (5 par défaut, réglé par le client d'après son propre temps). Rien n'y vient des tarifs d'achat de MEGGA, qui restent à MEGGA.
+
+**La mention de l'IA** (`Config.mention_ia`, que le client active lui-même). Au début de chaque conversation (rien de la personne depuis douze heures, comme l'accueil), avant toute réponse : « Vous échangez avec {agent}, l'assistant virtuel de {entreprise} : une intelligence artificielle. », en français, en anglais ou en allemand selon la langue de l'agent ; et, si l'agent sait passer la main (9.3), « Vous pouvez demander à parler à une personne de l'équipe. ». Par API, la mention ouvre la réponse. Le marquage de la voix synthétique reste à faire valider par un juriste.
+
+**Les droits d'une personne** (nLPD, RGPD).
+- `GET /atelier/clients/{id}/personnes/{personne}` : tout ce que la base du client garde d'elle, table par table (les nôtres par leur colonne `personne`, celles d'Agno par `user_id` : mémoire, sessions), à lui remettre.
+- `DELETE /atelier/clients/{id}/personnes/{personne}?confirmer=oui` : tout effacer, définitivement (sans `confirmer=oui`, `400`). Les autres personnes ne sont pas touchées.
+- Hors Cloudflare, comme les conversations, rien ne quitte l'installation (`409`).
+
+**Les modèles du client.** Le client choisit lui-même son modèle principal et son secours (`modeles.principal`, `modeles.secours`) dans le catalogue de l'atelier, où chacun dit qui le fait tourner et où (`modeles_detail`) : Anthropic (États-Unis), DeepSeek (Chine), et maintenant Mistral AI (Union européenne, France ; `mistral-large-latest`, `mistral-medium-latest`, par son API compatible OpenAI, avec la clé `MISTRAL_API_KEY` de MEGGA, posée comme les autres par `scripts/secrets_worker.sh`). Le modèle de l'oral reste un réglage de MEGGA. Décidé avec Thomas (16.11.2026) : laisser ce choix au client plutôt qu'imposer un secours européen.
+
+**Les routes** côté porte : `GET /admin/clients/{id}/suivi/valeur`, `GET|DELETE /admin/clients/{id}/personnes/{personne}` ; au conteneur `/interne/suivi/valeur`, `/interne/personnes/{personne}`.
+
+**Ce qui reste.**
+- Les rendez-vous pris (avec les agendas, plus tard) et le coût par conversation propre au client (son forfait) dans la valeur.
+- Le marquage de la voix synthétique (article 50) et le contrat de sous-traitance type, avec un juriste.
+- La clé `MISTRAL_API_KEY` à créer chez Mistral AI et à poser avant qu'un client choisisse ce modèle.

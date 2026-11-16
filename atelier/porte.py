@@ -69,6 +69,12 @@ class Porte:
     async def decider(self, ident: str, numero: int, accord: bool) -> dict:
         """Une demande d'accord d'un client (noyau/approbations.py), accordée (et faite) ou refusée."""
         return await self._appel("POST", f"/admin/clients/{ident}/approbations/{int(numero)}", json={"accord": accord})
+    async def personne(self, ident: str, methode: str, personne: str) -> dict:
+        """Les données d'une personne chez un client (lot 9.5) : lues (GET) ou effacées (DELETE)."""
+        from urllib.parse import quote
+
+        return await self._appel(methode, f"/admin/clients/{ident}/personnes/{quote(personne, safe='')}")
+
     async def reprise(self, ident: str, numero: int, corps: dict) -> dict:
         """Une conversation confiée à l'équipe d'un client (noyau/reprises.py) : prise, répondue ou rendue."""
         return await self._appel("POST", f"/admin/clients/{ident}/reprises/{int(numero)}", json=corps)

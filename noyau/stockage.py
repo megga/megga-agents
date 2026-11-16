@@ -143,6 +143,41 @@ def _ouvrir(fichier: str | Path, mode: str, gz: bool):
     return gzip.open(fichier, mode + "t", encoding="utf-8") if gz else open(fichier, mode, encoding="utf-8")
 
 
+def _colonne_personne(table: Table):
+    """La colonne qui désigne une personne dans une table : « personne » (les nôtres), « user_id » (celles d'Agno)."""
+    for nom in ("personne", "user_id"):
+        if nom in table.c:
+            return table.c[nom]
+    return None
+
+
+def donnees_personne(url: str, personne: str) -> dict[str, list[dict]]:
+    """Tout ce que la base garde d'une personne, table par table (nLPD et RGPD : son droit d'accès), en JSON."""
+    e = moteur(url)
+    sortie = {}
+    with e.connect() as c:
+        for table in _tables(e).sorted_tables:
+            col = _colonne_personne(table)
+            if col is None:
+                continue
+            lignes = [{k: _en_json(v) for k, v in dict(l).items()} for l in c.execute(select(table).where(col == personne)).mappings()]
+            if lignes:
+                sortie[table.name] = lignes
+    return sortie
+
+
+def effacer_personne(url: str, personne: str) -> dict[str, int]:
+    """Efface tout ce que la base garde d'une personne (son droit à l'effacement) : {table: lignes effacées}."""
+    e = moteur(url)
+    effacees = {}
+    with e.begin() as c:
+        for table in _tables(e).sorted_tables:
+            col = _colonne_personne(table)
+            if col is not None and (n := c.execute(delete(table).where(col == personne)).rowcount):
+                effacees[table.name] = n
+    return effacees
+
+
 def exporter(url: str, fichier: str | Path, gz: bool | None = None, retouche=None) -> int:
     """Toutes les lignes de la base du client dans un fichier JSON Lines (compressé si `gz`, ou si le nom finit
     par .gz) ; rend leur nombre. `retouche(table, ligne)` change une ligne avant de l'écrire, ou rend None pour la laisser."""
@@ -1564,6 +1599,12 @@ class Fil:
     def vide(self) -> bool:
         with self._e.connect() as c:
             return c.execute(select(self._t.c.id).limit(1)).first() is None
+
+    def personnes(self, depuis: float = 0) -> set[str]:
+        """Les personnes qui ont écrit depuis cette date (lot 9.5 : les conversations de la période)."""
+        t = self._t
+        with self._e.connect() as c:
+            return {l[0] for l in c.execute(select(t.c.personne).where(t.c.sens == "recu", t.c.quand >= depuis).distinct())}
 
     def conversations(self, limite: int = 50) -> list[dict]:
         from sqlalchemy import func

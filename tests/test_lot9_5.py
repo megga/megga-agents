@@ -1,0 +1,174 @@
+"""Lot 9.5 : le client et ses chiffres (valeur), la conformité (mention de l'IA, droits des personnes), ses modèles."""
+
+import json
+import time
+
+import pytest
+from fastapi.testclient import TestClient
+
+from atelier import regles
+from noyau import config as configuration, connecteurs, stockage
+from noyau.agent import modele
+from noyau.app import creer
+
+CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
+INTERNE = {"x-megga-interne": "interne"}
+
+
+@pytest.fixture
+def url(tmp_path):
+    return f"sqlite:///{tmp_path}/client.db"
+
+
+def agent_whatsapp(url, **conf):
+    from test_app import SECRET, FauxAgent, FauxExpediteur
+
+    agent, exp = FauxAgent("Bonjour !"), FauxExpediteur()
+    app = creer({"CLIENT_CONFIG": json.dumps({**CONF, **conf}), "DATABASE_URL": url, "META_APP_SECRET": SECRET, "INTERNE_TOKEN": "interne"},
+                agent=agent, expediteur=exp, attente=0.01, seuil_regard=30)
+    return app, agent, exp
+
+
+def ecrire(app, t, texte, ident):
+    from test_app import attendre, corps, signe
+
+    c = corps(texte, ident)
+    assert t.post("/whatsapp", content=c, headers=signe(c)).status_code == 200
+    t.portal.call(attendre(app))
+
+
+# Les modèles du client
+
+
+def test_le_catalogue_dit_qui_fait_tourner_chaque_modele():
+    c = regles.catalogue()
+    detail = {m["id"]: m for m in c["modeles_detail"]}
+    assert set(detail) == set(c["modeles"])
+    assert detail["mistral-large-latest"]["hebergement"].startswith("Union européenne")
+    assert detail["deepseek-v4-pro"]["hebergement"] == "Chine"
+
+
+def test_un_modele_mistral():
+    m = modele("mistral-large-latest", {"MISTRAL_API_KEY": "cle"})
+    assert (m.id, m.base_url, m.api_key) == ("mistral-large-latest", "https://api.mistral.ai/v1", "cle")
+    with pytest.raises(ValueError):
+        modele("gpt-9", {})
+
+
+# La mention de l'IA
+
+
+def test_la_mention_de_l_ia_au_debut_d_une_conversation(url):
+    app, agent, exp = agent_whatsapp(url, mention_ia=True)
+    with TestClient(app) as t:
+        ecrire(app, t, "Bonjour", "wamid.1")
+        ecrire(app, t, "Encore moi", "wamid.2")
+    textes = [x[1] for x in exp.envois]
+    assert textes[0] == "Vous échangez avec Alix, l'assistant virtuel de Entreprise exemple : une intelligence artificielle."
+    assert textes[1:] == ["Bonjour !", "Bonjour !"]  # une fois par conversation, pas à chaque message
+
+
+def test_sans_reglage_pas_de_mention_et_avec_transfert_l_offre_d_un_humain(url, tmp_path):
+    app, _, exp = agent_whatsapp(url)
+    with TestClient(app) as t:
+        ecrire(app, t, "Bonjour", "wamid.1")
+    assert [x[1] for x in exp.envois] == ["Bonjour !"]
+    app, _, exp = agent_whatsapp(f"sqlite:///{tmp_path}/autre.db", mention_ia=True, transfert=True, langue="en")
+    with TestClient(app) as t:
+        ecrire(app, t, "Hello", "wamid.3")
+    assert exp.envois[0][1].endswith("You can ask to speak to a member of the team.")
+
+
+def test_la_mention_par_api(url):
+    from test_lot6_api import agent_api, nouvelle_cle
+
+    t, *_ = agent_api(url, conf={**{k: v for k, v in CONF.items() if k != "whatsapp"}, "mention_ia": True})
+    _, entete = nouvelle_cle(url)
+    premier = t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "Bonjour"}).json()["reponse"]
+    second = t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "Et ensuite ?"}).json()["reponse"]
+    assert premier.startswith("Vous échangez avec Alix") and "intelligence artificielle" not in second
+
+
+# Les droits des personnes
+
+
+def test_exporter_puis_effacer_les_donnees_d_une_personne(url):
+    app, _, _ = agent_whatsapp(url)
+    t = TestClient(app)
+    maintenant = time.time()
+    for p in ("+41790000001", "+41790000002"):
+        stockage.Fil(url).noter(p, "recu", "texte", f"Bonjour de {p}", maintenant)
+        stockage.Contacts(url).noter(p, maintenant)
+    stockage.Rappels(url).ajouter("+41790000001", maintenant + 3600, "Visite")
+    lu = t.get("/interne/personnes/+41790000001", headers=INTERNE).json()
+    assert {"megga_fil", "megga_contacts", "megga_rappels"} <= set(lu["donnees"]) and "+41790000002" not in json.dumps(lu)
+    assert t.get("/interne/personnes/+41790000001").status_code == 401
+    assert t.get("/interne/personnes/nimporte quoi", headers=INTERNE).status_code == 400
+    efface = t.delete("/interne/personnes/+41790000001", headers=INTERNE).json()["effacees"]
+    assert efface["megga_fil"] == 1 and efface["megga_rappels"] == 1
+    assert t.get("/interne/personnes/+41790000001", headers=INTERNE).json()["donnees"] == {}
+    assert len(stockage.Fil(url).messages("+41790000002")) == 1  # les autres restent
+
+
+# Ce que l'agent fait gagner
+
+
+def test_la_valeur_de_la_periode(url):
+    leads = connecteurs.Leads(stockage.Leads(url))
+    from test_app import FauxAgent, FauxExpediteur
+
+    app = creer({"CLIENT_CONFIG": json.dumps({**CONF, "outils": ["leads"], "transfert": True, "minutes_par_conversation": 6}),
+                 "DATABASE_URL": url, "INTERNE_TOKEN": "interne"}, agent=FauxAgent(), expediteur=FauxExpediteur(), leads=leads)
+    maintenant = time.time()
+    for p in ("+41790000001", "+41790000002", "+41790000003"):
+        stockage.Fil(url).noter(p, "recu", "texte", "Bonjour", maintenant)
+    stockage.Fil(url).noter("+41790000009", "recu", "texte", "Il y a longtemps", maintenant - 40 * 86400)
+    stockage.Reprises(url).ouvrir("+41790000003", "public", "humain", "r")
+    stockage.Leads(url).noter("+41790000001", {"besoin": "villa", "score": 5})
+    stockage.Leads(url).noter("+41790000002", {"besoin": "studio", "score": 2})
+    d = stockage.Approbations(url)
+    d.demander("+41790000001", "public", "envoyer_fiche", {})
+    d.decider(1, False, "console")
+    v = TestClient(app).get("/interne/suivi/valeur", params={"depuis": maintenant - 7 * 86400}, headers=INTERNE).json()
+    assert v == {"conversations": 3, "resolues_sans_humain": 2, "transmises": 1, "taux_sans_humain": 0.667, "leads": 2,
+                 "leads_chauds": 1, "actions_faites": 0, "actions_refusees": 1, "actions_en_attente": 0, "minutes_gagnees": 12,
+                 "minutes_par_conversation": 6}
+
+
+# L'atelier
+
+
+def test_l_atelier(tmp_path):
+    from atelier.app import creer as creer_atelier
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, FaussePorte, FauxModele, jeton_client, nouveau_client
+
+    class Porte(FaussePorte):
+        def __init__(self):
+            super().__init__()
+            self.appels = []
+
+        async def suivi(self, ident, chemin="", **params):
+            return {"conversations": 3} if chemin == "/valeur" else {}
+
+        async def personne(self, ident, methode, personne):
+            self.appels.append((methode, personne))
+            return {"personne": personne, "donnees": {}} if methode == "GET" else {"personne": personne, "effacees": {"megga_fil": 2}}
+
+    porte = Porte()
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db",
+                                  "ESSAIS_DIR": str(tmp_path / "essais"), "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE},
+                                 porte=porte, principal_essai=FauxModele()))
+    nouveau_client(t)
+    client = jeton_client(t)
+    assert t.get("/atelier/clients/exemple/valeur", params={"jours": 30}, headers=client).json() == {"periode_jours": 30, "conversations": 3}
+    assert t.get("/atelier/clients/exemple/personnes/+41790000001", headers=client).json()["donnees"] == {}
+    assert t.delete("/atelier/clients/exemple/personnes/+41790000001", headers=client).status_code == 400  # sans confirmation
+    assert t.delete("/atelier/clients/exemple/personnes/+41790000001", params={"confirmer": "oui"}, headers=client).json()["effacees"] == {"megga_fil": 2}
+    assert t.get("/atelier/clients/exemple/personnes/nimporte", headers=client).status_code == 400
+    assert porte.appels == [("GET", "+41790000001"), ("DELETE", "+41790000001")]
+    # le client règle sa mention de l'IA, ses minutes et ses modèles
+    r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {
+        "mention_ia": True, "minutes_par_conversation": 8, "modeles": {"principal": "mistral-large-latest", "secours": "claude-sonnet-5-5"}}})
+    assert r.status_code == 201, r.text
+    c = r.json()["config"]
+    assert (c["mention_ia"], c["minutes_par_conversation"], c["modeles"]["principal"]) == (True, 8, "mistral-large-latest")

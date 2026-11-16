@@ -20,6 +20,8 @@
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations|/reprises|/leads]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
+//   GET|DELETE /admin/clients/:id/personnes/:personne
+//                                  les données d'une personne, lues ou effacées à sa demande (lot 9.5)
 //   POST /admin/clients/:id/reprises/:n
 //                                  {action, texte?} : une conversation transmise, prise, répondue ou rendue (lot 9.3)
 //   POST /admin/clients/:id/approbations/:n
@@ -82,6 +84,8 @@ export async function recevoir(requete, env, ctx) {
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   const decision = url.pathname.match(/^\/admin\/clients\/([^/]+)\/approbations\/(\d{1,10})$/);
   if (decision && requete.method === "POST") return decider(requete, env, decision[1], decision[2]);
+  const personne = url.pathname.match(/^\/admin\/clients\/([^/]+)\/personnes\/([^/]+)$/);
+  if (personne && ["GET", "DELETE"].includes(requete.method)) return donneesPersonne(requete, env, personne[1], personne[2]);
   const reprise = url.pathname.match(/^\/admin\/clients\/([^/]+)\/reprises\/(\d{1,10})$/);
   if (reprise && requete.method === "POST") return reprendre(requete, env, reprise[1], reprise[2]);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
@@ -347,6 +351,27 @@ async function suivre(requete, env, id, chemin, params) {
   } catch (e) {
     const message = String(e?.message ?? e).slice(0, 200);
     return json({ erreur: message === "chemin de suivi" ? message : "conteneur injoignable" }, message === "chemin de suivi" ? 400 : 503);
+  }
+}
+
+/** Les données d'une personne (lot 9.5) : lues ou effacées dans le conteneur de son client, à sa demande. */
+async function donneesPersonne(requete, env, id, brute) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  let personne;
+  try {
+    personne = decodeURIComponent(brute);
+  } catch {
+    return texte("personne", 400);
+  }
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  try {
+    const { statut, donnees } = await agent.personne(requete.method, personne);
+    return json(donnees, statut);
+  } catch (e) {
+    const message = String(e?.message ?? e);
+    return message === "personne" ? texte("personne", 400) : json({ erreur: "conteneur injoignable" }, 503);
   }
 }
 

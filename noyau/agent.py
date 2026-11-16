@@ -27,7 +27,7 @@ REGLES = (
 
 
 def modele(nom: str, cles: dict[str, str]) -> Model:
-    """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek."""
+    """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek, « mistral-… » chez Mistral AI."""
     if nom.startswith("claude-"):
         from agno.models.anthropic import Claude
 
@@ -36,6 +36,11 @@ def modele(nom: str, cles: dict[str, str]) -> Model:
         from agno.models.deepseek import DeepSeek
 
         return DeepSeek(id=nom, api_key=cles.get("DEEPSEEK_API_KEY"))
+    if nom.startswith("mistral-"):  # européen ; son API suit celle d'OpenAI, qu'Agno sait appeler
+        from agno.models.openai.like import OpenAILike
+
+        return OpenAILike(id=nom, name="Mistral", provider="Mistral", api_key=cles.get("MISTRAL_API_KEY"),
+                          base_url="https://api.mistral.ai/v1")
     raise ValueError(f"modèle inconnu : {nom}")
 
 

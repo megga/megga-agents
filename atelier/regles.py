@@ -21,10 +21,24 @@ from noyau.config import METIERS, ZONES, Config, manques  # noqa: F401 (manques 
 # c'est le client qui porte le risque d'une action, c'est lui qui en décide.
 # « transfert » : l'agent peut confier une conversation à son équipe (noyau/reprises.py).
 # « leads » : le webhook de son CRM, où partent les fiches de ses leads (noyau/connecteurs.py).
-CHAMPS_CLIENT = ("metier", "nom_agent", "voix", "ton", "outils", "approbations", "transfert", "leads")
+# « modeles » : son modèle principal et son secours, parmi ceux du catalogue (lot 9.5).
+# « mention_ia », « minutes_par_conversation » : sa conformité et le calcul de ce que l'agent lui fait gagner (lot 9.5).
+CHAMPS_CLIENT = ("metier", "nom_agent", "voix", "ton", "outils", "approbations", "transfert", "leads", "modeles", "mention_ia",
+                 "minutes_par_conversation")
 # Les zones que la porte Cloudflare sert ; les autres passent par le pilotage (lot 6).
 ZONES_PORTE = ("europe", "etats-unis")
-MODELES = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "deepseek-v4-pro")
+MODELES = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "deepseek-v4-pro", "mistral-large-latest",
+           "mistral-medium-latest")
+# Ce qu'un client voit pour choisir (lot 9.5) : qui fait tourner le modèle, et où. Ce qu'il envoie au modèle quitte son
+# infrastructure pour ce fournisseur (docs/plan.md) ; pour une donnée qui ne doit pas sortir de l'UE, Mistral.
+MODELES_DETAIL = {
+    "claude-sonnet-5-5": {"fournisseur": "Anthropic", "hebergement": "États-Unis"},
+    "claude-opus-5-5": {"fournisseur": "Anthropic", "hebergement": "États-Unis"},
+    "claude-haiku-5-5": {"fournisseur": "Anthropic", "hebergement": "États-Unis"},
+    "deepseek-v4-pro": {"fournisseur": "DeepSeek", "hebergement": "Chine"},
+    "mistral-large-latest": {"fournisseur": "Mistral AI", "hebergement": "Union européenne (France)"},
+    "mistral-medium-latest": {"fournisseur": "Mistral AI", "hebergement": "Union européenne (France)"},
+}
 
 
 class Refus(Exception):
@@ -43,6 +57,7 @@ def catalogue() -> dict:
         "zones": list(ZONES),
         "zones_porte": list(ZONES_PORTE),
         "modeles": list(MODELES),
+        "modeles_detail": [{"id": m, **MODELES_DETAIL[m]} for m in MODELES],
     }
 
 
@@ -86,6 +101,14 @@ def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | N
             if ch["voix"] is not None and not isinstance(ch["voix"], str):
                 raise Refus(400, "voix : l'identifiant d'une voix, ou rien")
             ch["voix"] = {"voix": ch["voix"]}
+        if "modeles" in ch:  # le client choisit ses modèles (lot 9.5), parmi ceux que MEGGA sait faire tourner
+            if not isinstance(ch["modeles"], dict):
+                raise Refus(400, "modeles : {principal, secours}")
+            if autres := sorted(set(ch["modeles"]) - {"principal", "secours"}):  # le modèle de l'oral reste à MEGGA
+                raise Refus(403, "réglages réservés à MEGGA : " + ", ".join(f"modeles.{k}" for k in autres))
+            hors = [m for m in ch["modeles"].values() if m is not None and m not in MODELES]
+            if hors or ch["modeles"].get("principal", "x") is None:
+                raise Refus(400, "modeles : choisissez dans la liste (" + ", ".join(MODELES) + ") ; le secours peut être vide")
         if "metier" in ch and "outils" not in ch:
             # Changer de métier retire les outils qu'il ne permet pas.
             permis = METIERS.get(ch["metier"], ())

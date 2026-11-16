@@ -40,6 +40,15 @@ ABANDON_RAPPEL = 24 * 3600  # un rappel encore en échec un jour après son heur
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
 IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
+# La mention de l'IA au début d'une conversation (Config.mention_ia, lot 9.5).
+MENTIONS_IA = {
+    "fr": ("Vous échangez avec {agent}, l'assistant virtuel de {entreprise} : une intelligence artificielle.",
+           " Vous pouvez demander à parler à une personne de l'équipe."),
+    "en": ("You are chatting with {agent}, the virtual assistant of {entreprise}: an artificial intelligence.",
+           " You can ask to speak to a member of the team."),
+    "de": ("Sie schreiben mit {agent}, dem virtuellen Assistenten von {entreprise}: einer künstlichen Intelligenz.",
+           " Sie können verlangen, mit einer Person aus dem Team zu sprechen."),
+}
 ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute pendant douze heures, tant que la personne n'a pas répondu
 
 
@@ -157,6 +166,7 @@ class Conversations:
         async with self._a_son_tour(personne):
             dernier = messages[-1]
             premier = await self._premier(personne, role)
+            mention = await self._mention(personne)  # avant de noter ce message : une conversation qui commence
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
             await self._sans_echec(self.exp.lu(dernier.id))
             await self._sans_echec(self._rappels_differes(personne))
@@ -175,7 +185,7 @@ class Conversations:
             etat = {"pose": False}
             regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
             try:
-                await self._repondre(personne, messages, role, premier)
+                await self._repondre(personne, messages, role, premier, mention)
             finally:
                 if regard:
                     regard.cancel()
@@ -224,7 +234,23 @@ class Conversations:
             await self._ecrire(personne, reponse)
         return True
 
-    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False) -> None:
+    async def _mention(self, personne: str) -> str:
+        """La mention de l'IA (Config.mention_ia, lot 9.5) à dire si une conversation commence (rien depuis douze heures)."""
+        if not self.conf.mention_ia or self.contacts is None:
+            return ""
+        try:
+            dernier = await asyncio.to_thread(self.contacts.dernier, personne)
+        except Exception as e:
+            log.warning("contact illisible : %s", str(e)[:200])
+            dernier = None
+        if dernier is not None and time.time() - dernier <= accueils.INACTIVITE:
+            return ""
+        ia, humain = MENTIONS_IA.get(self.conf.langue, MENTIONS_IA["fr"])
+        # l'offre de parler à une personne, seulement si l'agent sait passer la main (Config.transfert, lot 9.3)
+        return ia.format(agent=self.conf.nom_agent, entreprise=self.conf.entreprise) + (humain if self.conf.transfert else "")
+
+    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False,
+                        mention: str = "") -> None:
         parties, vocal, sourd, images, rang, choisis = [], False, False, [], 0, 0
         for m in messages:
             if m.choix and await self._choisi(personne, role, m.choix):
@@ -255,6 +281,8 @@ class Conversations:
             if not choisis:
                 await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
             return
+        if mention:  # dite avant toute réponse, une fois par conversation
+            await self._ecrire(personne, mention)
         bienvenue = self._bienvenue(role, entendu, messages[-1].profil) if premier else ""
         if bienvenue:
             await self._ecrire(personne, bienvenue)
@@ -332,6 +360,7 @@ class Conversations:
                 if not self.debit.permis(personne):
                     return None
                 premier = await self._premier(personne, role)
+                mention = await self._mention(personne)
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
                 bienvenue = self._bienvenue(role, texte) if premier else ""
@@ -347,7 +376,7 @@ class Conversations:
                         brute, echec = EXCUSE, True
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
-                reponse = nettoyer(masquer_secrets(brute))
+                reponse = nettoyer(masquer_secrets((f"{mention}\n\n" if mention else "") + brute))
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:
