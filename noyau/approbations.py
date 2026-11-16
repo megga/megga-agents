@@ -108,6 +108,15 @@ class Gardien:
         self._taches.add(t)
         t.add_done_callback(self._taches.discard)
 
+    async def vider(self, delai: float) -> int:
+        """Attend les écritures du journal encore en route (à l'arrêt, ou à la fin d'un essai) : `delai` secondes au
+        plus. Une écriture encore dans la file des fils quand la boucle se ferme serait annulée sans être faite.
+        Rend le nombre d'écritures restées en route."""
+        restantes = set(self._taches)
+        if restantes:
+            _, restantes = await asyncio.wait(restantes, timeout=delai)
+        return len(restantes)
+
     def crochet(self, regles: dict[str, str], role: str = "public"):
         """Le crochet d'Agno (tool_hooks) d'un agent : `regles` {outil: règle}, `role` celui de ses personnes."""
 
