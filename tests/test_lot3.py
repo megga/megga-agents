@@ -233,3 +233,39 @@ def test_un_modele_rappel_refuse_ne_boucle_pas(rappels):
     bilan = asyncio.run(c.envoyer_rappels_echus(time.time()))
     assert bilan["echec"] == 0 and bilan["attente"] == 1 and rappels.differes(MOI)
     assert exp.journal == [("modele", MOI, "attente_client")]
+
+
+def bouton(texte="Afficher", ident="b1"):
+    return Entrant(id=ident, de=MOI, texte=texte, envoye=time.time(), genre="button", choix=texte)
+
+
+def test_le_bouton_d_un_modele_ne_lance_pas_de_tour(tmp_path):
+    """Relecture du 16.11.2026 (I11) : toucher « Afficher » fait partir ce qui attendait, et c'est tout ; sans rien qui
+    attende, le modèle répond comme à un message."""
+    url = f"sqlite:///{tmp_path}/b.db"
+    differes = stockage.Differes(url)
+    differes.garder(MOI, [{"texte": "La demande de Marc attendait."}])
+    agent, exp = Agent(), Exp()
+    c = Conversations(conf(), agent, exp, contacts=Contacts(time.time() - 60), differes=differes, attente=0.01)
+    asyncio.run(tourner(c, bouton()))
+    assert agent.appels == [] and exp.journal == [("texte", MOI, "La demande de Marc attendait.")]
+    asyncio.run(tourner(c, bouton(ident="b2")))
+    assert agent.appels == ["Afficher"]
+
+
+def test_l_annonce_survit_au_sommeil_du_conteneur(tmp_path):
+    """Relecture du 16.11.2026 (I13) : l'annonce « un message vous attend » est gardée en base ; un conteneur réveillé ne
+    la renvoie pas tant que la personne n'a pas répondu."""
+    url = f"sqlite:///{tmp_path}/a.db"
+    etats, differes = stockage.Etats(url), stockage.Differes(url)
+
+    def conversations():
+        exp = Exp()
+        return Conversations(conf(modeles_meta={"message": {"nom": "attente_client"}}), Agent(), exp,
+                             contacts=Contacts(time.time() - 30 * 3600), differes=differes, etats=etats), exp
+
+    c1, exp1 = conversations()
+    assert asyncio.run(c1.envoyer_de_soi_meme(MOI, [{"texte": "Demande 1"}], "demande")) == "modele"
+    c2, exp2 = conversations()  # le conteneur s'est endormi, puis réveillé
+    assert asyncio.run(c2.envoyer_de_soi_meme(MOI, [{"texte": "Demande 2"}], "demande")) == "modele"
+    assert exp1.journal == [("modele", MOI, "attente_client")] and exp2.journal == []

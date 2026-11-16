@@ -314,6 +314,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if base is None:
             raise Refus(404, "aucune version de base")
         changements = gabarits.reglages_pour(corps.get("gabarit"), base["config"])
+        if qui.role == "client" and not regles.consignes_de_gabarit(base["config"].get("consignes", "")):
+            changements.pop("consignes")  # celles que MEGGA a écrites sur mesure restent (relecture du 16.11.2026, I2)
         if corps.get("nom_agent") is not None:
             changements["nom_agent"] = corps["nom_agent"]
         conf = regles.valider(regles.fusionner(base["config"], changements))
@@ -348,6 +350,11 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
                 if forcer:
                     raise Refus(403, "forcer : réservé à MEGGA")
             courante = c.get("current_version")
+            if qui.role == "client" and courante and courante != numero:
+                en_service = await bd(version_de, ident, courante)
+                if regles.reglages_de_megga(v["config"]) != regles.reglages_de_megga(en_service["config"]):
+                    raise Refus(403, "cette version change des réglages de MEGGA (numéro WhatsApp, modèles Meta, gestion du site, "
+                                     "consignes…) : sa mise en service passe par MEGGA")
             if courante == numero and v["config"].get("zone") in regles.ZONES_PORTE:
                 raise Refus(409, "cette version est déjà en service")
             if v["etat"] == "brouillon" and v["essais"] == 0 and not forcer:
