@@ -36,10 +36,12 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["noyau", "atelier", "pilote", "packs", "packs.immobilier"]
+packages = ["noyau", "atelier", "atelier.gabarits", "pilote", "packs", "packs.immobilier"]
 
 [tool.setuptools.package-data]
 "packs.immobilier" = ["demo/*.json"]
+# Les modèles par métier, leurs anciennes consignes et la licence des textes repris (atelier/gabarits).
+"atelier.gabarits" = ["*.md", "*.json", "*.txt"]
 # Les clés publiques des licences, du pilotage et des images (scripts/licence.py cle, scripts/pilotage.py cle,
 # scripts/cle_signature.sh, copiée de socle/cosign.pub à la construction), quand elles existent.
 "noyau" = ["licence.pub", "pilotage.pub", "cosign.pub", "banc/*.json"]

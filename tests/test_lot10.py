@@ -2,10 +2,13 @@
 
 import asyncio
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 from test_lot6_pilote import MEGGA, activer, canal, nouvelle_version, releve_signe  # noqa: F401 (canal : fixture)
 
+from atelier import gabarits, regles
 from noyau import config as configuration
 from noyau import connecteurs, stockage, version
 from noyau.app import creer
@@ -14,6 +17,7 @@ from test_lot9_3 import Contexte, FaussesConversations
 
 NOUVEAUX = ("sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage")
 CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
+ICI_GABARITS = Path(gabarits.__file__).parent
 
 
 def test_les_huit_metiers():
@@ -123,3 +127,78 @@ def test_l_app_branche_les_conversations(url):
     app = creer({"CLIENT_CONFIG": json.dumps({**CONF, "outils": ["leads"]}), "DATABASE_URL": url, "INTERNE_TOKEN": "interne"},
                 agent=FauxAgent(), expediteur=FauxExpediteur(), leads=l)
     assert l.conversations is app.state.conversations
+
+
+# Les modèles en fichiers
+
+
+def test_les_modeles_se_chargent_de_leurs_fichiers():
+    assert list(gabarits.GABARITS)[:2] == ["generaliste", "immobilier"]
+    socle = (ICI_GABARITS / "_accueil.md").read_text(encoding="utf-8").strip()
+    for id_, g in gabarits.GABARITS.items():
+        r = g["reglages"]
+        assert r["consignes"].startswith(socle) and len(r["consignes"]) <= 8000
+        assert r["outils"] == ["connaissances", "leads"] and r["transfert"] is True and r["mention_ia"] is True
+        assert r["voix"] == {"voix": gabarits.VOIX_PAR_DEFAUT}
+    assert gabarits.GABARITS["generaliste"]["source"]["licence"] == "MIT"
+    assert all("source" in g for g in gabarits.lister())
+
+
+def copie_des_modeles(dossier):
+    for f in ICI_GABARITS.glob("*.md"):
+        shutil.copy(f, dossier / f.name)
+
+
+def remplacer(texte: str, ligne: str) -> str:
+    """Remplace la ligne d'un champ de l'en-tête, et la suite de sa valeur si elle tient sur plusieurs lignes."""
+    cle, sortie, suite = ligne.split(":")[0] + ":", [], False
+    for l in texte.splitlines():
+        if suite and l.startswith(" "):
+            continue
+        suite = l.startswith(cle)
+        sortie.append(ligne if suite else l)
+    return "\n".join(sortie) + "\n"
+
+
+@pytest.mark.parametrize("defaut, message", [
+    ("metier: boulanger", "metier"), ("ordre: 2", "ordre"), ("ton: vif \u2014 et drôle", "tiret"),
+    ("titre: ", "titre"), ("source: {depot: x, chemins: [a.md], commit: abc, licence: GPL}", "licence")])
+def test_un_fichier_mal_forme_arrete_le_chargement(tmp_path, defaut, message):
+    copie_des_modeles(tmp_path)
+    f = tmp_path / "generaliste.md"
+    f.write_text(remplacer(f.read_text(encoding="utf-8"), defaut), encoding="utf-8")   # ordre 2 : celui d'immobilier
+    with pytest.raises(ValueError, match=message) as e:
+        gabarits.charger(tmp_path)
+    assert "generaliste.md" in str(e.value)   # le fichier fautif est nommé
+
+
+def test_des_consignes_trop_longues_arretent_le_chargement(tmp_path):
+    copie_des_modeles(tmp_path)
+    f = tmp_path / "generaliste.md"
+    _, entete, _ = f.read_text(encoding="utf-8").split("---\n", 2)
+    f.write_text("---\n" + entete + "---\n" + "x" * 8000 + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="8000"):
+        gabarits.charger(tmp_path)
+
+
+def test_les_anciens_textes_restent_ceux_d_un_modele():
+    anciens = json.loads((ICI_GABARITS / "anciens.json").read_text(encoding="utf-8"))
+    assert set(anciens) == {"generaliste", "immobilier"}
+    for texte in anciens.values():
+        assert regles.consignes_de_gabarit(texte)
+    for g in gabarits.GABARITS.values():
+        assert regles.consignes_de_gabarit(g["reglages"]["consignes"])
+    assert not regles.consignes_de_gabarit("Consignes sur mesure de MEGGA.")
+
+
+def test_l_immobilier_garde_son_pack_et_le_garage_le_retire():
+    assert gabarits.reglages_pour("immobilier", {"catalogue": "demo:megga-estates"})["outils"] == ["immobilier", "connaissances", "leads"]
+    base = {**CONF, "metier": "immobilier", "outils": ["immobilier"], "catalogue": "demo:megga-estates"}
+    r = gabarits.reglages_pour("generaliste", base)   # un autre métier : le pack immobilier part
+    assert r["outils"] == ["connaissances", "leads"]
+    configuration.lire({**base, **r})
+    if "garage" not in gabarits.GABARITS:
+        pytest.skip("le modèle garage vient à la tâche 7")
+    r = gabarits.reglages_pour("garage", base)
+    assert r["outils"] == ["connaissances", "leads"]
+    configuration.lire({**base, **r})

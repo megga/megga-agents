@@ -36,7 +36,7 @@ def test_le_client_choisit_un_metier_et_un_prenom(atelier):
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": IDENTITE, "nom_agent": "Lea"})
     assert r.status_code == 201, r.text
     client = jeton_client(t, "agence-lac")
-    assert [g["id"] for g in t.get("/atelier/gabarits", headers=client).json()["gabarits"]] == ["generaliste", "immobilier"]
+    assert [g["id"] for g in t.get("/atelier/gabarits", headers=client).json()["gabarits"]] == list(gabarits.GABARITS)
 
     v2 = t.post("/atelier/clients/agence-lac/gabarit", headers=client, json={"gabarit": "immobilier", "nom_agent": "Iris"})
     assert v2.status_code == 201, v2.text
@@ -55,7 +55,7 @@ def test_le_gabarit_garde_ce_qui_tient_au_client_et_a_megga(atelier):
     r = t.post("/atelier/clients/exemple/gabarit", headers=MEGGA, json={"gabarit": "immobilier"})
     c = r.json()["config"]
     assert c["modeles"]["principal"] == "claude-opus-5-5" and c["nom_agent"] == "Alix"  # sans prénom donné, il reste
-    assert c["outils"] == ["immobilier"]  # le catalogue est branché : le pack reste actif
+    assert c["outils"] == ["immobilier", "connaissances", "leads"]  # le catalogue est branché : le pack reste actif
     autre = jeton_client(t)
     nouveau_client(t, id="voisin", whatsapp={"numero_id": "100000000000077"})
     assert t.post("/atelier/clients/voisin/gabarit", headers=autre, json={"gabarit": "immobilier"}).status_code == 404
@@ -64,7 +64,8 @@ def test_le_gabarit_garde_ce_qui_tient_au_client_et_a_megga(atelier):
 def test_refus_en_clair(atelier):
     t = atelier
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "boulangerie", "client": IDENTITE, "nom_agent": "Lea"})
-    assert r.status_code == 400 and r.json()["erreur"] == "Choisissez un modèle : généraliste, immobilier."
+    titres = ", ".join(g["titre"].lower() for g in gabarits.GABARITS.values())
+    assert r.status_code == 400 and r.json()["erreur"] == f"Choisissez un modèle : {titres}." and "généraliste, immobilier" in titres
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": {"id": "x1"}, "nom_agent": "Lea"})
     assert r.json()["erreur"] == "Il manque : entreprise, zone."
     assert t.post("/atelier/clients", headers=jeton_client_cree(t), json={"gabarit": "generaliste", "client": IDENTITE}).status_code == 403
