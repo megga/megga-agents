@@ -8,6 +8,7 @@ import yaml
 from sqlalchemy import Column, String, inspect
 
 from noyau import stockage
+from noyau.config import NOMS_METIERS
 from noyau.version import carte, revision, version
 
 BASES = ["sqlite"] + (["postgres"] if os.environ.get("TEST_POSTGRES_URL") else [])
@@ -38,7 +39,7 @@ def test_la_version_de_l_image(monkeypatch):
     monkeypatch.setenv("MEGGA_REVISION", "abc123")
     assert revision() == "abc123"
     c = carte()
-    assert c == {"version": version(), "revision": "abc123", "config": 1, "schema": stockage.SCHEMA_VERSION}
+    assert c == {"version": version(), "revision": "abc123", "config": 1, "schema": stockage.SCHEMA_VERSION, "metiers": list(NOMS_METIERS)}
 
 
 def test_migrations_au_demarrage(base):

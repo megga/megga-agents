@@ -27,7 +27,9 @@ def revision() -> str:
 
 def carte() -> dict:
     """Ce que /sante montre de l'image, sans rien de privé."""
+    from .config import NOMS_METIERS
     from .config import VERSION as CONFIG
     from .stockage import SCHEMA_VERSION
 
-    return {"version": version(), "revision": revision(), "config": CONFIG, "schema": SCHEMA_VERSION}
+    return {"version": version(), "revision": revision(), "config": CONFIG, "schema": SCHEMA_VERSION,
+            "metiers": list(NOMS_METIERS)}
