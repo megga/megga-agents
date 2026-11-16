@@ -151,7 +151,7 @@ def _reecriture(conf, cles):
     """Le modèle qui réécrit une réponse pour l'oral : un agent sans mémoire ni outils."""
     from agno.agent import Agent
 
-    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+    nom = conf.modeles.petit()
     oral = Agent(model=modele(nom, cles), instructions=consignes_orales(conf), telemetry=False, markdown=False)
 
     async def reecrire(demande: str) -> str:
@@ -164,10 +164,10 @@ def _reecriture(conf, cles):
 
 
 def _resumeur(conf, cles):
-    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral à défaut du secours."""
+    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral (Modeles.petit)."""
     from agno.agent import Agent
 
-    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+    nom = conf.modeles.petit()
 
     async def resumer(consigne: str, demande: str) -> str:
         sortie = await Agent(model=modele(nom, cles), instructions=[consigne], telemetry=False, markdown=False).arun(demande)
@@ -340,7 +340,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
                                   choix={**(relations.choix if relations else {}), approbations.PREFIXE: gardien.choix,
                                          **({reprises.PREFIXE: transfert.choix} if transfert else {})},
-                                  echeances=relations.echeances if relations else None, fil_tenu=fil_tenu)
+                                  echeances=relations.echeances if relations else None, fil_tenu=fil_tenu,
+                                  etats=stockage.Etats(env["DATABASE_URL"]) if env.get("DATABASE_URL") else None)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
 
@@ -372,7 +373,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
-    deja = Deja()
+    # Les messages déjà traités, gardés dans la base : un webhook renvoyé après un redémarrage n'a pas deux réponses.
+    deja = stockage.Vus(env["DATABASE_URL"]) if env.get("DATABASE_URL") else Deja()
     debit_cles = entree_api.DebitCles()
 
     def licence_echue() -> bool:
@@ -487,7 +489,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 log.warning("message ancien, sans réponse")
                 conversations.noter_journal("message_ancien", detail="rejoué" if rejoue else "")
                 continue
-            if not deja.nouveau(m.id):
+            if not await asyncio.to_thread(deja.nouveau, m.id):
                 continue
             role = await asyncio.to_thread(personnes.role, m.de)
             if role == "bloque":  # un numéro bloqué par le client : ni lu, ni répondu
@@ -547,6 +549,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return trop("clé", debit_cles.attente(cle))
         if not conversations.debit.libre(qui):
             return trop("personne", conversations.debit.attente(qui))
+        if (atteint := conversations.plafond.libre(qui, role)) is not None:  # le plafond du jour (relecture, I7)
+            conversations.noter_plafond(atteint)
+            attente = conversations.plafond.attente()
+            return erreur(429, "plafond du jour atteint", attente=attente, entetes={"retry-after": str(attente)})
         debit_cles.permis(cle)
         tour = await conversations.repondre_api(qui, texte.strip(), role)
         if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue

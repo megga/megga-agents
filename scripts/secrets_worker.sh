@@ -20,6 +20,7 @@ echo "→ META_VERIFY_TOKEN posé et copié dans le presse-papiers"
 
 admin=$(openssl rand -hex 32)
 printf '%s' "$admin" | npx wrangler secret put ADMIN_TOKEN >/dev/null
-security add-generic-password -U -a megga-agents -s megga-agents-admin -w "$admin"
+# Par l'entrée de « security -i » : jamais en argument de commande, lisible un instant dans ps.
+printf 'add-generic-password -U -a megga-agents -s megga-agents-admin -w %s\n' "$admin" | security -i > /dev/null
 echo "→ ADMIN_TOKEN posé et rangé dans le trousseau"
 unset jeton admin

@@ -20,8 +20,8 @@ socle/      Dockerfile (Python, Agno à version figée), lancement d'AgentOS
 noyau/      le paquet Python du noyau
 packs/      immobilier/ (puis les autres métiers)
 clients/    une configuration par client, sans aucun secret
-porte/      le Worker d'entrée (TypeScript)
-scripts/    nouveau-client, tests de bout en bout
+porte/      le Worker d'entrée (JavaScript)
+scripts/    les secrets, l'inscription d'un client, les clés, le déploiement
 ```
 
 **Le chemin d'un message** :
@@ -44,7 +44,7 @@ scripts/    nouveau-client, tests de bout en bout
 
 **Déploiement** : `wrangler deploy` construit l'image et la déploie, par étapes. Tests à chaque PR ; mise en production seulement à la main, sur « Fusionne et déploie ». Changer la configuration d'un client ne redéploie rien.
 
-**Nouveau client en moins d'une journée** : `scripts/nouveau-client` crée la base, les secrets, l'entrée de l'annuaire et la configuration. Restent à la main : le numéro chez Meta et l'approbation de ses modèles.
+**Nouveau client en moins d'une journée** : l'atelier crée le client et sa configuration (d'après un modèle par métier), `scripts/secrets_client.sh` pose l'adresse de sa base, et la mise en service l'inscrit dans l'annuaire. Restent à la main : la base chez Neon, le numéro chez Meta et l'approbation de ses modèles.
 
 ## Les coûts estimés
 

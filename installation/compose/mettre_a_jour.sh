@@ -11,13 +11,17 @@
 # Ou à la main, après « python -m pilote accepter <n> ».
 set -euo pipefail
 cd "$(dirname "$0")"
+# .env porte les mots de passe de l'installation : tout fichier créé ici n'est lisible que par son propriétaire.
+umask 077
 
 # Une seule exécution à la fois (mkdir est atomique, et existe partout). Un verrou de plus de 30 minutes
 # vient d'une exécution interrompue (serveur redémarré) : il ne doit pas bloquer les suivantes.
 verrou=.mise-a-jour.verrou
-find . -maxdepth 1 -name "$verrou" -type d -mmin +30 -exec rmdir {} + 2> /dev/null || true
+find . -maxdepth 1 -name "$verrou" -type d -mmin +30 -exec rm -rf {} + 2> /dev/null || true
 mkdir "$verrou" 2> /dev/null || exit 0
-trap 'rmdir "$verrou"' EXIT
+# Le verrou porte l'identifiant de son exécution : à la sortie, on ne retire que le sien, jamais celui d'une suivante.
+echo $$ > "$verrou/pid"
+trap '[ "$(cat "$verrou/pid" 2> /dev/null)" = "$$" ] && rm -rf "$verrou"' EXIT
 
 heure() { date -u +"%d.%m.%Y %H:%M:%S UTC"; }
 valeur() { sed -n "s/^$1=//p" .env | tail -n 1 | tr -d "\"'"; }
@@ -52,7 +56,9 @@ case "$action" in
         # jamais une étiquette, jamais un autre dépôt, jamais une commande.
         depot=$(valeur MEGGA_DEPOT)
         depot=${depot:-ghcr.io/megga/megga-agents}
-        if [ "${cible%@sha256:*}" != "$depot" ] || ! printf '%s' "$cible" | grep -Eq '^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$'; then
+        # Toute la réponse, d'un seul bloc ([[ =~ ]] : grep jugeait ligne par ligne, une réponse sur deux lignes passait).
+        motif='^[a-z0-9]+([.-][a-z0-9]+)*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+@sha256:[0-9a-f]{64}$'
+        if [ "${cible%@sha256:*}" != "$depot" ] || ! [[ "$cible" =~ $motif ]]; then
             echo "$(heure) réponse du pilote refusée : $reponse"
             exit 1
         fi
@@ -60,8 +66,9 @@ case "$action" in
         # Déjà là (l'image d'avant, d'ordinaire) : pas besoin du registre, qui peut être en panne.
         docker image inspect "$cible" > /dev/null 2>&1 || docker pull -q "$cible" > /dev/null
         # .env garde la nouvelle image : un « docker compose up » plus tard la reprend.
+        # Écrit à côté, puis remplacé d'un coup : un .env coupé en route n'existe jamais.
         awk -v ligne="MEGGA_IMAGE=$cible" '/^MEGGA_IMAGE=/ { print ligne; next } { print }' .env > .env.nouveau
-        cat .env.nouveau > .env && rm -f .env.nouveau
+        mv -f .env.nouveau .env
         # L'agent seul : le pilote, resté sur l'image d'avant, surveille la nouvelle et décide du retour.
         docker compose up -d --no-deps agent
         # Le pilote apprend l'image qui tourne vraiment, pas celle qu'on voulait poser.

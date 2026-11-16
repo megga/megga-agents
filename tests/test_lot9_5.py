@@ -140,7 +140,7 @@ def test_la_valeur_de_la_periode(url):
 
 def test_l_atelier(tmp_path):
     from atelier.app import creer as creer_atelier
-    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, FaussePorte, FauxModele, jeton_client, nouveau_client
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, MEGGA, FaussePorte, FauxModele, jeton_client, nouveau_client
 
     class Porte(FaussePorte):
         def __init__(self):
@@ -172,3 +172,13 @@ def test_l_atelier(tmp_path):
     assert r.status_code == 201, r.text
     c = r.json()["config"]
     assert (c["mention_ia"], c["minutes_par_conversation"], c["modeles"]["principal"]) == (True, 8, "mistral-large-latest")
+    # Ses modèles sont à lui : il met cette version en service sans MEGGA
+    v = r.json()["version"]
+    t.post(f"/atelier/clients/exemple/versions/{v}/essai", headers=client, json={"message": "Bonjour"})
+    assert t.post(f"/atelier/clients/exemple/versions/{v}/activer", headers=client).status_code == 200, "le client choisit ses modèles"
+    # Le modèle de l'oral et du fil reste à MEGGA : revenir à une version d'avant ne le change pas
+    r = t.post("/atelier/clients/exemple/versions", headers=MEGGA, json={"changements": {"modeles": {"oral": "claude-haiku-5-5"}}})
+    v_oral = r.json()["version"]
+    assert t.post(f"/atelier/clients/exemple/versions/{v_oral}/activer", headers=MEGGA, json={"forcer": True}).status_code == 200
+    r = t.post(f"/atelier/clients/exemple/versions/{v}/activer", headers=client)
+    assert r.status_code == 403 and "réglages de MEGGA" in r.json()["erreur"]

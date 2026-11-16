@@ -72,16 +72,56 @@ def moteur(url: str) -> Engine:
         return _MOTEURS[url]
 
 
+# Les tables déjà créées (et complétées) par ce processus : une seule fois chacune, pas à chaque objet.
+_PRETES: set[tuple[str, str]] = set()
+
+
+def _litteral(v) -> str:
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def _completer(e: Engine, t: Table) -> None:
+    """Les colonnes déclarées qui manquent à une table déjà là (create_all ne touche pas une table existante) : ajoutées,
+    avec leur valeur par défaut. Une colonne ajoutée à une de nos tables ne casse plus une base créée avant elle
+    (relecture du 16.11.2026)."""
+    from sqlalchemy import inspect
+
+    existantes = {c["name"] for c in inspect(e).get_columns(t.name, schema=t.schema)}
+    manquantes = [c for c in t.columns if c.name not in existantes]
+    if not manquantes:
+        return
+    pg = e.dialect.name == "postgresql"
+    nom = f'"{SCHEMA}"."{t.name}"' if pg else f'"{t.name}"'
+    with e.begin() as c:
+        for col in manquantes:
+            if col.primary_key:
+                raise RuntimeError(f"{t.name}.{col.name} : une clé ne s'ajoute pas à une table existante")
+            defaut = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+            sql = f'ALTER TABLE {nom} ADD COLUMN {"IF NOT EXISTS " if pg else ""}"{col.name}" {col.type.compile(e.dialect)}'
+            if defaut is not None:
+                sql += f" DEFAULT {_litteral(defaut)}" + ("" if col.nullable else " NOT NULL")
+            c.execute(text(sql))
+
+
 def _table(url: str, nom: str, *colonnes: Column) -> tuple[Engine, Table]:
-    """Une de nos tables (préfixe megga_), créée au besoin, dans le schéma d'Agno sous Postgres."""
+    """Une de nos tables (préfixe megga_), créée au besoin, dans le schéma d'Agno sous Postgres, et complétée des
+    colonnes qui lui manquent."""
     e = moteur(url)
     pg = e.dialect.name == "postgresql"
     meta = MetaData(schema=SCHEMA if pg else None)
     t = Table(nom, meta, *colonnes)
-    if pg:
-        with e.begin() as c:
-            c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
-    meta.create_all(e)
+    cle = (e.url.render_as_string(hide_password=True), nom)
+    if cle not in _PRETES:
+        if pg:
+            with e.begin() as c:
+                c.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{SCHEMA}"'))
+        meta.create_all(e)
+        _completer(e, t)
+        _PRETES.add(cle)
     return e, t
 
 
@@ -133,7 +173,8 @@ def _lignes(e: Engine, retouche=None) -> Iterator[dict]:
     options = {"isolation_level": "REPEATABLE READ"} if e.dialect.name == "postgresql" else {}
     with e.connect().execution_options(**options) as c, c.begin():
         for table in meta.sorted_tables:
-            for ligne in c.execute(select(table)).mappings():
+            # Par paquets : une grosse table ne se charge pas entière en mémoire (relecture du 16.11.2026, I20).
+            for ligne in c.execute(select(table).execution_options(yield_per=1000)).mappings():
                 l = dict(ligne) if retouche is None else retouche(table.name, dict(ligne))
                 if l is not None:
                     yield {"table": table.name, "ligne": {k: _en_json(v) for k, v in l.items()}}
@@ -255,18 +296,10 @@ def preparer(url: str) -> None:
     creer = getattr(base, "_create_all_tables", None)  # Agno ne crée ses tables qu'au premier usage
     if creer:
         creer()
-    Contacts(url)
-    Rappels(url)
-    Journal(url)
-    Fil(url)
-    ClesApi(url)
-    Bloques(url)
-    Partenaires(url)
-    Medias(url)
-    Etats(url)
-    Ordres(url)
-    JournalPilotage(url)
-    Reglages(url)
+    # Toutes nos tables, celles du pack immobilier (lot 7) comprises : sans elles, l'import d'une base qui les a échoue
+    # (relecture du 16.11.2026, I14). Un essai vérifie qu'aucune n'est oubliée (tests/test_noyau.py).
+    for table in TABLES:
+        table(url)
     _table_schema(url)
 
 
@@ -903,6 +936,21 @@ class Differes:
                 c.execute(delete(t).where(t.c.id.in_([l.id for l in lignes])))
         return [{**m, "_quand": l.quand} for l in lignes if l.quand >= limite for m in (_de_json(l.contenu) or [])]
 
+    def a_envoyer(self, personne: str, maintenant: float | None = None) -> list[dict]:
+        """Les messages gardés pour cette personne, dans l'ordre, sans les retirer : {ligne, quand, messages}. Chaque
+        ligne se retire une fois envoyée (retirer) : un conteneur qui tombe en route ne perd rien. Ceux de plus de
+        GARDE_DIFFERE sont effacés sans partir."""
+        t = self._t
+        limite = (maintenant or time.time()) - GARDE_DIFFERE
+        with self._e.begin() as c:
+            c.execute(delete(t).where(t.c.personne == personne, t.c.quand < limite))
+            lignes = list(c.execute(select(t).where(t.c.personne == personne).order_by(t.c.quand)))
+        return [{"ligne": l.id, "quand": l.quand, "messages": _de_json(l.contenu) or []} for l in lignes]
+
+    def retirer(self, ligne: str) -> None:
+        with self._e.begin() as c:
+            c.execute(delete(self._t).where(self._t.c.id == ligne))
+
     def effacer(self, personne: str) -> int:
         """Ce qui attendait cette personne ne lui partira pas (un partenaire retiré, un numéro bloqué)."""
         with self._e.begin() as c:
@@ -946,8 +994,8 @@ class Carnet:
         t = self._t
         valeurs = {k: r.get(k) for k in self.CHAMPS}
         with self._e.begin() as c:
-            if r.get("lien"):
-                deja = c.execute(select(t.c.id).where(t.c.lien == r["lien"])).scalar()
+            if r.get("lien"):  # la même annonce, relevée de nouveau ; une vente au même lien est un autre relevé
+                deja = c.execute(select(t.c.id).where(t.c.lien == r["lien"], t.c.nature == r.get("nature"))).scalar()
                 if deja is not None:
                     c.execute(update(t).where(t.c.id == deja).values(**{k: v for k, v in valeurs.items() if k not in ("nature", "bas", "haut", "texte", "lien")}))
                     return int(deja), False
@@ -1077,14 +1125,15 @@ class Regles:
         t = self._t
         with self._e.begin() as c:
             ancienne = None
+            # La même règle déjà là : rien n'est remplacé (ni effacé), on le dit.
+            pareille = c.execute(select(t.c.id).where(t.c.personne == personne, func.lower(t.c.texte) == texte.lower())).scalar()
+            if pareille is not None:
+                return {"id": int(pareille), "deja": True, "ancienne": None}
             if remplace:
                 ancienne = c.execute(select(t.c.id, t.c.texte).where(t.c.id == int(remplace), t.c.personne == personne)).first()
                 if ancienne is None:
                     raise ValueError(f"pas de règle {remplace} à remplacer")
                 c.execute(delete(t).where(t.c.id == ancienne.id))
-            pareille = c.execute(select(t.c.id).where(t.c.personne == personne, func.lower(t.c.texte) == texte.lower())).scalar()
-            if pareille is not None:
-                return {"id": int(pareille), "deja": True, "ancienne": None}
             if (c.execute(select(func.count()).where(t.c.personne == personne)).scalar() or 0) >= REGLES_MAX:
                 raise ValueError(f"déjà {REGLES_MAX} règles : demande laquelle retirer")
             ident = c.execute(insert(t).values(personne=personne, texte=texte[:240], portee=portee[:40], qui=(qui or None) and qui[:80],
@@ -1531,9 +1580,10 @@ class Journal:
     """
 
     # mise_a_jour_bloquee : le pilote ne peut plus avancer seul une mise à jour de l'image (retour non fait, ligne retouchée)
-    # envoi_refuse : Meta a refusé un envoi après l'avoir accepté ; message_ancien : un message reçu trop tard pour une réponse
+    # envoi_refuse : Meta a refusé un envoi après l'avoir accepté ; message_ancien : un message reçu trop tard pour une réponse ;
+    # plafond : le plafond de tours du jour atteint (noyau/garde.py, Plafond)
     ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec", "mise_a_jour_bloquee", "envoi_refuse",
-               "message_ancien")
+               "message_ancien", "plafond")
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1560,6 +1610,11 @@ class Journal:
         with self._e.connect() as c:
             lignes = c.execute(select(t.c.genre, func.count(), func.sum(t.c.quantite)).where(t.c.quand >= depuis).group_by(t.c.genre))
             return {g: {"nombre": n, "quantite": float(q or 0)} for g, n, q in lignes}
+
+    def purger(self, avant: float) -> int:
+        """Le journal ne grossit pas sans fin : ce qui précède `avant` s'efface."""
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.quand < avant)).rowcount
 
     def alertes(self, depuis: float, limite: int = 100) -> list[dict]:
         t = self._t
@@ -2029,6 +2084,31 @@ class Installations:
             return [{**dict(l._mapping), "etat": _de_json(l.etat)} for l in lignes]
 
 
+class Vus:
+    """Les identifiants des messages de Meta déjà traités (table megga_vus) : Meta renvoie un webhook en cas de doute,
+    et un message déjà lu avant un redémarrage du conteneur ne reçoit pas deux réponses. Gardés trois jours."""
+
+    GARDE = 3 * 86400
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(url, "megga_vus", Column("id", String(100), primary_key=True), Column("quand", Float, nullable=False, index=True))
+        self._n = 0
+
+    def nouveau(self, ident: str, maintenant: float | None = None) -> bool:
+        if not ident:
+            return True
+        maintenant = time.time() if maintenant is None else maintenant
+        self._n += 1
+        try:
+            with self._e.begin() as c:
+                if self._n % 200 == 1:
+                    c.execute(delete(self._t).where(self._t.c.quand < maintenant - self.GARDE))
+                c.execute(insert(self._t).values(id=ident[:100], quand=maintenant))
+            return True
+        except IntegrityError:
+            return False
+
+
 class Nonces:
     """Les nonces des requêtes signées déjà reçues (table megga_nonces) : une requête rejouée est refusée."""
 
@@ -2050,3 +2130,8 @@ class Nonces:
             return True
         except IntegrityError:
             return False
+
+
+# Chaque classe qui crée une de nos tables ; preparer() les crée toutes.
+TABLES = (Contacts, Rappels, Jetons, ClesApi, Bloques, Partenaires, Reseau, Questions, Differes, Carnet, Veilles, Regles, Medias,
+          Etats, Journal, Fil, Reglages, Ordres, JournalPilotage, Installations, Nonces, Vus, Audit, Approbations, Connaissances, Reprises, Leads)

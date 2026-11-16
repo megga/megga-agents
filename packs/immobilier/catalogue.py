@@ -59,10 +59,13 @@ def lire_biens(donnees) -> list[Bien]:
         raise ValueError("catalogue : une liste de biens est attendue")
     biens = []
     for brut in lignes[:MAX_BIENS]:
+        if not isinstance(brut, dict):  # une entrée qui n'est pas un bien est écartée, pas tout le flux
+            log.warning("entrée du catalogue écartée : pas un objet")
+            continue
         try:
             biens.append(Bien.model_validate(brut))
         except ValidationError as e:
-            log.warning("bien écarté (%s) : %s", str((brut or {}).get("ref", "?"))[:40], str(e).splitlines()[0][:200])
+            log.warning("bien écarté (%s) : %s", str(brut.get("ref", "?"))[:40], str(e).splitlines()[0][:200])
     return biens
 
 
@@ -84,8 +87,9 @@ class Catalogue:
     def biens(self) -> list[Bien]:
         if time.time() - self._lu > RAFRAICHIR_S:
             try:
-                client = self._client or httpx.Client(timeout=20)
-                r = client.get(self.source)
+                if self._client is None:  # un seul client, gardé, au lieu d'un nouveau à chaque relecture
+                    self._client = httpx.Client(timeout=20)
+                r = self._client.get(self.source)
                 r.raise_for_status()
                 self._biens = lire_biens(r.json())
                 self._lu = time.time()

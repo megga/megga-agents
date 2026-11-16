@@ -148,7 +148,8 @@ class Pilotage:
             raise pilotage.PilotageRefuse("requête rejouée")
         d = lire_releve(corps)
         dernier = d.get("dernier_ordre")
-        dernier = dernier if isinstance(dernier, int) and not isinstance(dernier, bool) else None
+        # Un numéro d'ordre plausible : un nombre démesuré ferait déborder la colonne au prochain dépôt.
+        dernier = dernier if isinstance(dernier, int) and not isinstance(dernier, bool) and 0 <= dernier < 2**31 else None
         etat = {**d.get("etat", {}), "pilotage": d["pilotage"], "accord": d.get("accord") is True}
         if dernier is not None:
             etat["dernier_ordre"] = dernier
