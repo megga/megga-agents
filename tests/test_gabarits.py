@@ -21,10 +21,15 @@ def atelier(tmp_path):
     return t
 
 
-def test_chaque_gabarit_donne_un_agent_complet():
+@pytest.mark.parametrize("zone", ["suisse", "europe", "etats-unis"])
+def test_chaque_gabarit_donne_un_agent_complet(zone):
     for g in gabarits.lister():
-        conf = Config.model_validate(gabarits.nouvelle_config(g["id"], IDENTITE, "Lea"))
-        assert conf.nom_agent == "Lea" and conf.metier == g["metier"] and conf.voix.voix
+        if zone == "etats-unis" and g["id"] in ("sante", "garage"):  # leurs numéros d'urgence sont suisses et européens
+            with pytest.raises(regles.Refus, match="zone États-Unis"):
+                gabarits.nouvelle_config(g["id"], {**IDENTITE, "zone": zone}, "Lea")
+            continue
+        conf = Config.model_validate(gabarits.nouvelle_config(g["id"], {**IDENTITE, "zone": zone}, "Lea"))
+        assert conf.nom_agent == "Lea" and conf.metier == g["metier"] and conf.voix.voix and conf.zone == zone
         assert regles.manques(conf) == []  # prêt à essayer et à mettre en service tel quel
         for texte in (conf.consignes, conf.ton, g["titre"], g["description"]):
             assert not any(c in texte for c in "\u2014\u2013\u00b7")

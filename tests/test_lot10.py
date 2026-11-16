@@ -316,6 +316,48 @@ def test_l_immobilier_garde_son_pack_et_le_garage_le_retire():
     configuration.lire({**base, **r})
 
 
+ETATS_UNIS = {"id": "acme", "entreprise": "Acme", "zone": "etats-unis"}
+
+
+@pytest.mark.parametrize("modele", ["sante", "garage"])
+def test_sante_et_garage_pas_encore_aux_etats_unis(modele):
+    """Relecture finale (I7) : leurs numéros d'urgence (144, 112) sont ceux de la Suisse et de l'Europe."""
+    for appel in (lambda: gabarits.nouvelle_config(modele, ETATS_UNIS, "Lea"),
+                  lambda: gabarits.reglages_pour(modele, {**CONF, "zone": "etats-unis"})):
+        with pytest.raises(Refus) as e:
+            appel()
+        assert (e.value.statut, e.value.message) == (400, "Ce modèle n'est pas encore disponible pour la zone États-Unis.")
+    for zone in ("suisse", "europe", "client"):
+        assert gabarits.nouvelle_config(modele, {**ETATS_UNIS, "zone": zone}, "Lea")["metier"] == modele
+        assert gabarits.reglages_pour(modele, {**CONF, "zone": zone})["metier"] == modele
+
+
+def test_les_six_autres_restent_ouverts_aux_etats_unis():
+    autres = [g for g in gabarits.GABARITS if g not in ("sante", "garage")]
+    assert len(autres) == 6
+    for g in autres:
+        conf = configuration.Config.model_validate(gabarits.nouvelle_config(g, ETATS_UNIS, "Lea"))
+        assert conf.zone == "etats-unis" and "le 112 en Suisse et en Europe" in conf.consignes
+        assert gabarits.reglages_pour(g, {**CONF, "zone": "etats-unis"})["consignes"] == conf.consignes
+
+
+def test_l_atelier_refuse_sante_aux_etats_unis(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from atelier.app import creer as creer_atelier
+    from test_lot5 import ADMIN, FaussePorte, FauxModele
+
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/a.db", "ESSAIS_DIR": str(tmp_path / "e")},
+                                 porte=FaussePorte(), principal_essai=FauxModele()))
+    client = {**ETATS_UNIS, "numero_id": "100000000000042"}
+    r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "sante", "client": client, "nom_agent": "Lea"})
+    assert (r.status_code, r.json()["erreur"]) == (400, "Ce modèle n'est pas encore disponible pour la zone États-Unis.")
+    assert t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": client, "nom_agent": "Lea"}).status_code == 201
+    r = t.post("/atelier/clients/acme/gabarit", headers=MEGGA, json={"gabarit": "garage"})
+    assert (r.status_code, r.json()["erreur"]) == (400, "Ce modèle n'est pas encore disponible pour la zone États-Unis.")
+    assert t.post("/atelier/clients/acme/gabarit", headers=MEGGA, json={"gabarit": "hotellerie"}).status_code == 201
+
+
 def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
     from test_lot5 import FauxModele
     from test_lot9_2 import FauxVectoriseur

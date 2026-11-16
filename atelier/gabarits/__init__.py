@@ -9,7 +9,8 @@ Un fichier par modèle, `<id>.md` : un en-tête YAML entre deux lignes `---` (ti
 description, metier, ton, ordre, source, et a_valider s'il le faut), puis le bloc de
 consignes propre au métier. Les consignes d'un modèle sont le socle d'accueil commun
 (`_accueil.md`) suivi de ce bloc. Tout est vérifié à l'import : un fichier mal formé
-arrête l'import, donc la construction de l'image et la CI.
+arrête l'import, donc la CI et le démarrage de l'atelier (pas la construction de l'image :
+`pip install .` n'importe rien).
 
 Les textes tirés d'agency-agents (licence MIT, `LICENCE-agency-agents.txt`) nomment leur
 source dans `source` ; un modèle écrit sans source a `source: null`.
@@ -147,6 +148,10 @@ GABARITS: dict[str, dict[str, Any]] = charger()
 ANCIENNES: dict[str, str] = json.loads((ICI / "anciens.json").read_text(encoding="utf-8"))
 CONSIGNES_CONNUES: frozenset[str] = frozenset([*(g["reglages"]["consignes"] for g in GABARITS.values()), *ANCIENNES.values()])
 
+# Les modèles dont les numéros d'urgence (le 144, le 112) sont ceux de la Suisse et de l'Europe : pas encore pour la zone
+# États-Unis, où ils seraient faux (relecture finale du lot 10, I7).
+PAS_AUX_ETATS_UNIS = ("sante", "garage")
+
 # Ce qu'il faut pour créer un client d'après un gabarit (MEGGA).
 IDENTITE = ("id", "entreprise", "zone")
 # Facultatif : sans numéro, l'agent ne sert que par API (noyau/api.py).
@@ -165,8 +170,12 @@ def gabarit(nom: Any) -> dict:
 
 
 def reglages_pour(nom: Any, base: dict) -> dict:
-    """Les réglages du gabarit pour ce client ; le pack immobilier reste actif si son catalogue est déjà branché."""
-    r = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v) for k, v in gabarit(nom)["reglages"].items()}
+    """Les réglages du gabarit pour ce client ; le pack immobilier reste actif si son catalogue est déjà branché. Santé et
+    garage sont refusés pour la zone États-Unis."""
+    g = gabarit(nom)
+    if nom in PAS_AUX_ETATS_UNIS and base.get("zone") == "etats-unis":
+        raise Refus(400, "Ce modèle n'est pas encore disponible pour la zone États-Unis.")
+    r = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v) for k, v in g["reglages"].items()}
     if r["metier"] == "immobilier" and base.get("catalogue"):
         r["outils"] = ["immobilier", *r["outils"]]
     return r
@@ -184,7 +193,7 @@ def nouvelle_config(nom: Any, client: Any, nom_agent: Any) -> dict:
         "entreprise": client["entreprise"],
         "zone": client["zone"],
         "nom_agent": nom_agent,
-        **reglages_pour(nom, {}),
+        **reglages_pour(nom, {"zone": client["zone"]}),
     }
     if client.get(NUMERO):
         config["whatsapp"] = {"numero_id": client[NUMERO]}
