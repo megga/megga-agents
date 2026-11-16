@@ -234,6 +234,9 @@ class Config(Strict):
     reactions: bool = True
     # Le fil (noyau/fil.py) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour.
     fil: bool = False
+    # Le mot du matin (packs/immobilier/bonjour.py) : chaque jour à cette heure (« 08:00 », heure du client), un
+    # message d'encouragement plein de bonne humeur à chaque gestionnaire, qui peut l'arrêter ou changer l'heure.
+    bonjour: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
     metier: Literal["general", "immobilier"] = "general"
     # Les packs actifs (aujourd'hui : « immobilier »).

@@ -16,6 +16,8 @@ metier: immobilier
 # Le fil (lot 7.6) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour (Julien, 13.11.2026 :
 # « qu'elle n'oublie plus la conversation en cours »).
 fil: true
+# Le mot du matin (Greg, 16.11.2026 : « tous les matins, un message d'encouragement, avec de la bonne humeur »).
+bonjour: "08:00"
 outils: []
 modeles:
   principal: claude-sonnet-5-5

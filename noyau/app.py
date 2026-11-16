@@ -251,7 +251,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                 stockage.Reseau(url), personnes.bloques or stockage.Bloques(url), stockage.Questions(url),
                                 fuseau=conf.fuseau, memoires=memoires, assistante=Assistante(cle, conf.entreprise) if cle else None,
                                 a_whatsapp=conf.whatsapp is not None, carnet=stockage.Carnet(url), veilles=stockage.Veilles(url),
-                                reglage_marche=conf.marche, regles=stockage.Regles(url), rappels=rappels)
+                                reglage_marche=conf.marche, regles=stockage.Regles(url), rappels=rappels, bonjour=conf.bonjour)
             if conf.marche is not None:
                 from packs.immobilier.marche import Portails
 

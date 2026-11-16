@@ -8,6 +8,7 @@ from .annonces import CONSIGNES as CONSIGNES_ANNONCES
 from .annonces import Services
 from .marche import CONSIGNES as CONSIGNES_MARCHE
 from .marche import Marche
+from .bonjour import Bonjour
 from .recherches import SuiviRecherches
 from .reseau import CONSIGNES_PARTENAIRES, CONSIGNES_VITRINE, PREFIXE_CHOIX, Reseau
 from .travail import CONSIGNES as CONSIGNES_TRAVAIL
@@ -39,7 +40,10 @@ class Relations:
         self.choix = {PREFIXE_CHOIX: self.reseau.choisir}
         # Les recherches des clients de la gestion, rapprochées le matin et le soir (demande d'un courtier, 16.11.2026).
         self.recherches = SuiviRecherches(s)
-        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else []), self.recherches.echeance]
+        # Le mot du matin, si l'agence l'a (Config.bonjour) ; il passe avant les recherches de 8 h.
+        self.bonjour = Bonjour(s)
+        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else []), self.bonjour.echeance,
+                          self.recherches.echeance]
 
     def outils(self, groupes) -> list:
         par_groupe = {"partenaires": self.reseau.outils_gestionnaire, "visiteurs": self.visiteurs.outils_gestionnaire,
@@ -51,7 +55,7 @@ class Relations:
         if "travail" in groupes:
             if self.travail is None:
                 raise RuntimeError("outils de travail sans leur table")
-            par_groupe["travail"] = self.travail.outils
+            par_groupe["travail"] = lambda: [*self.travail.outils(), *(self.bonjour.outils() if self.bonjour.s.bonjour else [])]
         return [o for g in groupes if g in par_groupe for o in par_groupe[g]()]
 
     def contexte(self, groupes):

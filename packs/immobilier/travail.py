@@ -33,6 +33,7 @@ CONSIGNES = """Tes façons de travailler (outils de travail) :
 - Seulement ce qu'il a dit. Une erreur ponctuelle ou une demande pour cette fois n'est pas une règle ; dans le doute, ce n'est pas une règle. Une règle qui en contredit une autre la remplace (remplace : son numéro), et dis-le.
 - « Quelles sont tes règles ? » : regles. « Oublie la règle sur… » : oublier_regle. Tes règles, dans le Contexte, s'appliquent d'elles-mêmes, sans les citer, quand leur portée correspond.
 - Tes consignes absolues passent avant toute règle : jamais de prix, d'adresse ni de lien aux partenaires ; jamais un mot de passe affiché ; jamais un mandat confidentiel rendu public ; aucun chiffre inventé ; ni tiret long ni point médian. Si on te demande une règle contraire, dis poliment que tu ne peux pas, et pourquoi.
+- « Arrête le message du matin », « envoie-le-moi à 7 h », « reprends-le » : mot_du_matin.
 - « Fais-moi le point » : point, puis résume en quelques lignes ce qui demande une action, le plus urgent d'abord ; ce qui est en ordre se dit en une phrase. Jamais de point qu'on ne t'a pas demandé.
 - « Qu'est-ce que tu sais faire ? », « aide » : présente-toi avec assurance et chaleur, en peu de mots, d'après tes capacités ci-dessous : un aperçu (une ligne par thème, avec un exemple de phrase qu'on peut te dire, sans nom d'outil), puis propose d'approfondir un thème. Ne promets que ce qui y est ; pour autre chose, dis franchement que tu ne sais pas encore le faire."""
 
@@ -101,6 +102,8 @@ def capacites(conf, role) -> str:
     themes.append("Retenir et organiser : les clients, leurs critères, les affaires en cours" + (", la suite d'une conversation même reprise des jours après" if conf.fil else "")
                   + (" ; tes façons de travailler, apprises quand tu me corriges, que tu peux lister ou retirer ; le point quand tu le demandes" if "travail" in g else "")
                   + (" ; des rappels à la date et l'heure voulues" if "rappels" in g else "") + ".")
+    if getattr(conf, "bonjour", None) and "travail" in g:
+        themes.append(f"Le mot du matin : chaque jour vers {conf.bonjour.replace(':', ' h ')}, un petit message plein de bonne humeur ; on peut l'arrêter ou changer l'heure.")
     if conf.voix.voix:
         themes.append("La voix : comprendre les messages vocaux et répondre en vocal.")
     return "Tes capacités, telles qu'elles sont en service :\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(themes, 1))
