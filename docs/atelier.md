@@ -98,6 +98,8 @@ D'où viennent les chiffres :
 - les conversations : le fil du noyau (`megga_fil`), écrit en arrière-plan comme le journal, sans jamais retarder une réponse ; celles d'avant le fil se rebâtissent des tours d'Agno ;
 - les pannes d'un conteneur (démarrage, transmission, rappels) : les dix dernières, gardées par son objet à la porte, marquées résolues quand il répond de nouveau. Une alarme en échec se repose elle-même (1, 2, 5, 10, puis 15 minutes) au lieu de s'arrêter ; un webhook que le conteneur n'a pas reçu est gardé par son objet (un jour, 200 au plus) et rejoué quand il répond, lu alors jusqu'à 24 heures après son envoi. Les simples accusés de Meta (envoyé, remis, lu) ne réveillent plus le conteneur.
 
+**Le plafond du jour** : un visiteur, un partenaire ou une personne venue par API a au plus 100 tours de modèle par jour, et tous ensemble 2 000 par client (`noyau/garde.py`, `Plafond`) ; au-delà, une phrase polie, une fois, puis plus rien jusqu'au lendemain (429 par API), et l'alerte `plafond`. Les gestionnaires ne sont jamais arrêtés. Un tour appelle 25 outils au plus.
+
 MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.

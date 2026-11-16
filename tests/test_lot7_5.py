@@ -378,3 +378,42 @@ def test_la_fin_d_une_veille_se_dit_toujours(m):
     run(essai(True))
     assert "la dernière recherche n'a pas pu se faire (les portails ne répondaient pas)" in m.exp.envois[-1][2]
     assert m.s.veilles.de(GREG) == []
+
+
+def test_une_veille_ne_perd_pas_une_annonce(m):
+    """Relecture du 16.11.2026 (I15) : une annonce dont la lecture a échoué n'est pas marquée vue ; elle part au passage
+    suivant, quand le portail répond de nouveau."""
+    nouvelle = "https://www.homegate.ch/acheter/4000555555"
+
+    class EnPanne(FauxPortails):
+        def __init__(self):
+            super().__init__()
+            self.panne = True
+
+        async def lire(self, url):
+            if url == nouvelle and self.panne:
+                raise RuntimeError("portail injoignable")
+            return await super().lire(url)
+
+    m.s.portails = EnPanne()
+
+    async def essai():
+        c = m.conversations()
+        m.ecrit(GREG)
+        await m.mo["surveiller_marche"]("villa Cologny", Tour(GREG, "g1"), frequence="quotidienne", semaines=4)
+        m.s.portails.resultats[nouvelle] = ("Villa neuve | Homegate.ch", "CHF 8’000’000, 290 m²")
+        (v,) = m.s.veilles.de(GREG, "veille")
+        await c.envoyer_rappels_echus(v["prochaine"] + 1)  # la lecture tombe : rien ne part
+        await fini(c)
+        rien = list(m.exp.envois)
+        (v,) = m.s.veilles.de(GREG, "veille")
+        assert nouvelle not in v["donnees"]["vus"]
+        m.s.portails.panne = False
+        await c.envoyer_rappels_echus(v["prochaine"] + 1)  # le portail répond : elle part
+        await fini(c)
+        (v,) = m.s.veilles.de(GREG, "veille")
+        return rien, v
+
+    rien, v = run(essai())
+    assert rien == [] and m.exp.envois[-1][0] == "carte" and m.exp.envois[-1][2].endswith(nouvelle)
+    assert nouvelle in v["donnees"]["vus"]

@@ -12,6 +12,7 @@ refuse s'il est appelé dans le même tour que celui qui a préparé.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import secrets
 import time
@@ -194,12 +195,22 @@ def outils(s: Services) -> list:
     def preparer(personne: str, rc: RunContext, action: dict) -> None:
         s.etats.ecrire(personne, "a_confirmer", {**action, "tour": tour(rc), "quand": time.time()})
 
+    pdfs: dict[str, tuple[bytes, list]] = {}  # le dernier PDF lu, pour ses photos suivantes
+
+    async def pdf_lu(source: str) -> tuple[bytes, list]:
+        """Un PDF reçu et ses images, lus une fois pour toutes ses photos ; l'analyse hors de la boucle (I6)."""
+        if source not in pdfs:
+            pdf = await s.exp.telecharger(source, PDF_MAX)
+            pdfs.clear()  # un seul gardé : la mémoire du conteneur est petite
+            pdfs[source] = (pdf, await asyncio.to_thread(fiches.images_du_pdf, pdf))
+        return pdfs[source]
+
     async def octets_media(m: dict, maximum: int = PHOTO_MAX) -> bytes:
         """Un média reçu : chez Meta, ou une photo tirée d'un PDF reçu (« pdf:<média du PDF>#<rang> »)."""
         if m["media_id"].startswith("pdf:"):
             source, _, rang = m["media_id"][4:].partition("#")
-            pdf = await s.exp.telecharger(source, PDF_MAX)
-            return fiches.octets_image(pdf, fiches.images_du_pdf(pdf)[int(rang)])
+            pdf, images = await pdf_lu(source)
+            return await asyncio.to_thread(fiches.octets_image, pdf, images[int(rang)])
         return await s.exp.telecharger(m["media_id"], maximum)
 
     async def photos_des_medias(personne: str, numeros: list[int]) -> list[tuple[int, dict]]:
@@ -1245,12 +1256,11 @@ def outils(s: Services) -> list:
         deja = [x for x in s.medias.derniers(personne, 200) if x["media_id"].startswith(f"pdf:{m['media_id']}#")]
         if deja:
             return f"Photos déjà sorties de ce PDF : média(s) {', '.join(str(x['n']) for x in deja)}."
-        pdf = await s.exp.telecharger(m["media_id"], PDF_MAX)
-        images = fiches.images_du_pdf(pdf)
+        pdf, images = await pdf_lu(m["media_id"])
         octets = []
         for rang, im in enumerate(images):
             try:
-                octets.append((rang, fiches.octets_image(pdf, im)))
+                octets.append((rang, await asyncio.to_thread(fiches.octets_image, pdf, im)))
             except Exception:
                 continue
         if not octets:

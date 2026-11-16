@@ -25,6 +25,8 @@ REGLES = (
     "Rappels : seulement quand la personne le demande. Jamais de message spontané. Donne l'heure au format AAAA-MM-JJTHH:MM, à l'heure locale.",
 )
 
+TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.2026, I7)
+
 
 def modele(nom: str, cles: dict[str, str]) -> Model:
     """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek."""
@@ -97,6 +99,8 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         enable_agentic_memory=True,
         add_memories_to_context=True,
         tools=list(outils or []),
+        # Un tour n'appelle pas plus d'outils que cela : une boucle (ou une consigne glissée) ne fait pas exploser la facture.
+        tool_call_limit=TOOL_CALL_LIMIT,
         add_datetime_to_context=True,
         timezone_identifier=config.fuseau,
         post_hooks=[crochet_secrets, crochet_typographie],
