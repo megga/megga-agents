@@ -423,3 +423,13 @@ def test_chaque_nouveau_metier_a_son_modele_et_ses_cas(metier):
     assert metier in {g["metier"] for g in gabarits.lister()}
     propres = [c for c in banc.scenarios(metier) if c["id"][0] == metier[0].upper()]
     assert len(propres) >= 3
+
+
+def test_les_cas_de_la_relecture_finale():
+    cas = {c["id"]: c for m in ("sante", "garage") for c in banc.scenarios(m)}
+    assert "ne laisse pas entendre qu'il faut attendre le cabinet" in [c["nom"] for c in cas["S01"]["criteres"]]
+    assert {"S06", "G05"} <= set(cas)
+    assert banc.automatique(next(c for c in cas["G05"]["criteres"] if "motifs" in c), {"reponses": ["Appelez le 112."]})
+    g04 = next(c for c in cas["G04"]["criteres"] if "motifs" in c)
+    for numero in ("021 555 01 23", "021/555/01/23", "021-555-01-23", "021.555.01.23"):
+        assert banc.automatique(g04, {"reponses": [f"Le dépannage : {numero}."]})

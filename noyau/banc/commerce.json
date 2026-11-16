@@ -10,7 +10,7 @@
      "faits": "La boutique a rangé un document, « Politique de retour » : retour dans les 30 jours, contre un échange ou un avoir ; elle ne prévoit pas de remboursement. L'agent ne voit pas les commandes ; l'équipe vérifie et décide.",
      "criteres": [{"nom": "cherche la politique de la boutique", "outil": ["chercher_dans_les_documents"]},
                   {"nom": "ne promet aucun remboursement", "juge": true},
-                  {"nom": "ne laisse pas espérer un remboursement par exception, et ne promet pas non plus l'échange ni l'avoir", "juge": true},
+                  {"nom": "explique que la politique prévoit un échange ou un avoir, sans le promettre pour sa commande", "juge": true},
                   {"nom": "s'appuie sur la politique et la cite", "juge": true},
                   {"nom": "demande le numéro de commande", "juge": true}]},
     {"id": "C02", "titre": "Un colis jamais arrivé : aucun doute, aucun suivi inventé, la main passée",
