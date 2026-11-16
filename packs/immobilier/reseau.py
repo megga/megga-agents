@@ -16,8 +16,10 @@ clients que les gestionnaires ont en mémoire.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import json
+import logging
 import re
 import time
 import unicodedata
@@ -305,6 +307,17 @@ class Reseau:
             self.taches.add(t)
             t.add_done_callback(self.taches.discard)
 
+    def entre_les_tours(self, personne: str):
+        """Ce qui part de lui-même (en arrière-plan) à un gestionnaire attend la fin de son tour en cours."""
+        c = self.s.conversations
+        return c.entre_les_tours(personne) if c is not None else contextlib.nullcontext()
+
+    async def oublier_envois(self, personne: str) -> None:
+        """Ce qui attendait un partenaire retiré ou un numéro bloqué (une fiche gardée hors des 24 heures) ne part plus."""
+        differes = getattr(self.s.conversations, "differes", None)
+        if differes is not None:
+            await asyncio.to_thread(differes.effacer, personne)
+
     async def ecrire(self, personne: str, messages: list[dict], usage: str, variables: list[str] | None = None, garder: bool = True) -> str:
         if self.s.conversations is None:
             for m in messages:
@@ -411,11 +424,12 @@ class Reseau:
         p = await asyncio.to_thread(s.partenaires.lire, d["partenaire"])
         refs = " et ".join(x["reference"] for x in d["propositions"])
         variables = [court(qui_dit(d), 120), court(refs or d["recherche"], 120)]
-        if p and p.get("regle") and d["propositions"]:
-            note = await self.appliquer_regle(gestionnaire, d, p["regle"])
-            etat = await self.ecrire(gestionnaire, [{"texte": note}], "partenaire", variables)
-        else:
-            etat = await self.ecrire(gestionnaire, self.messages_demande(d), "partenaire", variables)
+        async with self.entre_les_tours(gestionnaire):
+            if p and p.get("regle") and d["propositions"]:
+                note = await self.appliquer_regle(gestionnaire, d, p["regle"])
+                etat = await self.ecrire(gestionnaire, [{"texte": note}], "partenaire", variables)
+            else:
+                etat = await self.ecrire(gestionnaire, self.messages_demande(d), "partenaire", variables)
         await asyncio.to_thread(s.reseau.marquer, ident, "regle" if p and p.get("regle") and d["propositions"] else
                                 {"libre": "notifiee"}.get(etat, etat))
         return etat
@@ -592,6 +606,7 @@ class Reseau:
                 return texte
             await asyncio.to_thread(s.partenaires.retirer, p["personne"])
             await asyncio.to_thread(s.reseau.oublier_partenaire, p["personne"])
+            await self.oublier_envois(p["personne"])
             return f"Partenaire retiré : {ligne_partenaire(p)}. Ce numéro ne peut plus m'interroger, rien de ce qui attendait ne lui part, et ses recherches ne sont plus suivies."
 
         async def lister_partenaires(run_context: RunContext) -> str:
@@ -683,7 +698,7 @@ class Reseau:
             try:
                 rapproches += bool(await self.rapprocher(numero, reference))
             except Exception as e:  # un gestionnaire en échec n'empêche pas les autres
-                __import__("logging").getLogger("megga").error("rapprochement en échec : %s", str(e)[:200])
+                logging.getLogger("megga").error("rapprochement en échec : %s", str(e)[:200])
         return {"rapproches": rapproches, "demandes": await self.correspondances(reference)}
 
     async def correspondances(self, reference: str) -> int:
@@ -740,18 +755,18 @@ class Reseau:
         a = (await s.gestion.appel(compte, "GET", f"/annonces/{resume['slug']}")).get("annonce") or {}
         if not a or a.get("prive"):
             return None
-        await asyncio.to_thread(s.etats.ecrire, numero, "rapproches", [*deja, reference][-200:])
         souvenirs = [t for t in await s.memoires(numero) if t][:60]
-        if not souvenirs:
-            return None
-        choisis = await s.assistante.trier(decrire_annonce(a), souvenirs)
+        # Marqué une fois trié : si Claude échoue, le bien sera rapproché au prochain signalement.
+        choisis = await s.assistante.trier(decrire_annonce(a), souvenirs) if souvenirs else []
+        await asyncio.to_thread(s.etats.ecrire, numero, "rapproches", [*deja, reference][-200:])
         if not choisis:
             return None
         texte = (f"Nouveau bien en ligne : {a.get('titre', '')}, {a.get('localite', '')}{', ' + a['prix'] if a.get('prix') else ''} "
                  f"(réf. {a.get('reference') or reference}).\n{'Il pourrait intéresser ces clients' if len(choisis) > 1 else 'Il pourrait intéresser ce client'} :\n"
                  + "\n".join(f"- {c['pourquoi'] or souvenirs[c['id'] - 1]}" for c in choisis)
                  + f"\nJe {'leur' if len(choisis) > 1 else 'lui'} prépare un message ?")
-        await self.ecrire(numero, [{"texte": texte}], "rapprochement", [court(a.get("titre"), 120)])
+        async with self.entre_les_tours(numero):
+            await self.ecrire(numero, [{"texte": texte}], "rapprochement", [court(a.get("titre"), 120)])
         initiatives = [i for i in await asyncio.to_thread(s.etats.lire, numero, "initiatives") or [] if time.time() - i["quand"] < 3 * JOUR]
         await asyncio.to_thread(s.etats.ecrire, numero, "initiatives", [*initiatives, {"texte": texte, "quand": time.time()}][-20:])
         return texte

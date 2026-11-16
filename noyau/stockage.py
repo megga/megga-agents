@@ -13,11 +13,12 @@ les tables de la base, ligne à ligne, en JSON.
 from __future__ import annotations
 
 import base64
-import re
 import datetime as dt
 import decimal
 import gzip
 import json
+import re
+import secrets
 import threading
 import time
 import uuid
@@ -550,13 +551,13 @@ class Partenaires:
 
 
 GARDE_DEMANDE = 30 * 86400  # une demande de partenaire sert un mois, puis s'efface
+GARDE_QUESTION = 30 * 86400  # une question de visiteur aussi
+GARDE_DIFFERE = 30 * 86400  # un message gardé hors des 24 heures aussi (un média chez Meta vit 30 jours)
 GARDE_RECHERCHE = 90 * 86400  # une recherche gardée, trois mois après la dernière fois
 
 
 def _ident(n: int = 8) -> str:
-    import secrets as _s
-
-    return "".join(_s.choice("abcdefghijkmnpqrstuvwxyz23456789") for _ in range(n))
+    return "".join(secrets.choice("abcdefghijkmnpqrstuvwxyz23456789") for _ in range(n))
 
 
 class Reseau:
@@ -750,12 +751,15 @@ class Questions:
     def poser(self, visiteur: str, gestionnaire: str, question: str, sujet: str, langue: str, prevenir: float | None,
               nom: str = "", maintenant: float | None = None) -> str:
         t = self._t
-        for _ in range(5):
-            ident = "".join(__import__("secrets").choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(3))
+        maintenant = maintenant or time.time()
+        with self._e.begin() as c:  # les questions de plus d'un mois s'effacent : leurs identifiants courts se libèrent
+            c.execute(delete(t).where(t.c.cree < maintenant - GARDE_QUESTION))
+        for _ in range(8):
+            ident = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(3))
             try:
                 with self._e.begin() as c:
                     c.execute(insert(t).values(id=ident, visiteur=visiteur, gestionnaire=gestionnaire, nom=nom[:120], question=question[:600],
-                                               sujet=sujet[:160], langue=langue[:8], cree=maintenant or time.time(), prevenir=prevenir))
+                                               sujet=sujet[:160], langue=langue[:8], cree=maintenant, prevenir=prevenir))
                 return ident
             except IntegrityError:
                 continue
@@ -822,19 +826,29 @@ class Differes:
         )
 
     def garder(self, personne: str, contenu: list[dict], quand: float | None = None) -> str:
+        """`quand` : l'heure où il a été gardé la première fois (un message remis en file ne rajeunit pas)."""
         ident = uuid.uuid4().hex
+        contenu = [{k: v for k, v in m.items() if k != "_quand"} for m in contenu]
         with self._e.begin() as c:
             c.execute(insert(self._t).values(id=ident, personne=personne, contenu=_json(contenu), quand=quand or time.time()))
         return ident
 
-    def prendre(self, personne: str) -> list[dict]:
-        """Les messages gardés pour cette personne, dans l'ordre, retirés de la table (chacun une fois)."""
+    def prendre(self, personne: str, maintenant: float | None = None) -> list[dict]:
+        """Les messages gardés pour cette personne, dans l'ordre, retirés de la table (chacun une fois), avec l'heure
+        où ils ont été gardés (« _quand »). Ceux de plus de GARDE_DIFFERE sont effacés sans partir : un document
+        déposé chez Meta n'y vit pas plus longtemps, et ce qui a tant attendu n'a plus de sens."""
         t = self._t
+        limite = (maintenant or time.time()) - GARDE_DIFFERE
         with self._e.begin() as c:
             lignes = list(c.execute(select(t).where(t.c.personne == personne).order_by(t.c.quand)))
             if lignes:
                 c.execute(delete(t).where(t.c.id.in_([l.id for l in lignes])))
-        return [m for l in lignes for m in (_de_json(l.contenu) or [])]
+        return [{**m, "_quand": l.quand} for l in lignes if l.quand >= limite for m in (_de_json(l.contenu) or [])]
+
+    def effacer(self, personne: str) -> int:
+        """Ce qui attendait cette personne ne lui partira pas (un partenaire retiré, un numéro bloqué)."""
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount
 
 
 class Medias:

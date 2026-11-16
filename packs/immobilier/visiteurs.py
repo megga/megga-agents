@@ -339,7 +339,7 @@ class Visiteurs:
                 if clore:
                     raise ValueError("clore : avec l'identifiant de la question")
                 vers, nom = await self.designer_visiteur(moi, visiteur)
-            message = court(message, 1500)
+            message = (message or "").strip()[:1500]
             if not message:
                 raise ValueError("le message pour le visiteur est vide")
             etat = await self.ecrire(vers, message, "reponse_visiteur", [court(message, 200)])
@@ -482,6 +482,7 @@ class Visiteurs:
                 await asyncio.to_thread(s.partenaires.retirer, numero)
                 if s.reseau is not None:
                     await asyncio.to_thread(s.reseau.oublier_partenaire, numero)
+            await self.reseau.oublier_envois(numero)
             appele = court(nom or connu or (etait or {}).get("nom", ""), 60)
             return (f"{'Bloqué' if nouveau else 'Déjà bloqué'} : {appele + ', ' if appele else ''}{numero}."
                     f"{' Il était partenaire : il est retiré.' if etait else ''} Je ne lis plus ses messages et je ne lui réponds plus.")
@@ -518,10 +519,10 @@ class Visiteurs:
         numero = numero_international(visiteur)
         mot = plat(court(visiteur, 80))
         trouves = {c["personne"]: c["nom"] for c in recents if (numero and c["personne"] == numero) or (mot and not numero and mot in plat(c["nom"]))}
-        if not trouves and numero:
-            return numero, numero
         if not trouves:
-            raise ValueError(f"aucun visiteur récent ne s'appelle « {court(visiteur, 80)} » : demande son numéro")
+            # Seulement un visiteur qui a écrit (sa fiche, sa question) : à quelqu'un d'autre, envoyer_a_un_contact, avec ton oui.
+            raise ValueError(f"aucun visiteur récent ne correspond à « {court(visiteur, 80)} » : pour écrire à quelqu'un d'autre, "
+                             "envoyer_a_un_contact, avec son oui")
         if len(trouves) > 1:
             raise ValueError(f"plusieurs visiteurs correspondent : {' ; '.join(f'{n} ({p})' for p, n in trouves.items())}. Demande lequel")
         (personne, nom), = trouves.items()

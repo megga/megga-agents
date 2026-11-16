@@ -793,3 +793,98 @@ def test_l_agent_reel_recoit_ses_outils_par_role(tmp_path):
     assert noms["visiteur"] == {"chercher_biens", "transmettre_contact", "demander_au_courtier"}
     assert callable(agents["partenaire"].instructions) and "pc:" in app.state.conversations.choix
     assert app.state.conversations.echeances
+
+
+# Corrections de la relecture
+
+
+def test_repondre_visiteur_seulement_a_un_visiteur_qui_a_ecrit(monde):
+    with pytest.raises(ValueError, match="envoyer_a_un_contact"):
+        run(monde.o["repondre_visiteur"](Tour(GREG, "g1"), visiteur="+41 79 555 55 55", message="Bonjour"))
+    assert monde.exp.pour("+41795555555") == []
+
+
+def test_un_partenaire_retire_ou_bloque_ne_recoit_plus_ce_qui_attendait(monde):
+    monde.partenaires.inscrire(MARC, "Marc Dupont", GREG)
+    monde.partenaires.inscrire("+41790000005", "Sophie Aubert", GREG)
+
+    async def essai():
+        c = monde.conversations()
+        monde.ecrit(GREG)  # les partenaires n'ont pas écrit depuis 24 heures : ce qui leur part est gardé
+        for p in (MARC, "+41790000005"):
+            ident = monde.s.reseau.creer(p, p, GREG, "la référence G8LR2DW8", [BIENS["G8LR2DW8"]])
+            etat, *_ = await monde.relations.reseau.executer_choix(GREG, ident, 0, "lignes")
+            assert etat == "attente"
+        await monde.o["retirer_partenaire"]("Marc", Tour(GREG, "g1"))
+        await monde.o["bloquer_numero"]("Sophie", Tour(GREG, "g1"))
+        return c
+
+    c = run(essai())
+    assert c.differes.prendre(MARC) == [] and c.differes.prendre("+41790000005") == []
+
+
+def test_un_message_garde_en_echec_ne_bloque_pas_les_autres(tmp_path):
+    d = stockage.Differes(f"sqlite:///{tmp_path}/d.db")
+    vieux = time.time() - 31 * 86400
+    d.garder(GREG, [{"texte": "trop vieux"}], vieux)
+    d.garder(GREG, [{"document": "EXPIRE", "nom": "f.pdf"}, {"texte": "la suite"}], time.time() - 3600)
+    exp = FauxExp()
+
+    async def document(vers, nom, media_id="", lien="", legende=""):
+        raise RuntimeError("Meta 400 média inconnu")
+
+    exp.document = document
+    c = Conversations(CONF_WA, FauxAgent(), exp, differes=d)
+    run(c._rappels_differes(GREG))
+    assert [e[2] for e in exp.envois] == ["la suite"]  # le trop vieux s'efface, l'échec ne retient pas la suite
+    reste, = d.prendre(GREG)
+    assert reste["document"] == "EXPIRE" and reste["_quand"] < time.time() - 3000  # remis en file sans rajeunir
+
+
+def test_le_rapprochement_se_retente_si_claude_echoue(monde):
+    class EnPanne(FausseAssistante):
+        async def trier(self, bien, souvenirs):
+            raise RuntimeError("Claude 529")
+
+    monde.s.assistante = EnPanne()
+    with pytest.raises(RuntimeError):
+        run(monde.relations.reseau.rapprocher(GREG, "G8LR2DW8"))
+    assert monde.etats.lire(GREG, "rapproches") is None
+    monde.s.assistante = FausseAssistante()
+    assert run(monde.relations.reseau.rapprocher(GREG, "G8LR2DW8")).startswith("Nouveau bien en ligne")
+
+
+def test_les_vieilles_questions_s_effacent(tmp_path):
+    q = stockage.Questions(f"sqlite:///{tmp_path}/q.db")
+    vieille = q.poser(VISITEUR, GREG, "Libre ?", "", "fr", None, maintenant=time.time() - 31 * 86400)
+    q.poser(VISITEUR, GREG, "Visite ?", "", "fr", None)
+    assert q.lire(vieille) is None and len(q.du_visiteur(VISITEUR, 0)) == 1
+
+
+def test_une_demande_attend_la_fin_du_tour_du_gestionnaire(monde):
+    monde.partenaires.inscrire(MARC, "Marc Dupont", GREG)
+
+    async def essai():
+        c = monde.conversations()
+        monde.ecrit(GREG, MARC)
+        ident = monde.s.reseau.creer(MARC, "Marc Dupont", GREG, "la référence G8LR2DW8", [BIENS["G8LR2DW8"]])
+        async with c.entre_les_tours(GREG):  # le gestionnaire est en plein tour
+            envoi = asyncio.create_task(monde.relations.reseau.prevenir_gestionnaire(GREG, ident))
+            await asyncio.sleep(0.05)
+            pendant = list(monde.exp.envois)
+        await envoi
+        return pendant
+
+    assert run(essai()) == [] and monde.exp.pour(GREG, "liste")
+
+
+def test_le_message_du_courtier_garde_ses_lignes(monde):
+    async def essai():
+        monde.conversations()
+        monde.ecrit(GREG, VISITEUR)
+        await monde.accueil["demander_au_courtier"]("Visite ?", Tour(VISITEUR, "v1"))
+        q, = monde.s.questions.du_visiteur(VISITEUR, 0)
+        await monde.o["repondre_visiteur"](Tour(GREG, "g1"), question=q["id"], message="Oui.\n\nSamedi à 10 h.")
+
+    run(essai())
+    assert monde.exp.pour(VISITEUR, "texte")[-1][2] == "Oui.\n\nSamedi à 10 h."

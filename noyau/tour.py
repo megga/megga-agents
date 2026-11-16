@@ -111,6 +111,11 @@ class Conversations:
         b = self._boites.pop(personne)
         await self._tour(personne, b.messages, b.role)
 
+    def entre_les_tours(self, personne: str):
+        """Attend que le tour en cours de cette personne soit fini, et la garde le temps du bloc : ce que l'agent lui
+        envoie de lui-même ne s'intercale pas dans une réponse en route."""
+        return self._a_son_tour(personne)
+
     def apres_le_tour(self, personne: str, coro_fn) -> None:
         """Lance `coro_fn()` une fois fini le tour en cours de cette personne (sa réponse partie) : un outil qui
         prévient quelqu'un d'autre ne passe pas devant la réponse qu'il prépare."""
@@ -446,14 +451,14 @@ class Conversations:
     async def _rappels_differes(self, personne: str) -> None:
         """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant."""
         if self.differes is not None:
-            gardes = await asyncio.to_thread(self.differes.prendre, personne)
-            for i, m in enumerate(gardes):
+            for m in await asyncio.to_thread(self.differes.prendre, personne):
                 try:
                     await self._envoyer_messages(personne, [m], "differe")
-                except Exception as e:  # ce qui n'est pas parti est regardé de nouveau au message suivant
+                except Exception as e:
+                    # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
                     log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
-                    await asyncio.to_thread(self.differes.garder, personne, gardes[i:])
-                    break
+                    self.noter_journal("envoi_echec", detail="differe")
+                    await asyncio.to_thread(self.differes.garder, personne, [m], m.get("_quand"))
         if self.rappels is None:
             return
         for r in await asyncio.to_thread(self.rappels.differes, personne):
