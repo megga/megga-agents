@@ -97,14 +97,14 @@ whatsapp:
   numero_id: "1402857672917787"
 # Les modèles Meta du socle (docs/modeles-fsp.md), sur le même compte.
 modeles_meta:
-  message: {nom: fsp_socle_message}
-  message_en: {nom: fsp_socle_message, langue: en}
-  rappel: {nom: fsp_socle_rappel}
-  demande: {nom: fsp_socle_demande}
-  partenaire: {nom: fsp_socle_partenaire}
-  veille: {nom: fsp_socle_nouveau}
-  zone: {nom: fsp_socle_nouveau}
-  rapprochement: {nom: fsp_socle_nouveau}
+  message: {nom: fsp_socle_attente}
+  message_en: {nom: fsp_socle_attente, langue: en}
+  rappel: {nom: fsp_socle_rappel_2}
+  demande: {nom: fsp_socle_demande_2}
+  partenaire: {nom: fsp_socle_partenaire_2}
+  veille: {nom: fsp_socle_suivi_maj}
+  zone: {nom: fsp_socle_suivi_maj}
+  rapprochement: {nom: fsp_socle_suivi_maj}
   livraison: {nom: fsp_socle_livraison}
   reponse_visiteur: {nom: fsp_socle_reponse}
   reponse_visiteur_en: {nom: fsp_socle_reponse, langue: en}
