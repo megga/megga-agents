@@ -833,3 +833,29 @@ def test_les_cles_publiques_sont_dans_l_image():
     licence.cle_publique()  # lisible
     publier = open(".github/workflows/publier.yml").read()
     assert "test -s noyau/licence.pub" in publier and "test -s noyau/pilotage.pub" in publier
+
+
+def test_les_mineurs_du_pilote(tmp_path):
+    """Relecture du 16.11.2026, constats mineurs du pilote."""
+    from pilote.sonde import en_vie
+
+    base = {"CLIENT_CONFIG_FILE": "clients/exemple.yaml"}
+    with pytest.raises(RuntimeError, match="1 à 3600"):
+        Pilote({**base, "PILOTAGE": "non", "PILOTAGE_INTERVALLE": "inf"})
+    assert en_vie("inf") in (True, False)  # la sonde ne plante pas
+    # Le miroir du client est connu même sans mises à jour : une mise à jour lancée finit sur le bon dépôt
+    assert MisesAJour.depuis({"MISES_A_JOUR": "non", "MEGGA_DEPOT": "registre.client.ch/megga/megga-agents"}).depot == \
+        "registre.client.ch/megga/megga-agents"
+    # Le compte du registre ne part jamais en clair vers un « realm » http d'un registre https
+    r = images.Registre(DEPOT, compte="client", jeton="secret-du-registre")
+    with httpx.Client() as c, pytest.raises(images.RegistreInjoignable, match="accès refusé"):
+        r._jeton(c, 'Bearer realm="http://evil.example/token",service="ghcr.io"')
+
+
+def test_le_script_juge_toute_la_reponse_d_un_bloc():
+    """Relecture du 16.11.2026 : grep jugeait ligne par ligne, une cible sur deux lignes passait ; [[ =~ ]] la refuse."""
+    script = open("installation/compose/mettre_a_jour.sh").read()
+    motif = script.split("motif='", 1)[1].split("'", 1)[0]
+    def juge(cible):
+        return subprocess.run(["bash", "-c", 'm="$1"; [[ "$2" =~ $m ]]', "_", motif, cible]).returncode == 0
+    assert juge(image(2)) and not juge(f"{image(2)}\n{image(3)}") and not juge(f"x\n{image(2)}")

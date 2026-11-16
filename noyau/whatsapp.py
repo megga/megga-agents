@@ -35,6 +35,22 @@ def en_ligne(v) -> str:
     return re.sub(r"\s+", " ", str(v)).strip()
 
 
+def decouper(texte: str, limite: int = LIMITE_TEXTE) -> list[str]:
+    """Un texte en morceaux d'au plus `limite` caractères, coupés à un paragraphe, sinon à une ligne, sinon à un espace."""
+    morceaux, reste = [], texte
+    while len(reste) > limite:
+        coupe = max(reste.rfind("\n\n", 0, limite), -1)
+        if coupe <= 0:
+            coupe = reste.rfind("\n", 0, limite)
+        if coupe <= 0:
+            coupe = reste.rfind(" ", 0, limite)
+        if coupe <= 0:
+            coupe = limite
+        morceaux.append(reste[:coupe].rstrip())
+        reste = reste[coupe:].lstrip()
+    return [*morceaux, reste] if reste or not morceaux else morceaux
+
+
 def signature_valide(corps: bytes, entete: str | None, secret: str | None) -> bool:
     """Meta signe le corps brut en HMAC-SHA256 : « X-Hub-Signature-256: sha256=<hex> »."""
     algo, _, h = str(entete or "").partition("=")
@@ -188,13 +204,17 @@ class Expediteur:
         return r.json() if r.content else {}
 
     async def texte(self, vers: str, texte: str, apercu: bool = False) -> dict:
-        """`apercu` : WhatsApp montre l'aperçu du lien (la carte d'une annonce)."""
-        return await self._envoyer({
-            "recipient_type": "individual",
-            "to": chiffres(vers),
-            "type": "text",
-            "text": {"preview_url": bool(apercu), "body": str(texte)[:LIMITE_TEXTE]},
-        })
+        """`apercu` : WhatsApp montre l'aperçu du lien (la carte d'une annonce). Au-delà de 4 096 caractères, plusieurs
+        messages, coupés entre deux paragraphes (ou deux lignes) : rien n'est perdu."""
+        r: dict = {}
+        for morceau in decouper(str(texte)):
+            r = await self._envoyer({
+                "recipient_type": "individual",
+                "to": chiffres(vers),
+                "type": "text",
+                "text": {"preview_url": bool(apercu), "body": morceau},
+            })
+        return r
 
     async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:
         """Un modèle approuvé par Meta, seul permis hors des 24 heures."""

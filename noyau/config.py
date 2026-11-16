@@ -274,6 +274,18 @@ class Config(Strict):
             return {}
         return {n: r for n in ("gestionnaire", "partenaire", "visiteur") if (r := getattr(self.roles, n)) is not None}
 
+    @field_validator("fuseau")
+    @classmethod
+    def fuseau_connu(cls, v: str) -> str:
+        """Un fuseau faux arrêterait le conteneur au démarrage : refusé ici, avec un message clair."""
+        from zoneinfo import ZoneInfo
+
+        try:
+            ZoneInfo(v)
+        except (ValueError, KeyError, OSError):
+            raise ValueError("fuseau inconnu : par exemple Europe/Zurich") from None
+        return v
+
     @field_validator("version")
     @classmethod
     def version_connue(cls, v: int) -> int:

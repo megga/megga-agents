@@ -382,6 +382,8 @@ def outils(s: Services) -> list:
             rediger: vrai pour faire réécrire les textes qu'il ne dicte pas.
         """
         personne, _ = qui(run_context)
+        if len(medias or []) > 40:  # ce que dit l'outil au modèle
+            raise ValueError("40 photos au plus par annonce : demande lesquelles garder")
         avant = (s.etats.lire(personne, "brouillon") or {}).get("champs") or {}
         nouveaux = garde.nettoyer({k: v for k, v in {
             "commune": commune, "categorie": categorie, "transaction": transaction, "adresse": adresse, "quartier": quartier,
@@ -469,10 +471,19 @@ def outils(s: Services) -> list:
                          "description": garde.blocs(c["description_en"])})
         if c.get("hors_suisse"):
             envoi["hors_suisse"] = True
-        r = await g(compte, "POST", "/annonces", corps={"champs": envoi})
+        # Le brouillon n'est plus « prêt » avant l'envoi : si le site crée l'annonce mais que sa réponse se perd (délai),
+        # un second oui ne la crée pas deux fois (relecture du 16.11.2026).
+        s.etats.ecrire(personne, "brouillon", {**b, "pret": False})
+        try:
+            r = await s.gestion.appel(compte, "POST", "/annonces", corps={"champs": envoi})
+        except GestionErreur as e:
+            if e.statut == 0:
+                raise ValueError("le site n'a pas répondu à temps : l'annonce est peut-être créée. Vérifie avec lister_annonces "
+                                 "avant de la refaire (preparer_annonce remontrera le brouillon)") from e
+            s.etats.ecrire(personne, "brouillon", b)  # refusée : le brouillon reste prêt, corrigé il repartira
+            raise ValueError(f"la gestion du site refuse : {e.message}") from e
         slug = (r.get("annonce") or {}).get("slug") or r.get("slug")
         s.etats.ecrire(personne, "brouillon", None)
-        s.etats.ecrire(personne, "derniere", slug)
         suite = []
         if pdf is not None:
             try:
@@ -701,7 +712,8 @@ def outils(s: Services) -> list:
         return mdp
 
     def nouveau_mot_de_passe() -> str:
-        return f"{secrets.choice(MOTS)}-{secrets.randbelow(10000):04d}"
+        """Deux mots et quatre chiffres (« Saphir-Rive-4821 ») : facile à dicter, plus dur à deviner qu'un mot seul."""
+        return f"{secrets.choice(MOTS)}-{secrets.choice(MOTS)}-{secrets.randbelow(10000):04d}"
 
     async def administrateur(compte: str) -> None:
         if ((await g(compte, "GET", "/resume")).get("moi") or {}).get("role") != "admin":
@@ -775,6 +787,16 @@ def outils(s: Services) -> list:
         await s.exp.texte(personne, titre)
         await s.exp.texte(personne, mdp)
 
+    async def secret_ou_dire(personne: str, titre: str, mdp: str, fait: str) -> str:
+        """Le mot de passe déjà changé sur le site part dans la conversation ; si l'envoi échoue, on le dit (il n'est pas
+        perdu : le site le garde, et il se renvoie) au lieu d'une erreur qui ferait croire que rien n'a changé."""
+        try:
+            await envoyer_secret(personne, titre, mdp)
+        except Exception:
+            return ("Le mot de passe est bien changé sur le site, mais son envoi dans la conversation a échoué. Dis-le, et propose "
+                    "de le renvoyer (envoyer_mot_de_passe pour une annonce), sans jamais l'écrire toi-même.")
+        return fait
+
     async def faire_acces(personne: str, compte: str, slug: str, acces: dict) -> str:
         mdp = acces.get("motDePasse")
         if acces["cible"] == "porte":
@@ -788,18 +810,18 @@ def outils(s: Services) -> list:
             r = await g(compte, "PUT", f"/acces/porte/{site}", corps=corps)
             if action == "ouvrir":
                 return "Le site est ouvert à tous, dans quelques minutes."
-            await envoyer_secret(personne, f"Mot de passe de {s.gestion.reglage.sites[site].removeprefix('https://')} :",
-                                 r.get("motDePasse") or corps.get("motDePasse") or corps["motDePasseSiAbsent"])
-            return "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+            return await secret_ou_dire(personne, f"Mot de passe de {s.gestion.reglage.sites[site].removeprefix('https://')} :",
+                                        r.get("motDePasse") or corps.get("motDePasse") or corps["motDePasseSiAbsent"],
+                                        "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter.")
         mdp = mdp or nouveau_mot_de_passe()
         if acces["cible"] == "site":
             await g(compte, "PUT", "/acces/site", corps={"motDePasse": mdp})
-            await envoyer_secret(personne, "Mot de passe du site :", mdp)
-            return "Mot de passe du site changé et envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+            return await secret_ou_dire(personne, "Mot de passe du site :", mdp,
+                                        "Mot de passe du site changé et envoyé dans la conversation. Dis-le en une phrase, sans le répéter.")
         r = await g(compte, "PUT", f"/annonces/{slug}/acces", corps={"prive": True, "motDePasse": mdp})
         a = r.get("annonce") or {}
-        await envoyer_secret(personne, f"Mot de passe de « {a.get('titre', slug)} », {a.get('localite', '')} :", mdp)
-        return "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+        return await secret_ou_dire(personne, f"Mot de passe de « {a.get('titre', slug)} », {a.get('localite', '')} :", mdp,
+                                    "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter.")
 
     async def envoyer_mot_de_passe(slug: str, run_context: RunContext) -> str:
         """Envoie dans la conversation le mot de passe d'une annonce verrouillée.

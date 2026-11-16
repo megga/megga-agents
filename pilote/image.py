@@ -116,14 +116,18 @@ class Registre:
         self._entete: dict[str, str] = {}
 
     def _client(self) -> httpx.Client:
-        # Le registre directement, jamais par HTTP_PROXY réglé pour joindre MEGGA ; les redirections vers le
-        # stockage du registre sont suivies, sans l'en-tête d'accès (httpx le retire d'un hôte à l'autre).
+        # Par le proxy du serveur s'il y en a un (HTTP_PROXY, HTTPS_PROXY) : un serveur fermé en a besoin pour joindre
+        # le registre. Les redirections vers le stockage du registre sont suivies, sans l'en-tête d'accès (httpx le
+        # retire d'un hôte à l'autre).
         return httpx.Client(timeout=30, transport=self.transport, follow_redirects=True)
 
     def _jeton(self, c: httpx.Client, defi: str) -> None:
         """Le jeton Bearer du registre (ghcr.io, registry:2 avec accès) : anonyme, ou avec le compte du client."""
         champs = dict(re.findall(r'(\w+)="([^"]*)"', defi))
-        if not defi.lower().startswith("bearer") or not champs.get("realm", "").startswith(("https://", "http://")):
+        # Le compte et le jeton du client partent au « realm » : en https, ou en http seulement vers un registre
+        # lui-même en http (un miroir local).
+        permis = ("https://", "http://") if self.base.startswith("http://") else ("https://",)
+        if not defi.lower().startswith("bearer") or not champs.get("realm", "").startswith(permis):
             raise RegistreInjoignable("registre : accès refusé")
         params = {"scope": f"repository:{self.chemin}:pull"}
         if champs.get("service"):

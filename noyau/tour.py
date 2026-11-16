@@ -36,6 +36,7 @@ EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que p
 NON_COMPRIS = "Je n'ai pas pu écouter ce vocal. Pouvez-vous me l'écrire ?"
 REGARD = "\U0001F440"
 REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
+GARDE_JOURNAL = 400 * 86400  # le journal du noyau (échecs, volumes) : un peu plus d'un an
 ABANDON_RAPPEL = 24 * 3600  # un rappel encore en échec un jour après son heure est abandonné (noté au journal)
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
 IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
@@ -77,6 +78,7 @@ class Conversations:
         self.rappels = rappels
         self.debit = debit or Debit()
         self.plafond = Plafond()
+        self._purge_le = 0.0
         # Un tour par API ne retient pas la personne plus longtemps que le logiciel n'attend.
         self.delai_api = delai_api
         # Le suivi, écrit en arrière-plan : il ne retarde ni ne fait échouer un tour.
@@ -546,15 +548,21 @@ class Conversations:
         `livres["n"]` : combien sont partis."""
         livres = {"n": 0} if livres is None else livres
         if self.differes is not None:
-            for m in await asyncio.to_thread(self.differes.prendre, personne):
-                try:
-                    await self._envoyer_messages(personne, [m], "differe")
-                    livres["n"] += 1
-                except Exception as e:
-                    # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
-                    log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
-                    self.noter_journal("envoi_echec", detail="differe")
-                    await asyncio.to_thread(self.differes.garder, personne, [m], m.get("_quand"))
+            # Chaque ligne gardée se retire une fois envoyée : un conteneur qui tombe en route ne perd rien.
+            for ligne in await asyncio.to_thread(self.differes.a_envoyer, personne):
+                rates = []
+                for m in ligne["messages"]:
+                    try:
+                        await self._envoyer_messages(personne, [m], "differe")
+                        livres["n"] += 1
+                    except Exception as e:
+                        # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
+                        log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
+                        self.noter_journal("envoi_echec", detail="differe")
+                        rates.append(m)
+                if rates:
+                    await asyncio.to_thread(self.differes.garder, personne, rates, ligne["quand"])
+                await asyncio.to_thread(self.differes.retirer, ligne["ligne"])
         if self.rappels is None:
             return
         for r in await asyncio.to_thread(self.rappels.differes, personne):
@@ -566,6 +574,9 @@ class Conversations:
     async def envoyer_rappels_echus(self, maintenant: float) -> dict:
         """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
         bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
+        if self.journal is not None and maintenant >= self._purge_le:  # le journal ne grossit pas sans fin
+            self._purge_le = maintenant + 86400
+            await self._sans_echec(asyncio.to_thread(self.journal.purger, maintenant - GARDE_JOURNAL))
         if self.rappels is None:
             return {"prochain": await self._echeances(maintenant), **bilan}
         # Les rappels d'abord : une échéance d'un pack (une recherche sur les portails) peut prendre du temps.
@@ -578,7 +589,8 @@ class Conversations:
                 bilan["echec"] += 1
                 continue
             try:
-                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel", str(r["texte"]).strip().rstrip("."))
+                async with self._a_son_tour(r["personne"]):  # jamais au milieu d'une réponse en route
+                    voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel", str(r["texte"]).strip().rstrip("."))
                 await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
                 bilan[voie] += 1
             except Exception as e:

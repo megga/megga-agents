@@ -286,7 +286,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
-    deja = Deja()
+    # Les messages déjà traités, gardés dans la base : un webhook renvoyé après un redémarrage n'a pas deux réponses.
+    deja = stockage.Vus(env["DATABASE_URL"]) if env.get("DATABASE_URL") else Deja()
     debit_cles = entree_api.DebitCles()
 
     def licence_echue() -> bool:
@@ -401,7 +402,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 log.warning("message ancien, sans réponse")
                 conversations.noter_journal("message_ancien", detail="rejoué" if rejoue else "")
                 continue
-            if not deja.nouveau(m.id):
+            if not await asyncio.to_thread(deja.nouveau, m.id):
                 continue
             role = await asyncio.to_thread(personnes.role, m.de)
             if role == "bloque":  # un numéro bloqué par le client : ni lu, ni répondu

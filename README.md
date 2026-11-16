@@ -14,7 +14,7 @@ Le plan : [docs/plan.md](docs/plan.md).
 | `socle/` | l'image Docker unique (Cloudflare, Suisse, chez le client) |
 | `porte/` | le Worker d'entrée des zones Europe et États-Unis, l'objet de chaque client et celui de l'atelier |
 | `installation/` | l'installation chez le client : Docker Compose et chart Helm ([docs/installation-client.md](docs/installation-client.md)) |
-| `clients/` | des configurations ; seulement un exemple, aucun client réel |
+| `clients/` | les configurations de départ des clients (sans aucun secret) ; celle qui sert est la version en service dans l'atelier |
 | `tests/` | les essais du noyau |
 
 ## Essais

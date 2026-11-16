@@ -37,6 +37,7 @@ DEVISES = ("CHF", "EUR", "AED")
 PERIODES = ("mois", "semaine", "jour", "an")
 PROPOSES = 3  # biens par demande
 RECHERCHES_PAR_TOUR = 3
+RECHERCHES_PAR_JOUR = 20  # recherches d'un partenaire par jour : chacune peut prévenir le courtier
 JOUR = 86400
 PREFIXE_CHOIX = "pc:"
 # Ce qui peut partir à un partenaire : (titre de la ligne, description, nom dans une phrase, accord du verbe).
@@ -359,6 +360,13 @@ class Reseau:
                 self._recherches = dict(list(self._recherches.items())[-100:])
             if self._recherches[tour] > RECHERCHES_PAR_TOUR:
                 raise ValueError("assez de recherches pour ce message : réponds avec ce que tu as")
+            # Un partenaire ne fait pas pleuvoir les demandes chez le courtier (relecture du 16.11.2026).
+            jour = time.strftime("%Y-%m-%d")
+            compteur = await asyncio.to_thread(s.etats.lire, personne, "recherches_jour") or {}
+            n = compteur.get("n", 0) if compteur.get("jour") == jour else 0
+            if n >= RECHERCHES_PAR_JOUR:
+                raise ValueError("assez de recherches pour aujourd'hui : dis que le courtier reprendra contact")
+            await asyncio.to_thread(s.etats.ecrire, personne, "recherches_jour", {"jour": jour, "n": n + 1})
             c = criteres_de(reference, transaction, type, communes, budget, devise, periode, chambres, surface, vue)
             gestionnaire, compte = self.compte_du_partenaire(p)
             v = await self.vitrine(compte, c)

@@ -33,12 +33,15 @@ async def composer(fiche: dict, photos: list[bytes], modele: str, version: str =
     """Les octets du PDF, composés par le service de fiche."""
     demande = json.dumps({"modele": modele, "fiche": fiche, "photos": [base64.b64encode(p).decode() for p in photos],
                           "version": version, "sans_prix": sans_prix, "marque": marque}).encode()
+    # Le service de fiche ne reçoit que ce qu'il lui faut : jamais les clés du conteneur (relecture du 16.11.2026).
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TZ") if k in os.environ}
     p = await asyncio.create_subprocess_exec("node", str(SERVICE), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                             stderr=asyncio.subprocess.PIPE)
+                                             stderr=asyncio.subprocess.PIPE, env=env)
     try:
         sortie, erreur = await asyncio.wait_for(p.communicate(demande), DELAI)
     except asyncio.TimeoutError:
         p.kill()
+        await p.wait()
         raise RuntimeError("la fiche a pris trop de temps") from None
     if p.returncode != 0 or not sortie.startswith(b"%PDF"):
         raise RuntimeError(f"fiche non composée : {erreur.decode(errors='replace')[:200]}")

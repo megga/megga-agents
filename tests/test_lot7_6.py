@@ -264,3 +264,12 @@ def test_le_dernier_message_est_retenu_pendant_le_tour(tmp_path):
     c = Conversations(CONF_WA, Agent(), FauxExp())
     run(c._executer(GREG, "Pour Marbella, toujours la vidéo d'abord", "gestionnaire"))
     assert vu["entendu"] == "Pour Marbella, toujours la vidéo d'abord" and c.entendu(VISITEUR) == ""
+
+
+def test_une_regle_deja_apprise_n_efface_pas_celle_a_remplacer(tmp_path):
+    """Relecture du 16.11.2026 : remplacer une règle par une autre déjà apprise ne supprime plus la première."""
+    r = stockage.Regles(f"sqlite:///{tmp_path}/r.db")
+    a = r.apprendre(GREG, "Pour Marbella, la vidéo d'abord", "marbella")["id"]
+    b = r.apprendre(GREG, "Toujours vouvoyer les clients", "partout")["id"]
+    assert r.apprendre(GREG, "toujours vouvoyer les clients", "partout", remplace=a)["deja"]
+    assert sorted(x["id"] for x in r.de(GREG)) == sorted([a, b])

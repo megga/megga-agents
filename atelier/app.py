@@ -96,6 +96,7 @@ from .versions import Versions
 
 log = logging.getLogger("megga.atelier")
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
+ESSAIS_PAR_JOUR = 200  # essais (mode d'essai) par agent et par jour
 CONVERSATION = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 
 
@@ -147,6 +148,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     pilote_fenetres = (1, 7, 30)  # les périodes que le pilote calcule (pilote/service.py, FENETRES)
     # Une mise en service à la fois par client (l'atelier est un seul processus).
     verrous: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+    essais_du_jour: dict[tuple[str, str], int] = {}  # en mémoire : l'atelier est un seul processus
 
     def identite(requete: Request) -> Identite:
         jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
@@ -334,7 +336,19 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if not CONVERSATION.fullmatch(conversation):
             raise Refus(400, "conversation : lettres, chiffres, - et _")
         conf = config_de(v)
-        reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai)
+        role = corps.get("role")
+        if role is not None and not isinstance(role, str):
+            raise Refus(400, "role : gestionnaire, partenaire ou visiteur")
+        # Un essai coûte des jetons de modèle comme une vraie conversation : borné par client et par jour.
+        jour = time.strftime("%Y-%m-%d")
+        n = essais_du_jour.get((ident, jour), 0)
+        if n >= ESSAIS_PAR_JOUR:
+            raise Refus(429, f"{ESSAIS_PAR_JOUR} essais par jour au plus pour un agent : la suite demain")
+        essais_du_jour[(ident, jour)] = n + 1
+        try:
+            reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai, role=role)
+        except ValueError as e:
+            raise Refus(400, str(e)) from e
         await bd(versions.noter_essai, ident, numero)
         return {"version": numero, "conversation": conversation, "reponse": reponse}
 
@@ -356,7 +370,11 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
                     raise Refus(403, "cette version change des réglages de MEGGA (numéro WhatsApp, modèles Meta, gestion du site, "
                                      "consignes…) : sa mise en service passe par MEGGA")
             if courante == numero and v["config"].get("zone") in regles.ZONES_PORTE:
-                raise Refus(409, "cette version est déjà en service")
+                # Déjà en service dans l'atelier ; mais si l'annuaire en sert une autre (mise en service interrompue,
+                # inscription à la main), la relancer remet les deux d'accord (relecture du 16.11.2026).
+                a = ((await etats_porte(ident)) or {}).get(ident)
+                if a is None or a.get("version") == courante:
+                    raise Refus(409, "cette version est déjà en service")
             if v["etat"] == "brouillon" and v["essais"] == 0 and not forcer:
                 raise Refus(409, "essayez d'abord cette version (mode d'essai)")
             conf = config_de(v)
