@@ -83,7 +83,7 @@ def capacites(conf, role) -> str:
     if "annonces" in g:
         themes.append("Les annonces du site : créer une annonce écrite ou dictée, avec ses photos, textes rédigés en français et en anglais"
                       + (", ou par le formulaire WhatsApp « Nouvelle annonce »" if conf.gestion and conf.gestion.formulaire_annonce else "")
-                      + " ; modifier, masquer, supprimer ; photos, vidéos, documents ; la fiche PDF, à ses couleurs ou anonyme et sans prix ; "
+                      + " ; modifier, masquer, supprimer ; photos, vidéos, documents ; lire une plaquette PDF reçue (sa description entière, ses chiffres, ses photos) ; la fiche PDF, à ses couleurs ou anonyme et sans prix ; "
                       "un message prêt à transférer à un client ; les mots de passe des biens, toujours après un oui.")
         themes.append("Trouver : les biens de l'agence qui correspondent à un client ; les recherches des clients gardées dans la gestion.")
     if "marche" in g:
