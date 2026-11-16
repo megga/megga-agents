@@ -133,7 +133,8 @@ def _lignes(e: Engine, retouche=None) -> Iterator[dict]:
     options = {"isolation_level": "REPEATABLE READ"} if e.dialect.name == "postgresql" else {}
     with e.connect().execution_options(**options) as c, c.begin():
         for table in meta.sorted_tables:
-            for ligne in c.execute(select(table)).mappings():
+            # Par paquets : une grosse table ne se charge pas entière en mémoire (relecture du 16.11.2026, I20).
+            for ligne in c.execute(select(table).execution_options(yield_per=1000)).mappings():
                 l = dict(ligne) if retouche is None else retouche(table.name, dict(ligne))
                 if l is not None:
                     yield {"table": table.name, "ligne": {k: _en_json(v) for k, v in l.items()}}

@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -161,8 +163,17 @@ class Installation:
     """Ce que le pilote tient dans la base de l'installation : les ordres reçus et le journal du pilotage."""
 
     def __init__(self, url: str, base: Config, cle_megga=None, horloge=time.time, maj: MisesAJour | None = None,
-                 delai: float = DELAI_APPLICATION):
+                 delai: float = DELAI_APPLICATION, cle_installation=None):
+        """`cle_installation` : la clé privée du pilote (PILOTE_CLE). Elle scelle la mise à jour en cours, rangée dans la
+        base que l'agent partage : l'agent n'a pas cette clé, une ligne qu'il écrirait n'a pas de sceau valable."""
         self.url, self.base, self.cle_megga, self.horloge = url, base, cle_megga, horloge
+        self._sceau = None
+        if cle_installation is not None:
+            from cryptography.hazmat.primitives import serialization
+
+            brut = cle_installation.private_bytes(serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
+                                                  serialization.NoEncryption())
+            self._sceau = hashlib.sha256(b"megga:mise-a-jour:" + brut).digest()
         self.maj, self.delai = maj or MisesAJour(), delai
         self.client = base.id
         self._ordres: stockage.Ordres | None = None
@@ -372,10 +383,23 @@ class Installation:
         r = self.reglages.lire(CLE_MAJ)
         return r if isinstance(r, dict) else None
 
-    def _poser_maj(self, nouveau: dict | None, attendu: dict | None) -> bool:
+    def _scelle(self, r: dict | None) -> dict | None:
+        """La mise à jour avec son sceau (HMAC de la clé de l'installation), recalculé ; telle quelle sans clé."""
+        if r is None or self._sceau is None:
+            return r
+        sans = {k: v for k, v in r.items() if k != "sceau"}
+        brut = json.dumps(sans, sort_keys=True, ensure_ascii=False).encode()
+        return {**sans, "sceau": hmac.new(self._sceau, brut, hashlib.sha256).hexdigest()}
+
+    def _intacte(self, r: dict) -> bool:
+        """Écrite par ce pilote ? Son sceau est le bon (relecture du 16.11.2026, I17)."""
+        return self._sceau is None or (isinstance(r.get("sceau"), str) and hmac.compare_digest(r["sceau"], self._scelle(r)["sceau"]))
+
+    def _poser_maj(self, nouveau: dict | None, attendu: dict | None, brut: bool = False) -> bool:
         """Change la mise à jour en cours seulement si personne ne l'a changée depuis sa lecture : le pilote et la
-        commande du script de l'hôte avancent chacun de leur côté. Faux : rien n'est fait, on relira."""
-        return self.reglages.changer(CLE_MAJ, attendu, nouveau)
+        commande du script de l'hôte avancent chacun de leur côté. Faux : rien n'est fait, on relira. La nouvelle ligne
+        est scellée ; `brut` : l'ancienne est comparée telle qu'elle a été lue, sceau faux compris (pour l'effacer)."""
+        return self.reglages.changer(CLE_MAJ, attendu if brut else self._scelle(attendu), self._scelle(nouveau))
 
     def _echec_image(self, numero: int, motif: str, maintenant: float) -> None:
         if self.ordres.changer(self.client, numero, "echec", motif, ("a_appliquer",), maintenant):
@@ -402,12 +426,15 @@ class Installation:
             attendue = images.reference((o or {}).get("contenu", {}).get("image"), self.maj.depot) if o else None
         except pilotage.PilotageRefuse:
             attendue = None
-        sure = (attendue is not None and o["genre"] == "image" and r.get("reference") == attendue
-                and (r.get("avant") is None or self._image_de_megga(r["avant"])))
+        # L'état de l'ordre : une image pas encore acceptée (attente_accord) ne part jamais ; une fois lancée, elle peut
+        # être en échec (retour) ou appliquée (la ligne pas encore effacée).
+        permis = ("a_appliquer",) if r.get("phase") in ("verifier", "prete") else ("a_appliquer", "echec", "applique")
+        sure = (attendue is not None and o["genre"] == "image" and r.get("reference") == attendue and self._intacte(r)
+                and (l or {}).get("etat") in permis and (r.get("avant") is None or self._image_de_megga(r["avant"])))
         if not sure:
             log.warning("mise à jour en cours altérée dans la base : ignorée")
-            if self._poser_maj(None, r):
-                self._echec_image(r.get("numero"), "mise à jour en cours altérée dans la base : ignorée", self.horloge())
+            self._echec_image(r.get("numero"), "mise à jour en cours altérée dans la base : ignorée", self.horloge())
+            if self._poser_maj(None, r, brut=True):
                 self._alerte("mise à jour en cours altérée dans la base : ignorée")
         return sure
 
@@ -453,10 +480,15 @@ class Installation:
                 if self.maj.kube.image(self.maj.agent, "agent") not in (r["avant"], r["reference"]):
                     self._abandon(r, "l'image de l'agent a été changée hors du pilote", maintenant)
                     return
-                self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
-                if not self._poser_maj({**r, "en_place": True, "depuis": self.horloge()}, r):
-                    return
-                r = {**r, "en_place": True, "depuis": self.horloge()}
+                try:
+                    self.maj.kube.poser(self.maj.agent, "agent", r["reference"])
+                except Exception as e:  # refusé par l'API (droits, règle d'admission) : le délai court, puis le retour
+                    log.error("changement d'image refusé par Kubernetes : %s", pilotage.sans_donnees(e))
+                    self._detail(r["numero"], f"changement d'image refusé par Kubernetes : {pilotage.sans_donnees(e)}", maintenant)
+                else:
+                    if not self._poser_maj({**r, "en_place": True, "depuis": self.horloge()}, r):
+                        return
+                    r = {**r, "en_place": True, "depuis": self.horloge()}
             self._surveiller(r, sante, maintenant)
         elif r["phase"] == "retour":
             if self.maj.kube:
@@ -464,7 +496,13 @@ class Installation:
                     return
                 en_place = self.maj.kube.image(self.maj.agent, "agent")
                 if en_place == r["reference"] and r.get("avant"):
-                    self.maj.kube.poser(self.maj.agent, "agent", r["avant"])
+                    try:
+                        self.maj.kube.poser(self.maj.agent, "agent", r["avant"])
+                    except Exception as e:  # le retour refusé : au-delà du délai, la main au client (comme sous Compose)
+                        log.error("retour refusé par Kubernetes : %s", pilotage.sans_donnees(e))
+                        if maintenant - r["depuis"] > self.delai:
+                            self._abandon(r, f"retour refusé par Kubernetes en {self.delai / 60:.0f} minutes", maintenant, r.get("avant"))
+                        return
                     self._retour_fait(r)
                 elif en_place != r.get("avant"):
                     # Un « helm upgrade » est passé entre-temps : on n'écrase pas le choix du client.
@@ -478,8 +516,9 @@ class Installation:
     def _abandon(self, r: dict, motif: str, maintenant: float, image: str | None = None) -> None:
         """La mise à jour ne peut plus avancer seule : on la laisse, on le dit au client et à MEGGA. L'image à remettre
         va au journal du pilote (une empreinte passerait pour un numéro dans une alerte)."""
+        # L'état de l'ordre d'abord : une panne entre les deux écritures ne relance jamais l'image (relecture, I19).
+        self._echec_image(r["numero"], motif, maintenant)
         if self._poser_maj(None, r):
-            self._echec_image(r["numero"], motif, maintenant)
             self.noter("abandon", r["numero"], motif + (f" : remettre à la main l'image {image}" if image else ""))
             self._alerte(f"ordre {r['numero']} : {motif}" + (" (l'image à remettre est au journal du pilote)" if image else ""))
 
@@ -552,12 +591,17 @@ class Installation:
         # Le délai court après la sauvegarde, et repart quand l'image est en place (le pull peut être long).
         lancee = {**r, "phase": "lancee", "avant": actuelle, "sauvegarde": fichier.name, "depuis": self.horloge(),
                   "en_place": False, "saines": 0}
-        if not self._poser_maj(lancee, r):
-            return self._maj()
+        if not self._poser_maj(lancee, r):  # changée entre-temps par l'autre côté : relue, et revérifiée
+            relue = self._maj()
+            return relue if relue is not None and relue.get("phase") != "prete" and self._sure(relue) else None
         self._detail(r["numero"], f"base sauvegardée ({fichier.name}), image en cours de remplacement", maintenant)
         self.noter("lance", r["numero"], f"image {r['version']} : base sauvegardée ({fichier.name}), remplacement de l'image")
         if self.maj.kube:
-            self.maj.kube.poser(self.maj.agent, "agent", lancee["reference"])
+            try:
+                self.maj.kube.poser(self.maj.agent, "agent", lancee["reference"])
+            except Exception as e:  # redemandé au relevé suivant ; le délai court
+                log.error("changement d'image refusé par Kubernetes : %s", pilotage.sans_donnees(e))
+                return lancee
             place = {**lancee, "en_place": True, "depuis": self.horloge()}
             if self._poser_maj(place, lancee):
                 lancee = place
@@ -568,19 +612,20 @@ class Installation:
         puis tombe n'est pas gardée) ; sinon, après le délai, retour à l'image d'avant."""
         saine = r.get("en_place") and sante.get("ok") and sante.get("version") == r["version"]
         if saine and r.get("saines", 0) + 1 >= SANTE_REQUISE:
-            if self._poser_maj(None, r):  # le pilote suivra l'image de l'agent (_suivre_pilote, ou le script de l'hôte)
-                if self.ordres.changer(self.client, r["numero"], "applique", f"l'agent tourne sur l'image {r['version']}",
-                                       ("a_appliquer",), maintenant):
-                    for n in self.ordres.remplacer(self.client, "image", ("applique",), r["numero"], maintenant):
-                        self.noter("remplace", n, f"remplacé par l'ordre {r['numero']}")
-                    self.noter("applique", r["numero"], f"l'agent tourne sur l'image {r['version']}")
+            # L'ordre d'abord, la ligne ensuite : le pilote suivra l'image de l'agent (_suivre_pilote, ou le script de l'hôte).
+            if self.ordres.changer(self.client, r["numero"], "applique", f"l'agent tourne sur l'image {r['version']}",
+                                   ("a_appliquer",), maintenant):
+                for n in self.ordres.remplacer(self.client, "image", ("applique",), r["numero"], maintenant):
+                    self.noter("remplace", n, f"remplacé par l'ordre {r['numero']}")
+                self.noter("applique", r["numero"], f"l'agent tourne sur l'image {r['version']}")
+            self._poser_maj(None, r)
         elif maintenant - r["depuis"] > self.delai:
             pourquoi = (sante.get("erreur") or "/sante en échec") if not sante.get("ok") else f"version {sante.get('version')}"
             if not r.get("en_place"):
                 pourquoi = "l'image n'a pas été remplacée"
             motif = f"l'agent ne répond pas sur l'image {r['version']} après {self.delai / 60:.0f} minutes ({pourquoi})"
-            if self._poser_maj({**r, "phase": "retour", "depuis": maintenant}, r):
-                self._echec_image(r["numero"], pilotage.sans_donnees(motif + " ; retour à l'image d'avant"), maintenant)
+            self._echec_image(r["numero"], pilotage.sans_donnees(motif + " ; retour à l'image d'avant"), maintenant)
+            self._poser_maj({**r, "phase": "retour", "depuis": maintenant}, r)
         elif saine or r.get("saines"):  # un relevé sain de plus, ou la série remise à zéro
             self._poser_maj({**r, "saines": r.get("saines", 0) + 1 if saine else 0}, r)
 
@@ -686,7 +731,7 @@ class Pilote:
             raise RuntimeError("PILOTE_CLE manquante : la clé de l'installation (docs/installation-client.md, « Le pilotage »)")
         self.cle = pilotage.cle_privee(env["PILOTE_CLE"])
         self.url = (env.get("PILOTAGE_URL") or "http://megga").rstrip("/") if transport else adresse(env.get("PILOTAGE_URL") or "")
-        self.installation = Installation(env["DATABASE_URL"], self.base, cle_megga, horloge, self.maj, self.delai)
+        self.installation = Installation(env["DATABASE_URL"], self.base, cle_megga, horloge, self.maj, self.delai, self.cle)
 
     async def sante_agent(self) -> dict:
         """L'état de l'agent, par son /sante (réseau de l'installation) ; « injoignable » s'il ne répond pas."""
