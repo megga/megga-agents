@@ -133,7 +133,8 @@ def test_l_app_branche_les_conversations(url):
 
 
 def test_les_modeles_se_chargent_de_leurs_fichiers():
-    assert list(gabarits.GABARITS)[:2] == ["generaliste", "immobilier"]
+    assert list(gabarits.GABARITS) == ["generaliste", "immobilier", "sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage"]
+    assert [g["reglages"]["metier"] for g in gabarits.GABARITS.values()] == list(configuration.NOMS_METIERS)
     socle = (ICI_GABARITS / "_accueil.md").read_text(encoding="utf-8").strip()
     for id_, g in gabarits.GABARITS.items():
         r = g["reglages"]
@@ -141,6 +142,7 @@ def test_les_modeles_se_chargent_de_leurs_fichiers():
         assert r["outils"] == ["connaissances", "leads"] and r["transfert"] is True and r["mention_ia"] is True
         assert r["voix"] == {"voix": gabarits.VOIX_PAR_DEFAUT}
     assert gabarits.GABARITS["generaliste"]["source"]["licence"] == "MIT"
+    assert [k for k, g in gabarits.GABARITS.items() if g["source"] is None] == ["fiduciaire", "garage"]   # écrits sans source
     assert all("source" in g for g in gabarits.lister())
 
 
@@ -197,8 +199,6 @@ def test_l_immobilier_garde_son_pack_et_le_garage_le_retire():
     r = gabarits.reglages_pour("generaliste", base)   # un autre métier : le pack immobilier part
     assert r["outils"] == ["connaissances", "leads"]
     configuration.lire({**base, **r})
-    if "garage" not in gabarits.GABARITS:
-        pytest.skip("le modèle garage vient à la tâche 7")
     r = gabarits.reglages_pour("garage", base)
     assert r["outils"] == ["connaissances", "leads"]
     configuration.lire({**base, **r})
@@ -221,7 +221,6 @@ def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
 
 @pytest.mark.parametrize("metier", NOUVEAUX)
 def test_chaque_nouveau_metier_a_son_modele_et_ses_cas(metier):
-    if metier not in {g["metier"] for g in gabarits.lister()}:
-        pytest.skip("modèle pas encore écrit")
+    assert metier in {g["metier"] for g in gabarits.lister()}
     propres = [c for c in banc.scenarios(metier) if c["id"][0] == metier[0].upper()]
     assert len(propres) >= 3
