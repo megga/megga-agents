@@ -23,7 +23,12 @@ ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
 METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
-OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces")}
+OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
+                                                                                "vitrine", "accueil")}
+# Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
+OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs")
+# Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
+OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil")
 
 
 class Strict(BaseModel):
@@ -78,21 +83,40 @@ class WhatsApp(Strict):
     version_graph: str = Field(default="v26.0", pattern=r"^v\d+\.\d+$")
 
 
-# Les groupes d'outils qu'un rôle peut recevoir (noyau/roles.py, noyau/app.py, outils_du_client).
-GROUPES_OUTILS = ("rappels", "immobilier", "annonces")
+# Les groupes d'outils qu'un rôle peut recevoir (noyau/roles.py, noyau/app.py, outils_du_client) :
+#   annonces     les annonces du site (lot 7.2), pour un gestionnaire
+#   partenaires  le registre des partenaires, leurs demandes, leurs recherches gardées (lot 7.4), pour un gestionnaire
+#   visiteurs    les réponses aux visiteurs, l'envoi à un contact, les numéros bloqués (lot 7.4), pour un gestionnaire
+#   vitrine      chercher dans la vitrine, sans prix ni adresse : l'outil d'un partenaire
+#   accueil      chercher les biens publics, transmettre un contact, poser une question au courtier : ceux d'un visiteur
+GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil")
 
 
 class Role(Strict):
-    """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils."""
+    """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils.
+
+    `accueil` : le premier message à une personne de ce rôle, mot pour mot, par langue ({"fr": …, "en": …}) ;
+    envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier", "annonces"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil"], ...] = ("rappels",)
+    accueil: dict[str, str] = {}
 
     @field_validator("consignes")
     @classmethod
     def sans_artefacts(cls, v: str) -> str:
         if re.search(r"[\u2014\u2013\u00b7]", v):
             raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+    @field_validator("accueil")
+    @classmethod
+    def accueils(cls, v: dict[str, str]) -> dict[str, str]:
+        for langue, texte in v.items():
+            if not re.fullmatch(r"[a-z]{2}", langue) or not isinstance(texte, str) or not 10 <= len(texte) <= 1500:
+                raise ValueError("accueil : {code de langue: texte de 10 à 1500 caractères}")
+            if re.search(r"[\u2014\u2013\u00b7]", texte):
+                raise ValueError("Pas de tiret long ni de point médian.")
         return v
 
 
@@ -124,6 +148,9 @@ class Gestion(Strict):
     fiche: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
     # Le formulaire « Nouvelle annonce » publié chez Meta (WhatsApp Flow), s'il y en a un.
     formulaire_annonce: str | None = Field(default=None, pattern=r"^\d{6,30}$")
+    # Les sites (préfixes de `sites`) dont les biens sont publics : un visiteur en voit le prix et le lien. Ceux
+    # du site principal et des autres sites se présentent en une ligne, sans prix ni lien (lot 7.4).
+    publics: tuple[str, ...] = ()
 
     @field_validator("sites")
     @classmethod
@@ -132,6 +159,12 @@ class Gestion(Strict):
             if not re.fullmatch(r"[a-z0-9-]{1,40}", prefixe) or not re.fullmatch(r"https://[a-z0-9.-]+", url):
                 raise ValueError("sites : {préfixe de l'identifiant d'un bien: adresse https du site}")
         return v
+
+    @model_validator(mode="after")
+    def publics_connus(self):
+        if inconnus := [p for p in self.publics if p not in self.sites]:
+            raise ValueError(f"publics : des préfixes de sites, inconnus : {', '.join(inconnus)}")
+        return self
 
 
 class Config(Strict):
@@ -179,6 +212,10 @@ class Config(Strict):
             hors += [o for o in r.outils if o != "rappels" and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
         if hors:
             raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
+        # Les outils qui agissent au nom d'un compte de gestion ne vont qu'aux gestionnaires.
+        for nom, r in self.les_roles().items():
+            if nom != "gestionnaire" and (pris := [o for o in r.outils if o in OUTILS_GESTIONNAIRE]):
+                raise ValueError(f"Ces outils sont ceux des gestionnaires, pas du rôle {nom} : {', '.join(pris)}.")
         return self
 
     def les_roles(self) -> dict[str, Role]:
@@ -207,8 +244,8 @@ def manques(conf: Config) -> list[str]:
     m = []
     if ("immobilier" in conf.outils or any("immobilier" in r.outils for r in conf.les_roles().values())) and not conf.catalogue:
         m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
-    if any("annonces" in r.outils for r in conf.les_roles().values()) and conf.gestion is None:
-        m.append("les outils d'annonces attendent la gestion du site (réglage de MEGGA)")
+    if any(o in OUTILS_GESTION for r in conf.les_roles().values() for o in r.outils) and conf.gestion is None:
+        m.append("les outils d'annonces, de partenaires et de visiteurs attendent la gestion du site (réglage de MEGGA)")
     return m
 
 

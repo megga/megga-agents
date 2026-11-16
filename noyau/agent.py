@@ -49,16 +49,38 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         base.append(config.consignes.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
-    if role is not None and "annonces" in role.outils:  # la façon de se servir des outils d'annonces
-        from packs.immobilier.annonces import CONSIGNES as CONSIGNES_ANNONCES
+    if role is not None and set(role.outils) - {"rappels", "immobilier"}:  # la façon de se servir des outils du pack
+        from packs.immobilier.relations import consignes_des_groupes
 
-        base.append(CONSIGNES_ANNONCES)
+        base += consignes_des_groupes(role.outils)
     return base
 
 
+def instructions_du_tour(base: list[str], contexte):
+    """Les consignes, et le Contexte du tour (`contexte` : async f(personne) -> texte) lu à chaque tour pour la
+    personne qui parle : ses demandes en cours, les questions ouvertes. Une panne du Contexte n'arrête pas le tour."""
+    if contexte is None:
+        return base
+
+    async def instructions(run_context=None) -> list[str]:
+        personne = getattr(run_context, "user_id", None)
+        try:
+            extra = await contexte(personne) if personne else ""
+        except Exception as e:
+            import logging
+
+            logging.getLogger("megga").warning("contexte illisible : %s", str(e)[:200])
+            extra = ""
+        return [*base, extra] if extra else list(base)
+
+    instructions.base = base  # les consignes fixes, lisibles sans tour (essais, atelier)
+    return instructions
+
+
 def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None,
-               outils: list | None = None, role: Role | None = None, nom_role: str | None = None) -> Agent:
-    """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs."""
+               outils: list | None = None, role: Role | None = None, nom_role: str | None = None, contexte=None) -> Agent:
+    """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs ;
+    `contexte` : le Contexte de chaque tour (instructions_du_tour)."""
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
@@ -68,7 +90,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         model=principal,
         fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
         db=db,
-        instructions=consignes(config, role),
+        instructions=instructions_du_tour(consignes(config, role), contexte),
         add_history_to_context=True,
         num_history_runs=12,
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.

@@ -351,7 +351,7 @@ def test_l_agent_du_gestionnaire_recoit_les_outils_d_annonces(tmp_path):
     noms = {t.__name__ if callable(t) else getattr(t, "name", "") for t in agents["gestionnaire"].tools}
     assert {"preparer_annonce", "confirmer_action", "rappeler"} <= noms
     assert not {"preparer_annonce"} & {getattr(t, "__name__", "") for t in agents["visiteur"].tools}
-    assert any("Les annonces du site" in c for c in agents["gestionnaire"].instructions)
+    assert any("Les annonces du site" in c for c in agents["gestionnaire"].instructions.base)
     # Sans la clé de la gestion, l'agent ne démarre pas avec ces outils
     with pytest.raises(RuntimeError, match="gestion"):
         creer({**env, "GESTION_CLE": "", "DATABASE_URL": f"sqlite:///{tmp_path}/b.db"})
