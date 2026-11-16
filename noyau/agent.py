@@ -49,6 +49,10 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         base.append(config.consignes.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
+    if role is not None and "annonces" in role.outils:  # la façon de se servir des outils d'annonces
+        from packs.immobilier.annonces import CONSIGNES as CONSIGNES_ANNONCES
+
+        base.append(CONSIGNES_ANNONCES)
     return base
 
 

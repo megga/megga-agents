@@ -22,6 +22,8 @@ SANS_WHATSAPP_SCHEMA = 2
 ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
 METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
+# Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
+OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces")}
 
 
 class Strict(BaseModel):
@@ -77,14 +79,14 @@ class WhatsApp(Strict):
 
 
 # Les groupes d'outils qu'un rôle peut recevoir (noyau/roles.py, noyau/app.py, outils_du_client).
-GROUPES_OUTILS = ("rappels", "immobilier")
+GROUPES_OUTILS = ("rappels", "immobilier", "annonces")
 
 
 class Role(Strict):
     """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "immobilier", "annonces"], ...] = ("rappels",)
 
     @field_validator("consignes")
     @classmethod
@@ -116,6 +118,10 @@ class Gestion(Strict):
 
     url: str = Field(pattern=r"^https://[a-z0-9.-]+(:\d+)?$")
     sites: dict[str, str] = {}
+    # Les noms que les textes d'une annonce ne doivent jamais porter (les gens de l'équipe, l'agent).
+    noms_interdits: tuple[str, ...] = ()
+    # Le formulaire « Nouvelle annonce » publié chez Meta (WhatsApp Flow), s'il y en a un.
+    formulaire_annonce: str | None = Field(default=None, pattern=r"^\d{6,30}$")
 
     @field_validator("sites")
     @classmethod
@@ -168,7 +174,7 @@ class Config(Strict):
     def outils_du_metier(self):
         hors = [o for o in self.outils if o not in METIERS[self.metier]]
         for r in self.les_roles().values():
-            hors += [o for o in r.outils if o != "rappels" and o not in METIERS[self.metier] and o not in hors]
+            hors += [o for o in r.outils if o != "rappels" and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
         if hors:
             raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
         return self
@@ -199,6 +205,8 @@ def manques(conf: Config) -> list[str]:
     m = []
     if ("immobilier" in conf.outils or any("immobilier" in r.outils for r in conf.les_roles().values())) and not conf.catalogue:
         m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
+    if any("annonces" in r.outils for r in conf.les_roles().values()) and conf.gestion is None:
+        m.append("les outils d'annonces attendent la gestion du site (réglage de MEGGA)")
     return m
 
 
