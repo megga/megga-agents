@@ -3,17 +3,22 @@
 import asyncio
 import json
 import shutil
+import time
 from pathlib import Path
 
 import pytest
+import yaml
+from sqlalchemy import update
 from test_lot6_pilote import MEGGA, activer, canal, nouvelle_version, releve_signe  # noqa: F401 (canal : fixture)
 
 from atelier import gabarits, regles
+from atelier.regles import Refus
 from noyau import config as configuration
 from noyau import banc, connecteurs, stockage, version
 from noyau.app import creer
 from pilote import service as pilote_service
 from test_lot9_3 import Contexte, FaussesConversations
+from test_lot9_4 import fini, recepteur
 
 NOUVEAUX = ("sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage")
 CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
@@ -77,10 +82,28 @@ def url(tmp_path):
     return f"sqlite:///{tmp_path}/client.db"
 
 
-def leads(url, gestionnaires=("+41790000099", "+41790000098"), **k):
+class Equipe(FaussesConversations):
+    """Les conversations, avec des gestionnaires joignables (tous, par défaut) ou pas (noyau/tour.py, peut_ecrire)."""
+
+    def __init__(self, joignables=None):
+        super().__init__()
+        self.joignables = joignables
+
+    async def peut_ecrire(self, personne, usage, langue=""):
+        return self.joignables is None or personne in self.joignables
+
+
+def leads(url, gestionnaires=("+41790000099", "+41790000098"), joignables=None, **k):
     l = connecteurs.Leads(stockage.Leads(url), agent="Alix", gestionnaires=gestionnaires, **k)
-    l.conversations = FaussesConversations()
+    l.conversations = Equipe(joignables)
     return l
+
+
+def vieillir(url, secondes):
+    """Les demandes déjà notées, comme si elles l'avaient été `secondes` plus tôt."""
+    m = stockage.Leads(url)
+    with m._e.begin() as c:
+        c.execute(update(m._t).values(cree=m._t.c.cree - secondes))
 
 
 def test_une_demande_previent_l_equipe_apres_le_tour(url):
@@ -96,9 +119,98 @@ def test_une_demande_previent_l_equipe_apres_le_tour(url):
 
 
 def test_sans_equipe_ou_alerte_coupee_rien_ne_part(url):
-    for l in (leads(url, gestionnaires=()), leads(url, alerte=False)):
-        assert asyncio.run(l.outils()[0]("Une table pour 4", 3, Contexte("+41790000001"))).endswith("enregistrée pour l'équipe.")
+    for personne, l in (("+41790000001", leads(url, gestionnaires=())), ("+41790000002", leads(url, alerte=False))):
+        outil = l.outils()[0]
+        assert asyncio.run(outil("Une table pour 4", 3, Contexte(personne))).endswith("enregistrée pour l'équipe.")
+        assert asyncio.run(outil("Une table pour 4 à 20 h", 3, Contexte(personne))).endswith("complétée.")   # aucune alerte partie
         assert l.conversations.apres == []
+
+
+def test_une_demande_completee_dans_les_30_minutes_reste_la_meme(url):
+    """Relecture finale (I2) : la même personne qui complète sa demande ne crée ni une seconde demande ni une seconde alerte ;
+    le webhook reçoit la fiche complétée sous le même numéro."""
+    recus, transport = recepteur([200])
+    l = leads(url, webhook="https://crm.exemple.ch/leads", transport=transport)
+    outil = l.outils()[0]
+
+    async def essai():
+        r1 = await outil("Le service de ma Clio", 3, Contexte("+41790000001"), nom="M. Favre")
+        await fini(l)
+        r2 = await outil("Le service de ma Clio, avec les pneus d'hiver", 2, Contexte("+41790000001"), delai="jeudi")
+        await fini(l)
+        return r1, r2
+
+    r1, r2 = asyncio.run(essai())
+    assert r1 == "Demande 1 enregistrée ; l'équipe est prévenue."
+    assert r2 == "Demande 1 complétée ; l'équipe a déjà été prévenue."
+    assert len(l.conversations.apres) == 2   # une alerte par gestionnaire, pour la première seulement
+    [lead] = stockage.Leads(url).lister()
+    assert (lead["id"], lead["besoin"], lead["score"], lead["delai"], lead["nom"]) == (
+        1, "Le service de ma Clio, avec les pneus d'hiver", 3, "jeudi", "M. Favre")   # le score garde le plus haut
+    envois = [json.loads(r.content)["lead"] for r in recus]
+    assert [e["id"] for e in envois] == [1, 1] and (envois[1]["delai"], envois[1]["nom"], envois[1]["score"]) == ("jeudi", "M. Favre", 3)
+    assert lead["etat"] == "envoye"
+
+
+def test_apres_30_minutes_ou_pour_une_autre_personne_une_nouvelle_demande(url):
+    l = leads(url)
+    outil = l.outils()[0]
+    assert asyncio.run(outil("Une table pour 4", 3, Contexte("+41790000001"))) == "Demande 1 enregistrée ; l'équipe est prévenue."
+    assert asyncio.run(outil("Une chambre double", 3, Contexte("+41790000002"))) == "Demande 2 enregistrée ; l'équipe est prévenue."
+    vieillir(url, 31 * 60)
+    assert asyncio.run(outil("Une table pour 6", 4, Contexte("+41790000001"))) == "Demande 3 enregistrée ; l'équipe est prévenue."
+    assert len(l.conversations.apres) == 6   # trois demandes, deux gestionnaires
+    assert [d["besoin"] for d in stockage.Leads(url).lister()] == ["Une table pour 6", "Une chambre double", "Une table pour 4"]
+
+
+def test_l_equipe_est_prevenue_seulement_si_un_gestionnaire_est_joignable(url):
+    """Relecture finale (M2) : sinon l'alerte attend quand même, et l'outil le dit autrement."""
+    l = leads(url, joignables={"+41790000098"})
+    assert asyncio.run(l.outils()[0]("Une table pour 4", 3, Contexte("+41790000001"))) == "Demande 1 enregistrée ; l'équipe est prévenue."
+    l = leads(url, joignables=set())
+    outil = l.outils()[0]
+    assert asyncio.run(outil("Une table pour 2", 3, Contexte("+41790000002"))) == (
+        "Demande 2 enregistrée ; l'équipe la verra dès que possible.")
+    assert len(l.conversations.apres) == 2   # l'alerte attend le prochain message des gestionnaires
+    assert asyncio.run(outil("Une table pour 2, en terrasse", 3, Contexte("+41790000002"))) == "Demande 2 complétée."
+
+
+def test_joignable_d_apres_les_conversations(url):
+    """Le vrai contrôle (noyau/tour.py, peut_ecrire) : les 24 heures du gestionnaire, ou un modèle Meta « lead » ou « message » ;
+    sans WhatsApp, personne."""
+    from noyau.tour import Conversations
+    from test_app import FauxAgent, FauxExpediteur
+
+    contacts = stockage.Contacts(url)
+
+    def essai(personne, **reglages):
+        conf = configuration.Config.model_validate({**CONF, **reglages})
+        l = connecteurs.Leads(stockage.Leads(url), agent="Alix", gestionnaires=("+41790000099",))
+        l.conversations = Conversations(conf, FauxAgent(), FauxExpediteur(), contacts=contacts, differes=stockage.Differes(url))
+        return asyncio.run(l.outils()[0]("Une table pour 4", 3, Contexte(personne)))
+
+    prevenue, plus_tard = "l'équipe est prévenue.", "l'équipe la verra dès que possible."
+    assert essai("+41790000001").endswith(plus_tard)   # hors des 24 heures, sans modèle Meta
+    assert essai("+41790000002", modeles_meta={"lead": {"nom": "fsp_lead"}}).endswith(prevenue)
+    assert essai("+41790000003", modeles_meta={"message": {"nom": "fsp_message"}}).endswith(prevenue)
+    assert essai("+41790000004", whatsapp=None, modeles_meta={"lead": {"nom": "fsp_lead"}}).endswith(plus_tard)
+    contacts.noter("+41790000099", time.time() - 3600)   # le gestionnaire a écrit il y a une heure
+    assert essai("+41790000005").endswith(prevenue)
+    assert essai("+41790000006", whatsapp=None).endswith(plus_tard)
+
+
+def test_un_webhook_et_une_alerte_l_alerte_l_emporte(url):
+    """Relecture finale (M7) : la fiche part au webhook, l'alerte est programmée, et l'outil dit que l'équipe est prévenue."""
+    recus, transport = recepteur([200])
+    l = leads(url, webhook="https://crm.exemple.ch/leads", transport=transport)
+
+    async def essai():
+        r = await l.outils()[0]("Une chambre double du 3 au 5 mars", 4, Contexte("+41790000001"))
+        await fini(l)
+        return r
+
+    assert asyncio.run(essai()) == "Demande 1 enregistrée ; l'équipe est prévenue."
+    assert [json.loads(r.content)["lead"]["id"] for r in recus] == [1] and len(l.conversations.apres) == 2
 
 
 def test_l_alerte_masque_les_secrets_nomme_l_api_et_saute_l_auteur(url):

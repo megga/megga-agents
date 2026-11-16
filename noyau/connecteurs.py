@@ -4,7 +4,9 @@ Les leads (groupe d'outils « leads ») : quand une personne a un vrai besoin, l
 (`enregistrer_lead` : besoin, budget, délai, lieu, nom, score de 1 à 5), gardée dans la base du client
 (stockage.Leads) et envoyée, en arrière-plan, au webhook https du client (Config.leads : son CRM, un tableur,
 Zapier), signée par LEADS_SECRET (« x-megga-signature: sha256=… », le HMAC du corps) s'il est posé. Un envoi en
-échec est retenté une fois ; il reste lisible dans la console. Les ventes sont le cas d'usage qui croît le plus
+échec est retenté une fois ; il reste lisible dans la console. Une personne qui complète sa demande dans les 30 minutes
+garde la même fiche : le webhook la reçoit de nouveau, sous le même numéro, et l'équipe n'est pas prévenue une seconde
+fois (lot 10). Les ventes sont le cas d'usage qui croît le plus
 (Zapier 2026) : un lead noté sur-le-champ, à toute heure, ne se perd plus.
 
 Les connecteurs (groupe « connecteurs ») : les serveurs MCP du client (Config.mcp), le standard des connecteurs
@@ -21,6 +23,7 @@ import hashlib
 import hmac
 import json
 import logging
+import time
 from collections.abc import Sequence
 
 import httpx
@@ -37,6 +40,9 @@ CONSIGNE_LEADS = ("Quand une personne a un vrai besoin (achat, vente, location, 
                   "ce que l'outil a rendu, sans numéro technique et sans promettre de rappel ni de délai.")
 ESSAIS_ENVOI = 2
 PAUSE_ENVOI = 2.0  # secondes entre deux essais
+# Une personne qui enregistre de nouveau dans les 30 minutes qui suivent sa demande complète celle-ci : ni seconde
+# demande, ni seconde alerte (relecture finale du lot 10, I2). Limite : deux besoins distincts dans ce délai se fondent.
+COMPLETER = 30 * 60  # secondes
 
 
 def signature(secret: str, corps: bytes) -> str:
@@ -65,7 +71,8 @@ class Leads:
 
         async def enregistrer_lead(besoin: str, score: int, run_context: RunContext, budget: str = "", delai: str = "",
                                    lieu: str = "", nom: str = "") -> str:
-            """Enregistre la fiche d'une personne qui a un vrai besoin, pour l'équipe commerciale.
+            """Enregistre la fiche d'une personne qui a un vrai besoin, pour l'équipe commerciale. Appelé de nouveau pour la
+            même personne dans les 30 minutes, il complète sa demande au lieu d'en noter une autre.
 
             Args:
                 besoin: ce qu'elle cherche, en une phrase (« un 4 pièces à Nyon, à acheter »).
@@ -86,27 +93,58 @@ class Leads:
                 return "besoin : ce que la personne cherche, en une phrase."
             fiche = {"besoin": _court(besoin, 500), "score": score, "budget": _court(budget, 80), "delai": _court(delai, 80),
                      "lieu": _court(lieu, 120), "nom": _court(nom, 120)}
+            destinataires = leads._destinataires(personne)
+            recent = personne and await asyncio.to_thread(leads.magasin.dernier, personne, time.time() - COMPLETER)
+            if recent:  # la même demande, complétée : l'équipe ne reçoit pas une seconde alerte
+                ident = recent["id"]
+                fiche = await asyncio.to_thread(leads.magasin.completer, ident, fiche)
+                leads._au_webhook(ident, personne, fiche)
+                if destinataires and await leads._joignable(destinataires):
+                    return f"Demande {ident} complétée ; l'équipe a déjà été prévenue."
+                return f"Demande {ident} complétée."
             ident = await asyncio.to_thread(leads.magasin.noter, personne, fiche)
-            if leads.webhook:
-                t = asyncio.get_running_loop().create_task(leads.envoyer(ident, personne, fiche))
-                leads._taches.add(t)
-                t.add_done_callback(leads._taches.discard)
-            if leads._prevenir_equipe(ident, personne, fiche):
-                return f"Demande {ident} enregistrée ; l'équipe est prévenue."
+            leads._au_webhook(ident, personne, fiche)
+            if destinataires:
+                leads._prevenir_equipe(ident, personne, fiche, destinataires)
+                if await leads._joignable(destinataires):
+                    return f"Demande {ident} enregistrée ; l'équipe est prévenue."
+                return f"Demande {ident} enregistrée ; l'équipe la verra dès que possible."
             if leads.webhook:
                 return f"Demande {ident} enregistrée et transmise au logiciel de l'équipe."
             return f"Demande {ident} enregistrée pour l'équipe."
 
         return [enregistrer_lead]
 
-    def _prevenir_equipe(self, ident: int, personne: str, fiche: dict) -> bool:
-        """Chaque gestionnaire (sauf la personne, s'il note lui-même) reçoit la demande sur WhatsApp, une fois fini le tour
-        de la personne. Rend vrai si une alerte est programmée."""
+    def _au_webhook(self, ident: int, personne: str, fiche: dict) -> None:
+        """La fiche part au webhook du client, s'il en a un, en arrière-plan."""
+        if not self.webhook:
+            return
+        t = asyncio.get_running_loop().create_task(self.envoyer(ident, personne, fiche))
+        self._taches.add(t)
+        t.add_done_callback(self._taches.discard)
+
+    def _destinataires(self, personne: str) -> list[str]:
+        """Les gestionnaires à prévenir d'une demande de cette personne (sauf elle, si un gestionnaire note lui-même) ;
+        aucun si l'alerte est coupée."""
         if not self.alerte or self.conversations is None:
-            return False
-        destinataires = [n for n in self.gestionnaires if n != _qui(personne)]
-        if not destinataires:
-            return False
+            return []
+        return [n for n in self.gestionnaires if n != _qui(personne)]
+
+    async def _joignable(self, destinataires: list[str]) -> bool:
+        """Un gestionnaire au moins peut-il recevoir l'alerte maintenant : ses 24 heures ouvertes, ou un modèle Meta
+        « lead » ou « message » réglé (noyau/tour.py, peut_ecrire) ? Sans WhatsApp, personne. Dans le doute, non : l'outil
+        ne dit pas l'équipe prévenue (relecture finale du lot 10, M2)."""
+        for n in destinataires:
+            try:
+                if await self.conversations.peut_ecrire(n, "lead"):
+                    return True
+            except Exception as e:
+                log.warning("gestionnaire joignable ? %s", str(e)[:200])
+        return False
+
+    def _prevenir_equipe(self, ident: int, personne: str, fiche: dict, destinataires: list[str]) -> None:
+        """Chaque destinataire reçoit la demande sur WhatsApp, une fois fini le tour de la personne ; hors de ses 24 heures,
+        elle attend son prochain message (noyau/tour.py, envoyer_de_soi_meme)."""
         agent = self.agent or "L'agent"
         lignes = [f"{agent} a noté une demande (n° {ident}) de {_qui(personne)} : {fiche['besoin']}."]
         lignes += [f"{nom} : {fiche[cle]}" for cle, nom in (("delai", "Délai"), ("nom", "Nom"), ("lieu", "Lieu"), ("budget", "Budget"))
@@ -118,7 +156,6 @@ class Leads:
         for n in destinataires:
             conversations.apres_le_tour(personne, lambda n=n: conversations.envoyer_de_soi_meme(
                 n, [{"texte": corps}], "lead", variables=[agent, besoin]))
-        return True
 
     async def envoyer(self, ident: int, personne: str, fiche: dict) -> bool:
         """La fiche au webhook du client, signée ; retentée une fois. Rend vrai si elle est partie."""
