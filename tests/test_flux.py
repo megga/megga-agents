@@ -197,6 +197,49 @@ class ModeleEnFlux(Model):
         return response
 
 
+@pytest.fixture
+def atelier_en_flux(tmp_path):
+    """L'atelier, avec un modèle d'essai qui répond par morceaux (dont un secret coupé en deux)."""
+    from fastapi.testclient import TestClient
+
+    from atelier.app import creer as creer_atelier
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, FaussePorte
+
+    modele = ModeleEnFlux(morceaux=["Bonjour ", "— votre clé : sk-abc", "defghijklmnopqrstuvwxyz0123 ", "**reste** secrète."])
+    app = creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db", "ESSAIS_DIR": str(tmp_path / "essais"),
+                         "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE}, porte=FaussePorte(), principal_essai=modele)
+    return TestClient(app)
+
+
+def test_l_essai_de_l_atelier_au_fil_de_l_eau(atelier_en_flux):
+    from test_lot5 import jeton_client, nouveau_client
+
+    t = atelier_en_flux
+    nouveau_client(t)
+    client = jeton_client(t)
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers={**client, **FLUX}, json={"message": "Bonjour", "conversation": "a"})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/event-stream")
+    evenements = lire(r.text)
+    # La même réponse que l'essai d'un bloc, et le secret jamais en clair, ni dans les morceaux ni à la fin
+    assert evenements[-1] == ("fin", {"version": 1, "conversation": "a", "reponse": "Bonjour, votre clé : [masqué] *reste* secrète."})
+    assert any(g == "texte" for g, _ in evenements[:-1])
+    assert "sk-" not in r.text and "defghij" not in r.text
+    # L'essai compte, comme d'un bloc
+    assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["essais"] == 1
+
+
+def test_l_essai_en_flux_garde_ses_refus_en_json(atelier_en_flux):
+    from test_lot5 import MEGGA, nouveau_client
+
+    t = atelier_en_flux
+    nouveau_client(t)
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers={**MEGGA, **FLUX}, json={"message": ""})
+    assert r.status_code == 400 and "message" in r.json()["erreur"]
+    assert t.post("/atelier/clients/exemple/versions/9/essai", headers={**MEGGA, **FLUX}, json={"message": "x"}).status_code == 404
+    assert t.post("/atelier/clients/exemple/versions/1/essai", headers=FLUX, json={"message": "x"}).status_code == 401
+
+
 def test_avec_un_vrai_agent_agno(sqlite):
     t, *_ = agent_api(sqlite, agent=Agent(model=ModeleEnFlux(), telemetry=False))
     _, entete = nouvelle_cle(sqlite)

@@ -323,6 +323,43 @@ test("l'atelier ne s'arrête qu'entre deux requêtes : une mise en service en co
   assert.equal(await atelier.redemarrer(), false); // arrêté : plus rien à faire
 });
 
+test("un essai au fil de l'eau passe morceau par morceau, et l'atelier ne redémarre qu'à la fin du flux", async () => {
+  const a = ctx({ running: true });
+  let pousser;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () => new Response(new ReadableStream({ start: (c) => (pousser = c) }), { headers: { "content-type": "text/event-stream; charset=utf-8" } }),
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const r = await atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/essai", { method: "POST", headers: { accept: "text/event-stream" } }));
+  assert.equal(r.headers.get("content-type"), "text/event-stream; charset=utf-8");
+  const lecteur = r.body.getReader();
+  const morceau = new TextEncoder().encode('event: texte\ndata: {"texte": "Bon"}\n\n');
+  pousser.enqueue(morceau);
+  assert.deepEqual((await lecteur.read()).value, morceau); // rendu avant la fin de l'essai
+  assert.equal(await atelier.redemarrer(), true); // demandé pendant l'essai
+  assert.deepEqual(a.journal, []); // rien n'est coupé
+  pousser.close();
+  assert.equal((await lecteur.read()).done, true);
+  assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
+});
+
+test("une console qui raccroche pendant un essai en flux libère l'atelier", async () => {
+  const a = ctx({ running: true });
+  let annule = false;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () => new Response(new ReadableStream({ start: () => {}, cancel: () => (annule = true) }), { headers: { "content-type": "text/event-stream" } }),
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const r = await atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/essai", { method: "POST" }));
+  assert.equal(await atelier.redemarrer(), true);
+  await r.body.cancel();
+  assert.equal(annule, true);
+  assert.deepEqual(a.journal, [["destroy"]]);
+  assert.equal(atelier.enCours, 0);
+});
+
 test("le commit déployé (wrangler deploy --tag) est remis au conteneur", async () => {
   const a = ctx({ secrets: { DATABASE_URL: "postgresql://atelier" } });
   const envW = { ADMIN_TOKEN: "admin", PORTE_URL: "https://porte", VERSION_PORTE: { id: "v1", tag: "abc123def456" } };

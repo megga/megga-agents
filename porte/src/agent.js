@@ -22,6 +22,7 @@ const CACHE_SUIVI_MS = 5 * 60 * 1000;
 const CACHE_CONVERSATIONS_MS = 60 * 1000;
 const SOMMEIL_SUIVI_MS = 2 * 60 * 1000;
 const ALERTES_MAX = 10;
+const FLUX = /\btext\/event-stream\b/; // une réponse au fil de l'eau (noyau/flux.py)
 
 /** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
 export async function jetonInterne(admin, nom) {
@@ -303,16 +304,60 @@ export class Atelier extends Conteneur {
   /** L'atelier ne s'arrête qu'entre deux requêtes : une mise en service ou un essai en cours va au bout. */
   async fetch(requete) {
     this.enCours = (this.enCours ?? 0) + 1;
+    let r;
     try {
-      const r = await super.fetch(requete);
+      r = await super.fetch(requete);
+    } catch (e) {
+      await this.finRequete();
+      throw e;
+    }
+    if (FLUX.test(r.headers.get("content-type") ?? "") && r.body) return this.enFlux(r);
+    try {
       // Lue en entier avant de rendre la main : un redémarrage ne coupe pas une réponse en route.
       return new Response(await r.arrayBuffer(), r);
     } finally {
-      this.enCours -= 1;
-      if (this.enCours === 0 && this.aRedemarrer) {
-        this.aRedemarrer = false;
-        await this.ctx.container?.destroy().catch(() => {});
-      }
+      await this.finRequete();
+    }
+  }
+
+  /**
+   * Un essai au fil de l'eau : rendu morceau par morceau, et compté en cours jusqu'à la fin du flux (ou jusqu'à ce que
+   * la console raccroche), pour qu'un redémarrage ne le coupe pas non plus.
+   */
+  enFlux(r) {
+    const lecteur = r.body.getReader();
+    let fini = false;
+    const finir = async () => {
+      if (fini) return;
+      fini = true;
+      await this.finRequete();
+    };
+    const corps = new ReadableStream({
+      async pull(c) {
+        try {
+          const { done, value } = await lecteur.read();
+          if (done) {
+            c.close();
+            await finir();
+          } else c.enqueue(value);
+        } catch (e) {
+          c.error(e);
+          await finir();
+        }
+      },
+      async cancel(raison) {
+        await lecteur.cancel(raison).catch(() => {});
+        await finir();
+      },
+    });
+    return new Response(corps, { status: r.status, headers: r.headers });
+  }
+
+  async finRequete() {
+    this.enCours -= 1;
+    if (this.enCours === 0 && this.aRedemarrer) {
+      this.aRedemarrer = false;
+      await this.ctx.container?.destroy().catch(() => {});
     }
   }
 

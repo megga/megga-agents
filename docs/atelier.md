@@ -61,7 +61,7 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `POST /clients/{id}/valider` | tous | `{base?, changements}` : la configuration résultante, sans rien garder |
 | `POST /clients/{id}/versions` | tous | `{base?, changements}` : un brouillon |
 | `POST /clients/{id}/gabarit` | tous | `{gabarit, nom_agent?, base?}` : un brouillon d'après un modèle par métier |
-| `POST /clients/{id}/versions/{v}/essai` | tous | `{message, conversation?}` : la réponse de l'agent |
+| `POST /clients/{id}/versions/{v}/essai` | tous | `{message, conversation?}` : la réponse de l'agent ; avec `Accept: text/event-stream`, au fil de l'eau (voir plus bas) |
 | `POST /clients/{id}/versions/{v}/activer` | tous | `{forcer?}` : mise en service ou retour |
 | `POST /clients/{id}/reprise` | MEGGA | `{gere_par_megga}` : reprendre ou rendre la main |
 | `POST /clients/{id}/jetons` | MEGGA | un jeton pour le client |
@@ -71,6 +71,12 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+
+## L'essai au fil de l'eau
+
+Pour la console, qui montre la réponse pendant qu'elle s'écrit : avec `Accept: text/event-stream`, l'essai répond par les mêmes événements que l'entrée par API (`noyau/flux.py`, `docs/api.md`) : `texte` (des morceaux, masqués comme en service), `outil` (le nom d'un outil, `debut` puis `fin`, ce que l'écran d'essai trace), puis `fin` avec `{version, conversation, reponse}`, la même réponse que l'essai d'un bloc, qui fait foi ; `erreur` si l'essai n'a pas pu aller au bout. Les refus (jeton, version, message) restent des réponses JSON. L'essai va au bout et compte même si la console se ferme.
+
+À la porte, l'objet de l'atelier rend le flux morceau par morceau au lieu de lire la réponse en entier, mais le compte en cours jusqu'à sa fin : un redémarrage demandé pendant un essai attend qu'il soit fini, ou que la console ait raccroché.
 
 ## L'entrée par API (lot 6.6)
 

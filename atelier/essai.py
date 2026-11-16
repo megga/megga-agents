@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from noyau import stockage
+from noyau import flux, stockage
 from noyau.agent import construire
 from noyau.app import outils_du_client
 from noyau.config import Config
@@ -19,14 +19,22 @@ from noyau.tour import EXCUSE, en_echec
 
 
 async def essayer(conf: Config, version: int, message: str, conversation: str, cles: dict[str, str],
-                  dossier: Path, principal=None) -> str:
-    """La réponse de l'agent de cette version ; `principal` remplace le modèle (essais du code)."""
+                  dossier: Path, principal=None, sur_evenement=None) -> str:
+    """La réponse de l'agent de cette version ; `principal` remplace le modèle (essais du code).
+    Avec `sur_evenement` (async f(genre, valeur)), la réponse part aussi au fil de l'eau (noyau/flux.py) : les
+    morceaux de texte, masqués comme en service, et les outils ; la réponse rendue reste celle qui fait foi."""
     dossier.mkdir(parents=True, exist_ok=True)
     url = f"sqlite:///{dossier / conf.id}.db"
     agent = construire(conf, stockage.base_agno(url), cles, principal=principal,
                        outils=outils_du_client(conf, stockage.Rappels(url)))
     personne = f"essai-v{version}-{conversation}"
-    sortie = await agent.arun(message, user_id=personne, session_id=personne)
+    if sur_evenement is None:
+        sortie = await agent.arun(message, user_id=personne, session_id=personne)
+    else:
+        relais = flux.Relais(sur_evenement)
+        sortie = await flux.suivre(agent.arun(message, user_id=personne, session_id=personne, stream=True,
+                                              stream_events=True, yield_run_output=True), relais)
+        await relais.finir()
     if en_echec(sortie):
         return EXCUSE
     return getattr(sortie, "content", None) or ""

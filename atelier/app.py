@@ -79,6 +79,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
 from noyau import api as entree_api
+from noyau import flux
 from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
@@ -322,7 +323,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         return {**v, "gabarit": corps["gabarit"], "manques": regles.manques(conf)}
 
     @r.post("/clients/{ident}/versions/{numero}/essai")
-    async def essai(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict = Body(...)):
+    async def essai(ident: str, numero: int, requete: Request, qui: Identite = Depends(identite), corps: dict = Body(...)):
         await bd(client_de, qui, ident)
         v = await bd(version_de, ident, numero)
         message = corps.get("message")
@@ -332,9 +333,33 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if not CONVERSATION.fullmatch(conversation):
             raise Refus(400, "conversation : lettres, chiffres, - et _")
         conf = config_de(v)
+        if flux.demande(requete.headers.get("accept")):
+            return essai_en_flux(ident, numero, conf, message, conversation)
         reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai)
         await bd(versions.noter_essai, ident, numero)
         return {"version": numero, "conversation": conversation, "reponse": reponse}
+
+    def essai_en_flux(ident: str, numero: int, conf: Config, message: str, conversation: str):
+        """L'essai au fil de l'eau (noyau/flux.py), pour la console : le texte et les outils pendant le tour, puis
+        « fin » avec la même réponse que l'essai d'un bloc. Les refus (version, message) restent des réponses JSON ;
+        l'essai va au bout, et compte comme essayé, même si la console se ferme."""
+
+        async def tour(sur_evenement):
+            try:
+                reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai,
+                                        sur_evenement=sur_evenement)
+                await bd(versions.noter_essai, ident, numero)
+                return reponse
+            except Exception as e:  # jamais l'erreur telle quelle
+                log.error("essai en flux en échec (%s v%s) : %s", ident, numero, str(e)[:200])
+                return None
+
+        def conclure(reponse) -> str:
+            if reponse is None:
+                return flux.evenement("erreur", {"erreur": "l'essai n'a pas pu aller au bout", "statut": 500})
+            return flux.evenement("fin", {"version": numero, "conversation": conversation, "reponse": reponse})
+
+        return flux.en_reponse(flux.diffuser(tour, conclure))
 
     @r.post("/clients/{ident}/versions/{numero}/activer")
     async def activer(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict | None = Body(None)):
