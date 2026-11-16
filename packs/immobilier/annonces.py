@@ -84,6 +84,9 @@ class Services:
     veilles: object | None = None  # stockage.Veilles
     portails: object | None = None  # marche.Portails
     reglage_marche: object | None = None  # Config.marche
+    # Lot 7.6 (travail.py) : les règles apprises, les rappels (pour le point).
+    regles: object | None = None  # stockage.Regles
+    rappels: object | None = None  # stockage.Rappels
 
 
 async def fiche_du_site(s: Services, compte: str, slug: str, version: str, langue: str, sans_prix: bool, maximum: int = 11,

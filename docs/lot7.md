@@ -9,7 +9,7 @@ Alix FSP (dépôt `megga/fourseasonsproperties`, Worker `fourseasons-alix`) comp
 | **7.3 Fiche PDF** (fait) | gardée en JavaScript (pdf-lib), appelée comme un service ; choix des photos, photos tirées d'une plaquette |
 | **7.4 Partenaires et visiteurs** (fait) | registre, vitrine, rapprochement, accueil, questions transmises au courtier, demandes du site, envoi à un contact, blocages |
 | **7.5 Marché** (fait) | recherche sur les portails, veille, suivi de zones, carnet des prix |
-| 7.6 Comportements | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
+| **7.6 Comportements** (fait) | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
 | 7.7 Parité et bascule | les scénarios d'Alix en scénarios neutres, joués sur les deux (sur le socle par l'entrée par API), la copie des données, le numéro de test, la bascule sur accord |
 
 Décidé par Julien (16.11.2026) : Claude à la place de Gemini pour rédiger les annonces et regarder les photos (l'humeur d'un vocal, qui demandait Gemini, n'est pas reprise) ; ElevenLabs seul pour écouter et parler (ni Whisper ni Telnyx) ; la recherche sur les portails reste chez DeepSeek (7.5).
@@ -92,9 +92,18 @@ Un groupe d'outils de plus, `marche`, pour les gestionnaires seulement (`packs/i
 
 **Décidé par Julien (16.11.2026)** : la recherche sur les portails reste chez DeepSeek, comme dans Alix (0,75 $ les 1 000 recherches), plutôt que la recherche web de Claude.
 
+## 7.6 Les comportements
+
+- **Le fil** (`noyau/fil.py`, `Config.fil`, générique) : l'agent relit les douze derniers tours ; ce qui sort de cet historique se fond, après la réponse et en arrière-plan, dans un résumé court (1 500 caractères), refait chaque fois que douze messages de plus en sont sortis, par le modèle de l'oral ou du secours. Il se relit à chaque tour, entre balises, comme une donnée ; jamais un mot de passe ni un code ; il s'efface après trente jours sans message. Pour Four Seasons : activé. Les autres clients n'y gagnent rien tant qu'on ne l'active pas (un appel de modèle de plus toutes les douze réponses).
+- **Les règles apprises** (groupe `travail`, gestionnaire, `packs/immobilier/travail.py`, table `megga_regles`, 30 par courtier) : `apprendre_regle` (portée : partout, une personne, ou un site de `gestion.sites` et le principal), `oublier_regle`, `regles`. Elles se relisent toutes à chaque tour (le Contexte). Une règle doit reprendre au moins 30 % des mots du dernier message du courtier (`Conversations.entendu`) : une page lue ou un message relayé ne peut pas en faire apprendre une. Une règle qui contredirait une consigne absolue (prix ou adresse aux partenaires, mot de passe affiché, mandat confidentiel rendu public, tiret long, estimation) est refusée, sauf si elle va dans leur sens.
+- **Le point** (`point`), seulement à la demande : les annonces sans photo, masquées ou pas en ligne, les demandes du site, les questions des visiteurs sans réponse, les demandes des partenaires qui attendent un choix, les rappels, les veilles.
+- **Les capacités** : pour un rôle qui a le groupe `travail`, ce que l'agent sait faire, d'après ses groupes et la configuration réelle (le formulaire s'il est publié, les partenaires et les visiteurs seulement s'ils peuvent écrire, la voix si elle est réglée) ; rien n'est promis qui n'est pas en service.
+- **La règle d'affichage** d'Alix (une idée par bloc, titres en gras, un bloc par bien, montants et surfaces écrits pareil, ni tableau, ni « # », ni point médian, ni tiret long) : dans les consignes de tout rôle qui a un outil du pack.
+- **Hors des 24 heures** : si le modèle Meta de l'usage manque, le modèle « message » (`modeles_meta.message`, sa variable : le nom de l'agent) annonce ce qui est gardé ; sa réponse rouvre les 24 heures et tout part aussitôt. Un rappel sans modèle « rappel » l'utilise aussi. Ce qui ne se garde pas (le suivi d'un visiteur) ne s'annonce pas.
+
 ## Ce qui reste après le 7.4
 
-- Les modèles Meta (accord, livraison, demande, suivi, ouverture, veille, zone) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.
+- Les modèles Meta (message, rappel, partenaire, livraison, demande, reponse_visiteur, suivi_visiteur, ouverture, veille, zone, rapprochement) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.
 - Le blocage chez Meta en plus de notre liste (Alix le fait quand Meta le permet) ; la vidéo reçue en fichier (7.2).
 - Le site de Four Seasons qui appelle la porte (`/site/…`) au lieu d'Alix : à la bascule (7.7), avec Julien.
 - Les réactions et le vocal propres aux visiteurs et aux partenaires sont ceux du noyau (le 👀, un vocal pour un vocal) ; l'humeur d'un vocal n'est pas reprise (décision du 16.11.2026).

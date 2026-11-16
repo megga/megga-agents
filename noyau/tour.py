@@ -39,6 +39,7 @@ REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
 IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
+ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute pendant douze heures, tant que la personne n'a pas répondu
 
 
 def en_echec(sortie) -> bool:
@@ -59,7 +60,7 @@ class Conversations:
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
                  journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None,
-                 differes=None, choix: dict | None = None, echeances: list | None = None):
+                 differes=None, choix: dict | None = None, echeances: list | None = None, fil_tenu=None):
         self.conf = conf
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
@@ -87,6 +88,12 @@ class Conversations:
         self.choix = dict(choix or {})
         # Ce que les packs ont à faire à l'heure dite (un visiteur à prévenir) : async f(maintenant) -> prochaine heure.
         self.echeances = list(echeances or [])
+        # Le fil des conversations (noyau/fil.py), refait après les réponses, s'il est réglé.
+        self.fil_tenu = fil_tenu
+        # Le dernier message de chaque personne, tel que le modèle l'a lu (une règle apprise doit en venir).
+        self._entendus: dict[str, str] = {}
+        # L'heure du dernier modèle « message » envoyé à chaque personne : une annonce suffit tant qu'elle n'a pas répondu.
+        self._annonces: dict[str, float] = {}
         self._boites: dict[str, _Boite] = {}
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
@@ -278,6 +285,10 @@ class Conversations:
 
     async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None) -> tuple[str, bool]:
         """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur."""
+        self._entendus[personne] = entendu
+        if len(self._entendus) > 5000:  # oublie les plus anciens
+            for p in list(self._entendus)[:1000]:
+                del self._entendus[p]
         try:
             options = {"images": images} if images else {}
             sortie = await self.agent_du_role(role).arun(entendu, user_id=personne, session_id=personne, **options)
@@ -285,11 +296,17 @@ class Conversations:
                 log.error("tour en échec (%s)", self.conf.id)
                 self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
                 return EXCUSE, True
+            if self.fil_tenu is not None:  # après la réponse, en arrière-plan
+                self._lancer(self._sans_echec(self.fil_tenu.apres(personne)))
             return getattr(sortie, "content", None) or "", False
         except Exception as e:
             log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
             self.noter_journal("tour_echec", detail=type(e).__name__)
             return EXCUSE, True
+
+    def entendu(self, personne: str) -> str:
+        """Le dernier message de cette personne, tel que le modèle l'a lu dans son tour."""
+        return self._entendus.get(personne, "")
 
     async def repondre_api(self, personne: str, texte: str, role: str = "public") -> tuple[str, bool] | None:
         """Un tour demandé par un logiciel (noyau/api.py) : la réponse est rendue, rien ne part sur WhatsApp.
@@ -396,6 +413,8 @@ class Conversations:
             await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(texte)[:1000]])
             self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
             return "modele"
+        # Sans modèle de cet usage : le modèle « message » annonce que quelque chose attend (le rappel part au message suivant).
+        await self._annoncer(personne)
         return "attente"
 
     async def envoyer_de_soi_meme(self, personne: str, messages: list[dict], usage: str, variables: list[str] | None = None,
@@ -425,13 +444,42 @@ class Conversations:
             except Exception as e:
                 log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
                 self.noter_journal("envoi_echec", detail="modele")
+        # Le repli : le modèle « message » (« Vous avez un message de… ») annonce ce qui est gardé.
+        if garder and self.differes is not None and await self._annoncer(personne):
+            return "modele"
         return "attente"
+
+    async def _annoncer(self, personne: str) -> bool:
+        """Le modèle Meta « message », s'il est réglé : il annonce un message qui attend, sa réponse rouvre les 24 heures et
+        ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
+        modele = self.conf.modeles_meta.get("message")
+        if modele is None:
+            return False
+        # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.
+        deja = self._annonces.get(personne)
+        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
+        if deja and time.time() - deja < ANNONCE_VALIDE and (dernier is None or deja > dernier):
+            return True
+        try:
+            await self.exp.modele(personne, modele.nom, modele.langue, [self.conf.nom_agent])
+            self._noter_fil(personne, "envoye", "modele", "un message attend")
+            self._annonces[personne] = time.time()
+            if len(self._annonces) > 5000:
+                for p in list(self._annonces)[:1000]:
+                    del self._annonces[p]
+            return True
+        except Exception as e:
+            log.error("modèle « message » refusé (%s) : %s", self.conf.id, str(e)[:200])
+            self.noter_journal("envoi_echec", detail="modele")
+            return False
 
     async def peut_ecrire(self, personne: str, usage: str, langue: str = "") -> bool:
         """Un message libre (dans les 24 heures) ou le modèle Meta de cet usage peut-il partir à cette personne ?"""
         if self.conf.whatsapp is None or personne.startswith("api:"):
             return False
         if self.conf.modeles_meta.get(f"{usage}_{langue}") or self.conf.modeles_meta.get(usage):
+            return True
+        if self.differes is not None and self.conf.modeles_meta.get("message"):
             return True
         return fenetre_ouverte(await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None)
 

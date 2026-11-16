@@ -985,6 +985,59 @@ class Veilles:
             return c.execute(select(func.min(self._t.c.prochaine))).scalar()
 
 
+REGLES_MAX = 30  # règles de travail par personne
+
+
+class Regles:
+    """Les règles de travail qu'un gestionnaire a apprises à l'agent en le corrigeant (table megga_regles), relues à
+    chaque tour (packs/immobilier/travail.py). `portee` : partout, une personne (`qui`), ou un site."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_regles",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("texte", String(240), nullable=False),
+            Column("portee", String(40), nullable=False),
+            Column("qui", String(80), nullable=True),
+            Column("cree", Float, nullable=False),
+        )
+
+    def de(self, personne: str) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.personne == personne).order_by(t.c.id))]
+
+    def apprendre(self, personne: str, texte: str, portee: str, qui: str | None = None, remplace: int | None = None) -> dict:
+        """{id, deja, ancienne} ; une ValueError s'il y en a déjà REGLES_MAX ou si la règle à remplacer n'existe pas."""
+        t = self._t
+        with self._e.begin() as c:
+            ancienne = None
+            if remplace:
+                ancienne = c.execute(select(t.c.id, t.c.texte).where(t.c.id == int(remplace), t.c.personne == personne)).first()
+                if ancienne is None:
+                    raise ValueError(f"pas de règle {remplace} à remplacer")
+                c.execute(delete(t).where(t.c.id == ancienne.id))
+            pareille = c.execute(select(t.c.id).where(t.c.personne == personne, func.lower(t.c.texte) == texte.lower())).scalar()
+            if pareille is not None:
+                return {"id": int(pareille), "deja": True, "ancienne": None}
+            if (c.execute(select(func.count()).where(t.c.personne == personne)).scalar() or 0) >= REGLES_MAX:
+                raise ValueError(f"déjà {REGLES_MAX} règles : demande laquelle retirer")
+            ident = c.execute(insert(t).values(personne=personne, texte=texte[:240], portee=portee[:40], qui=(qui or None) and qui[:80],
+                                               cree=time.time())).inserted_primary_key[0]
+        return {"id": int(ident), "deja": False, "ancienne": ancienne.texte if ancienne else None}
+
+    def oublier(self, personne: str, ident: int) -> dict | None:
+        t = self._t
+        with self._e.begin() as c:
+            l = c.execute(select(t).where(t.c.id == int(ident), t.c.personne == personne)).first()
+            if l is None:
+                return None
+            c.execute(delete(t).where(t.c.id == l.id))
+        return dict(l._mapping)
+
+
 class Medias:
     """Les médias reçus de chaque personne (table megga_medias), numérotés dans l'ordre d'arrivée : « média 3 »
     dans la conversation désigne le même fichier pour l'agent et ses outils. Seul l'identifiant chez Meta est

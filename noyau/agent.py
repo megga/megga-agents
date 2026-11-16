@@ -52,7 +52,7 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
     if role is not None and set(role.outils) - {"rappels", "immobilier"}:  # la façon de se servir des outils du pack
         from packs.immobilier.relations import consignes_des_groupes
 
-        base += consignes_des_groupes(role.outils)
+        base += consignes_des_groupes(role.outils, config, role)
     return base
 
 

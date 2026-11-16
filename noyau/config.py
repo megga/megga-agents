@@ -24,11 +24,11 @@ ZONES = ("suisse", "europe", "etats-unis", "client")
 METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
 OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                                                "vitrine", "accueil", "marche")}
+                                                                                "vitrine", "accueil", "marche", "travail")}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
-OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche")
+OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
-OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche")
+OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
 class Strict(BaseModel):
@@ -90,7 +90,8 @@ class WhatsApp(Strict):
 #   vitrine      chercher dans la vitrine, sans prix ni adresse : l'outil d'un partenaire
 #   accueil      chercher les biens publics, transmettre un contact, poser une question au courtier : ceux d'un visiteur
 #   marche       les portails, la veille, le carnet des prix au m², le suivi des zones (lot 7.5), pour un gestionnaire
-GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche")
+#   travail      les règles apprises en le corrigeant, le point, ses capacités (lot 7.6), pour un gestionnaire
+GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
 class Role(Strict):
@@ -100,7 +101,7 @@ class Role(Strict):
     envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
 
     @field_validator("consignes")
@@ -220,6 +221,8 @@ class Config(Strict):
     modeles_meta: dict[str, ModeleMeta] = {}
     # Un 👀 sur le message quand un tour traîne, retiré à la réponse.
     reactions: bool = True
+    # Le fil (noyau/fil.py) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour.
+    fil: bool = False
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
     metier: Literal["general", "immobilier"] = "general"
     # Les packs actifs (aujourd'hui : « immobilier »).

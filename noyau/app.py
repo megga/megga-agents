@@ -108,7 +108,7 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         from packs.immobilier.annonces import outils as outils_annonces
 
         liste += outils_annonces(services)
-    if set(groupes) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche"}:
+    if set(groupes) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"}:
         if relations is None:
             raise RuntimeError("outils de partenaires et de visiteurs sans gestion du site (Config.gestion et GESTION_CLE)")
         liste += relations.outils(groupes)
@@ -137,10 +137,38 @@ def _reecriture(conf, cles):
     return reecrire
 
 
+def _resumeur(conf, cles):
+    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral à défaut du secours."""
+    from agno.agent import Agent
+
+    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+
+    async def resumer(consigne: str, demande: str) -> str:
+        sortie = await Agent(model=modele(nom, cles), instructions=[consigne], telemetry=False, markdown=False).arun(demande)
+        if en_echec(sortie):
+            raise RuntimeError("résumé en échec")
+        return getattr(sortie, "content", "") or ""
+
+    return resumer
+
+
+def ensemble(*contextes):
+    """Plusieurs Contextes d'un tour (async f(personne) -> texte) en un seul ; None s'il n'y en a aucun."""
+    fonctions = [f for f in contextes if f is not None]
+    if not fonctions:
+        return None
+
+    async def contexte(personne: str) -> str:
+        return "\n\n".join(t for t in [await f(personne) for f in fonctions] if t)
+
+    return contexte
+
+
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
-          quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None) -> FastAPI:
+          quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
+          fil_tenu=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -222,20 +250,28 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                 stockage.Reseau(url), personnes.bloques or stockage.Bloques(url), stockage.Questions(url),
                                 fuseau=conf.fuseau, memoires=memoires, assistante=Assistante(cle, conf.entreprise) if cle else None,
                                 a_whatsapp=conf.whatsapp is not None, carnet=stockage.Carnet(url), veilles=stockage.Veilles(url),
-                                reglage_marche=conf.marche)
+                                reglage_marche=conf.marche, regles=stockage.Regles(url), rappels=rappels)
             if conf.marche is not None:
                 from packs.immobilier.marche import Portails
 
                 services.portails = Portails(cles.get("DEEPSEEK_API_KEY", ""))
-            if relations is None and any(set(r.outils) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche"} for r in conf.les_roles().values()):
+            if relations is None and any(set(r.outils) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"}
+                                         for r in conf.les_roles().values()):
                 from packs.immobilier.relations import Relations
 
                 relations = Relations(services)
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
+        # Le fil des conversations (Config.fil), relu à chaque tour.
+        if fil_tenu is None and conf.fil and fil is not None:
+            from .fil import TenueDuFil
+
+            fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
+        du_fil = fil_tenu.contexte if fil_tenu is not None else None
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels), contexte=du_fil)
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
-        # chaque tour pour les partenaires et les visiteurs.
+        # chaque tour (le fil ; les demandes, les questions, les règles des packs).
         agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations),
-                                            role=role, nom_role=nom, contexte=relations.contexte(role.outils) if relations else None)
+                                            role=role, nom_role=nom,
+                                            contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None))
                             for nom, role in conf.les_roles().items()}
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
@@ -243,7 +279,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
-                                  choix=relations.choix if relations else None, echeances=relations.echeances if relations else None)
+                                  choix=relations.choix if relations else None, echeances=relations.echeances if relations else None,
+                                  fil_tenu=fil_tenu)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
