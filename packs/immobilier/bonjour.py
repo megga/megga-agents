@@ -33,6 +33,7 @@ envoies un petit mot sur WhatsApp pour bien commencer sa journée.
 - Deux ou trois phrases courtes, en français, en le tutoyant. Tu peux saluer le jour ({jour}) ou la saison, glisser
   une touche d'humour léger ou une pensée positive sur son métier (les visites, les clients, les belles maisons).
 - Au plus un émoji. Pas de liste, pas de titre, pas de guillemets, ni tiret long ni point médian.
+- Commence par « Bonjour ! » et ne finis pas par un souhait de « belle journée » ou de « bonne journée ».
 - Rien d'inventé : ni sur son agenda ou ses affaires, ni sur la météo, une fête ou un événement. Pas de conseil, pas
   de question, pas de préambule (« Voici… »).
 - Chaque matin différent : jamais la même idée que ces derniers mots :
@@ -40,11 +41,11 @@ envoies un petit mot sur WhatsApp pour bien commencer sa journée.
 Réponds seulement par le message."""
 
 SECOURS = (
-    "Bonjour ! Une nouvelle journée commence, pleine de belles rencontres et de jolies maisons à faire aimer. Je suis là pour t'aider, belle journée à toi ☀️",
-    "Bonjour ! Que cette journée t'apporte de bonnes nouvelles et de beaux sourires. On avance ensemble, je suis avec toi.",
-    "Bonjour ! Un café, un grand sourire, et c'est parti pour une très belle journée. Tu fais un métier formidable, profite de chaque instant.",
-    "Bonjour ! Le monde a besoin de gens passionnés comme toi. Je te souhaite une journée lumineuse et pleine d'élan 🌿",
-    "Bonjour ! Aujourd'hui est une page blanche, et je suis sûre que tu vas y écrire de belles choses. Excellente journée !",
+    "Bonjour ! Une nouvelle journée commence, pleine de belles rencontres et de jolies maisons à faire aimer ☀️",
+    "Bonjour ! Que cette journée t'apporte de bonnes nouvelles et de beaux sourires, je suis avec toi.",
+    "Bonjour ! Un café, un grand sourire, et c'est parti : tu fais un métier formidable, profite de chaque instant.",
+    "Bonjour ! Le monde a besoin de gens passionnés comme toi, et ta journée sera lumineuse et pleine d'élan 🌿",
+    "Bonjour ! Aujourd'hui est une page blanche, et je suis sûre que tu vas y écrire de belles choses.",
 )
 
 
@@ -60,6 +61,15 @@ def prochain(maintenant: float, heure: str, fuseau: str) -> float:
 
 
 EMOJI = re.compile(r"[\U0001F000-\U0001FAFF\u2600-\u27BF]")
+
+
+def variable_du_modele(texte: str) -> str:
+    """Le mot tel que le modèle fsp_agent_bonjour le porte : sans sa salutation (le modèle dit déjà « Bonjour »), sans
+    ponctuation ni émoji final (le modèle ajoute « . Belle journée à vous. »), sur une ligne."""
+    v = " ".join(str(texte or "").split())
+    v = re.sub(r"^(bonjour|salut|coucou|hello|hey)\b[\s,!.]*", "", v, flags=re.I)
+    v = re.sub(r"[\s.!\u2026\ufe0f\U0001F000-\U0001FAFF\u2600-\u27BF]+$", "", v)
+    return (v[:1].upper() + v[1:])[:900] if v else " ".join(str(texte or "").split())[:900]
 
 
 def propre(texte: str) -> str | None:
@@ -166,8 +176,7 @@ class Bonjour:
             async with s.conversations.entre_les_tours(numero):
                 # Hors des 24 heures, le modèle fsp_agent_bonjour porte le mot lui-même : « … demandé : {{1}}. Belle
                 # journée à vous. » (sans retour à la ligne ni point final, que le modèle ajoute).
-                # Le modèle dit déjà « Bonjour » : le mot commence après le sien.
-                variable = re.sub(r"^bonjour\W*", "", " ".join(texte.split()), flags=re.I).rstrip(" .")[:900] or texte[:900]
+                variable = variable_du_modele(texte)
                 await s.conversations.envoyer_de_soi_meme(numero, [{"texte": texte}], "bonjour", [variable], garder=False)
         else:
             await s.exp.texte(numero, texte)
@@ -194,7 +203,9 @@ class Bonjour:
             r = {"actif": bool(actif), "heure": heure.strip() or r["heure"]}
             await asyncio.to_thread(s.s.etats.ecrire, numero, "bonjour", r)
             await asyncio.to_thread(s.s.etats.ecrire, numero, "bonjour_prochain", None)
-            return (f"Le mot du matin arrivera chaque jour à {r['heure'].replace(':', ' h ')}, si tu m'as écrit depuis la veille." if r["actif"]
+            avec_modele = bool(getattr(getattr(s.s.conversations, "conf", None), "modeles_meta", {}).get("bonjour"))
+            condition = "" if avec_modele or s.s.conversations is None else ", si tu m'as écrit depuis la veille"
+            return (f"Le mot du matin arrivera chaque jour à {r['heure'].replace(':', ' h ')}{condition}." if r["actif"]
                     else "Le mot du matin est arrêté. Il suffit de me le redemander pour le reprendre.")
 
         return [mot_du_matin]

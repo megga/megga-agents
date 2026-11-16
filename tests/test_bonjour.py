@@ -174,3 +174,14 @@ def test_hors_des_24_heures_le_modele_porte_le_mot(monde):
     (usage, variables, garder), = vus
     assert usage == "bonjour" and garder is False and variables[0].startswith("Belle journée de lundi") and not variables[0].endswith(".")
     assert CONF.modeles_meta["bonjour"].nom == "fsp_agent_bonjour"
+
+
+def test_la_variable_du_modele():
+    from packs.immobilier.bonjour import variable_du_modele
+
+    for t in SECOURS:
+        v = variable_du_modele(t)
+        assert not v.lower().startswith(("bonjour", "salut")) and not v.endswith(("!", ".", "☀️", "🌿")) and "\n" not in v
+        assert "journée à toi" not in v.lower()[-30:]  # le modèle finit déjà par « Belle journée à vous »
+    assert variable_du_modele("Coucou ! Belle semaine à toi 🌿") == "Belle semaine à toi"
+    assert variable_du_modele("Bonjournée magnifique pour les visites !") == "Bonjournée magnifique pour les visites"
