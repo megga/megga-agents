@@ -19,9 +19,19 @@ const MONTANT = new RegExp(
   ].join("|"),
   "i"
 );
+// Ce que le motif ci-dessus laissait passer (relecture du 16.11.2026, I5) : « 4.5 M CHF », « 4,5 M€ », « 2.9M »,
+// « 12k par mois », et un grand nombre nu, « 4’500’000 » (un million au moins : une surface n'y arrive pas).
+const MONTANT_COURT = /\d\s?(?:M|Mio|Mrd|Mds?|k|K)(?![A-Za-zÀ-ÿ²³])/;
+const GRAND_NOMBRE = /\d{1,3}(?:[’'., ]\d{3}){2,}(?!\d)|\d{7,}/;
 const LIBELLE_ARGENT = /\b(?:prix|price|charges?|imp[oô]ts?|tax\w*|ibi|loyer|rent|fees?|frais|valeur|value|co[uû]ts?|cost)\b/i;
 
-export const porteUnMontant = (t) => MONTANT.test(String(t ?? ""));
+export const porteUnMontant = (t) => [MONTANT, MONTANT_COURT, GRAND_NOMBRE].some((m) => m.test(String(t ?? "")));
+
+/** L'adresse d'une fiche sans prix (la fiche partenaire) : la commune seulement, jamais la rue ni le numéro. */
+export function commune(adresse) {
+  const derniere = String(adresse ?? "").split(",").pop().trim().replace(/^\d{4,5}\s+/, "");
+  return /\d/.test(derniere) ? "" : derniere;
+}
 
 /** Les phrases d'un texte, sans celles qui portent un montant. */
 export function sansMontants(texte) {
@@ -48,6 +58,13 @@ export function ficheSansPrix(fiche) {
   return {
     ...fiche,
     prix: "",
+    // Le titre garde ses mots, sans le montant ; un équipement ou une mention qui en porte un part.
+    titre: porteUnMontant(fiche.titre)
+      ? String(fiche.titre).split(/\s*(?:,|\(|\)|\||\s[–-]\s)\s*/).filter((m) => m && !porteUnMontant(m)).join(", ")
+      : fiche.titre,
+    adresse: commune(fiche.adresse),
+    confidentiel: porteUnMontant(fiche.confidentiel) ? null : fiche.confidentiel,
+    equipements: (fiche.equipements || []).filter((e) => !porteUnMontant(e)),
     accroche: sansMontants(fiche.accroche),
     description: propre,
     chiffres: (fiche.chiffres || []).filter((c) => !LIBELLE_ARGENT.test(c.libelle) && !porteUnMontant(c.valeur)),

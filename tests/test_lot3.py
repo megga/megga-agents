@@ -57,7 +57,10 @@ def test_quand():
 
 
 def test_outils_par_personne(rappels):
-    rappeler, mes_rappels, annuler = outils(rappels, FUSEAU)
+    def synchrone(f):  # les outils sont asynchrones : la base se lit hors de la boucle (relecture du 16.11.2026)
+        return lambda *a, **k: asyncio.run(f(*a, **k))
+
+    rappeler, mes_rappels, annuler = map(synchrone, outils(rappels, FUSEAU))
     reponse = rappeler(demain(), "relancer M. Exemple", run_context=ctx(MOI))
     ident = reponse.split()[1]
     assert "relancer M. Exemple" in mes_rappels(run_context=ctx(MOI))
@@ -233,3 +236,87 @@ def test_un_modele_rappel_refuse_ne_boucle_pas(rappels):
     bilan = asyncio.run(c.envoyer_rappels_echus(time.time()))
     assert bilan["echec"] == 0 and bilan["attente"] == 1 and rappels.differes(MOI)
     assert exp.journal == [("modele", MOI, "attente_client")]
+
+
+def bouton(texte="Afficher", ident="b1"):
+    return Entrant(id=ident, de=MOI, texte=texte, envoye=time.time(), genre="button", choix=texte)
+
+
+def test_le_bouton_d_un_modele_ne_lance_pas_de_tour(tmp_path):
+    """Relecture du 16.11.2026 (I11) : toucher « Afficher » fait partir ce qui attendait, et c'est tout ; sans rien qui
+    attende, le modèle répond comme à un message."""
+    url = f"sqlite:///{tmp_path}/b.db"
+    differes = stockage.Differes(url)
+    differes.garder(MOI, [{"texte": "La demande de Marc attendait."}])
+    agent, exp = Agent(), Exp()
+    c = Conversations(conf(), agent, exp, contacts=Contacts(time.time() - 60), differes=differes, attente=0.01)
+    asyncio.run(tourner(c, bouton()))
+    assert agent.appels == [] and exp.journal == [("texte", MOI, "La demande de Marc attendait.")]
+    asyncio.run(tourner(c, bouton(ident="b2")))
+    assert agent.appels == ["Afficher"]
+
+
+def test_l_annonce_survit_au_sommeil_du_conteneur(tmp_path):
+    """Relecture du 16.11.2026 (I13) : l'annonce « un message vous attend » est gardée en base ; un conteneur réveillé ne
+    la renvoie pas tant que la personne n'a pas répondu."""
+    url = f"sqlite:///{tmp_path}/a.db"
+    etats, differes = stockage.Etats(url), stockage.Differes(url)
+
+    def conversations():
+        exp = Exp()
+        return Conversations(conf(modeles_meta={"message": {"nom": "attente_client"}}), Agent(), exp,
+                             contacts=Contacts(time.time() - 30 * 3600), differes=differes, etats=etats), exp
+
+    c1, exp1 = conversations()
+    assert asyncio.run(c1.envoyer_de_soi_meme(MOI, [{"texte": "Demande 1"}], "demande")) == "modele"
+    c2, exp2 = conversations()  # le conteneur s'est endormi, puis réveillé
+    assert asyncio.run(c2.envoyer_de_soi_meme(MOI, [{"texte": "Demande 2"}], "demande")) == "modele"
+    assert exp1.journal == [("modele", MOI, "attente_client")] and exp2.journal == []
+
+
+def test_le_plafond_du_jour():
+    """Relecture du 16.11.2026 (I7) : au-delà de son plafond du jour, un visiteur reçoit une phrase, une fois, et plus de
+    tour de modèle ; un gestionnaire n'est jamais arrêté ; le journal le note une fois."""
+    from noyau.garde import TROP_JOUR, Plafond
+
+    p = Plafond(par_personne=2, client=3)
+    for _ in range(2):
+        assert p.libre("a", "visiteur") is None
+        p.compter("a", "visiteur")
+    assert p.libre("a", "visiteur") == "personne" and p.libre("b", "visiteur") is None
+    p.compter("b", "visiteur")
+    assert p.libre("c", "partenaire") == "client" and p.libre("g", "gestionnaire") is None
+    assert p.libre("a", "visiteur", maintenant=time.time() + 86400) is None  # le lendemain
+
+    journal = []
+
+    class Journal:
+        def noter(self, genre, quantite=1, detail="", quand=None):
+            journal.append((genre, detail))
+
+    agent, exp = Agent(), Exp()
+    c = Conversations(conf(), agent, exp, contacts=Contacts(time.time()), journal=Journal(), attente=0.01)
+    c.plafond = Plafond(par_personne=1, client=100)
+    asyncio.run(tourner(c, entrant("Bonjour", "w1")))
+    asyncio.run(tourner(c, entrant("Encore", "w2")))
+    asyncio.run(tourner(c, entrant("Et encore", "w3")))
+    assert agent.appels == ["Bonjour"]
+    assert [e[2] for e in exp.journal if e[0] == "texte"].count(TROP_JOUR) == 1
+    assert journal.count(("plafond", "personne")) == 1
+
+
+def test_une_plaquette_piegee_est_refusee():
+    """Relecture du 16.11.2026 (I6) : une image de PDF qui se décompresse en centaines de Mo est refusée sans remplir la
+    mémoire."""
+    import zlib
+
+    from packs.immobilier import fiche as fiches
+
+    bombe = zlib.compress(b"\0" * 60_000_000, 9)
+    pdf = b"%PDF" + bombe
+    with pytest.raises(ValueError, match="trop lourde"):
+        fiches.octets_image(pdf, {"mode": "flate-jpeg", "debut": 4, "fin": 4 + len(bombe)})
+    with pytest.raises(ValueError, match="trop lourde"):
+        fiches.octets_image(pdf, {"mode": "flate", "debut": 4, "fin": 4 + len(bombe), "largeur": 100, "hauteur": 100, "predicteur": 1})
+    petite = zlib.compress(b"\xff\xd8" + b"x" * 1000)
+    assert fiches.octets_image(b"%PDF" + petite, {"mode": "flate-jpeg", "debut": 4, "fin": 4 + len(petite)}).startswith(b"\xff\xd8")

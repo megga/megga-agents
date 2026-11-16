@@ -6,21 +6,22 @@ requires-python = ">=3.12"
 dependencies = [
   "agno==3.2.0",
   "anthropic==2.8.0",
-  "openai>=1.0",
+  "openai==3.51.0",
   "fastapi==0.163.1",
   # Pour l'API d'AgentOS (JWT_VERIFICATION_KEY) : sa garde par jeton et ses formulaires.
   "pyjwt==2.15.1",
   "python-multipart==0.0.33",
-  "uvicorn>=0.30",
+  "uvicorn==0.54.0",
   "sqlalchemy[asyncio]==2.1.8",
-  "psycopg[binary]>=3.2",
-  "pyyaml>=6",
-  "httpx>=0.27",
-  "cryptography>=43",
+  # Des versions exactes : l'image signée ne dépend pas du jour où elle est construite.
+  "psycopg[binary]==3.3.9",
+  "pyyaml==6.0.3",
+  "httpx==0.28.1",
+  "cryptography==50.0.2",
   # La base de connaissances (noyau/connaissances.py) : le modèle de recherche, et la lecture des PDF.
   "onnxruntime==1.32.0",
   "tokenizers==0.23.3",
-  "numpy>=2",
+  "numpy==2.5.5",
   "pypdf==7.1.0",
   # Les connecteurs MCP du client (noyau/connecteurs.py) : le client MCP d'Agno demande les deux.
   "mcp==2.3.0",

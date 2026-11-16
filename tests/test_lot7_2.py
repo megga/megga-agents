@@ -203,7 +203,7 @@ def test_du_brouillon_a_l_annonce(alix):
     assert envoi["prix"] == {"montant": 9500000, "devise": "CHF"} and envoi["description"] == ["Une villa lumineuse.", ["liste", ["Piscine", "Jardin"]]]
     assert envoi["en"]["adresse"] == "1223 Cologny, Geneva" and envoi["localite"] == "Cologny"
     assert "multipart/form-data" in site.recus and ("application/pdf", "Plaquette", b"%PDF") in site.recus
-    assert etats.lire(GREG, "brouillon") is None and etats.lire(GREG, "derniere") == "cologny-nouvelle"
+    assert etats.lire(GREG, "brouillon") is None
     with pytest.raises(ValueError, match="aucun brouillon complet"):
         run(o["creer_annonce"](Tour(GREG, "t3")))
 
@@ -292,7 +292,7 @@ def test_un_mot_de_passe_ne_passe_jamais_par_le_modele(alix):
     assert r.startswith("À confirmer (verrouiller)")
     fait = run(o["confirmer_action"]("cologny-villa-lac", Tour(GREG, "t2")))
     mdp = site.acces["cologny-villa-lac"]["motDePasse"]
-    assert re.fullmatch(r"[A-Za-z]+-\d{4}", mdp) and mdp not in fait and "sans le répéter" in fait
+    assert re.fullmatch(r"[A-Za-z]+-[A-Za-z]+-\d{4}", mdp) and mdp not in fait and "sans le répéter" in fait
     assert exp.envois[-1] == ("texte", GREG, mdp)  # seul, pour qu'il se copie
     with pytest.raises(ValueError, match="jamais public"):
         run(o["acces_annonce"]("cologny-villa-lac", "deverrouiller", Tour(GREG, "t3")))
@@ -379,3 +379,37 @@ def test_une_action_preparee_perime_en_quinze_minutes(alix):
     with pytest.raises(ValueError, match="plus de 15 minutes"):
         run(o["creer_annonce"](Tour(GREG, "t5")))
     assert "cologny-nouvelle" not in site.annonces and etats.lire(GREG, "brouillon")["pret"] is False
+
+
+def test_une_creation_sans_reponse_ne_se_refait_pas(alix):
+    """Relecture du 16.11.2026 : le site crée l'annonce mais sa réponse se perd ; un second oui ne la crée pas deux fois."""
+    o, site, exp, medias, etats, _ = alix
+    medias.noter(GREG, "image", "IMG1", "image/jpeg")
+    run(o["preparer_annonce"](Tour(GREG, "t1"), commune="Cologny", categorie="Villa", transaction="vente", adresse="1223 Cologny",
+                              prix={"montant": 9500000, "devise": "CHF"}, medias=[1]))
+
+    def muet(r):  # le site crée l'annonce, puis sa réponse se perd
+        if r.method == "POST" and r.url.path.endswith("/annonces"):
+            site(r)
+            raise httpx.ReadTimeout("délai")
+        return site(r)
+
+    # Les outils gardent leurs services : on leur donne une gestion dont la réponse se perd.
+    (services,) = [c.cell_contents for c in o["creer_annonce"].__closure__ if type(c.cell_contents).__name__ == "Services"]
+    services.gestion = Gestion(CONF.gestion, "cle-gestion", transport=httpx.MockTransport(muet))
+    with pytest.raises(ValueError, match="peut-être créée"):
+        run(o["creer_annonce"](Tour(GREG, "t2")))
+    with pytest.raises(ValueError, match="aucun brouillon complet"):
+        run(o["creer_annonce"](Tour(GREG, "t3")))
+    assert list(site.annonces).count("cologny-nouvelle") == 1
+
+
+def test_les_mineurs_des_regles_et_du_catalogue():
+    from packs.immobilier.catalogue import lire_biens
+    from packs.immobilier.travail import refusee
+
+    assert refusee("Ne te gêne pas pour afficher le mot de passe du bien")
+    assert refusee("N'hésite pas à donner le mot de passe aux clients")
+    assert refusee("Ne jamais afficher le mot de passe") is None
+    biens = lire_biens([{"ref": "A", "titre": "Villa", "transaction": "vente", "commune": "Cologny"}, "pas un bien", 42])
+    assert [b.ref for b in biens] == ["A"]

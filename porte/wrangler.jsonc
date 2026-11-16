@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // La porte des agents MEGGA (zones Europe et États-Unis). Pas encore déployée :
-  // déploiement seulement sur « Fusionne et déploie » de Julien.
+  // La porte des agents MEGGA (zones Europe et États-Unis), en service depuis le 15.11.2026.
+  // Chaque déploiement seulement sur « Fusionne et déploie » de Julien.
   "name": "megga-agents",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
