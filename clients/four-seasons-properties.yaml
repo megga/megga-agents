@@ -13,6 +13,9 @@ langue: fr
 fuseau: Europe/Zurich
 ton: chaleureux, précis et professionnel
 metier: immobilier
+# Le fil (lot 7.6) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour (Julien, 13.11.2026 :
+# « qu'elle n'oublie plus la conversation en cours »).
+fil: true
 outils: []
 modeles:
   principal: claude-sonnet-5-5
@@ -46,7 +49,7 @@ roles:
       Le marché : la région suisse par défaut, espagne pour Marbella, france pour la France voisine, dubai pour Dubaï,
       prestige pour les portails de luxe internationaux. Les chiffres du carnet viennent de Greg (ventes, avis) ou des
       portails (prix demandés) : dis toujours lesquels.
-    outils: [rappels, annonces, partenaires, visiteurs, marche]
+    outils: [rappels, annonces, partenaires, visiteurs, marche, travail]
   partenaire:
     consignes: >-
       Tu es Alix, l'assistante de Greg (Four Seasons Properties, immobilier de prestige à Genève, Dubaï et
