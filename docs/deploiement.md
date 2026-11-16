@@ -59,7 +59,7 @@ Une seule image, construite une fois par version, signée, la même partout : Cl
 **La version** est celle de `pyproject.toml`. Chaque conteneur la montre sur `/sante`, avec le commit d'où vient l'image et la version de ses tables. Chez Cloudflare, le commit vient de l'étiquette du déploiement (`wrangler deploy --tag <commit>`) :
 
 ```json
-{"ok": true, "version": "0.2.0", "revision": "<commit>", "config": 1, "schema": 1}
+{"ok": true, "version": "0.3.0", "revision": "<commit>", "config": 1, "schema": 2}
 ```
 
 **Deux versions soutenues à la fois**, la dernière et la précédente. Les migrations de nos tables se jouent au démarrage (`stockage.migrer`) et restent additives : une image démarre aussi sur une base migrée par la version suivante, pour qu'un retour arrière soit toujours possible. Au-delà, elle refuse de démarrer.

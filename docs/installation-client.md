@@ -107,7 +107,7 @@ docker compose exec agent python -m noyau.cles lister
 docker compose exec agent python -m noyau.cles retirer <id>
 ```
 
-(Sous Kubernetes : `kubectl exec deploy/<agent> -- python -m noyau.cles …`.) La clé n'est montrée qu'une fois ; un nombre après le nom règle son débit par minute (30 par défaut). Un agent sans WhatsApp n'a pas de `whatsapp` dans `client.yaml` : il lui faut une image qui la connaît (celle qui suit la 0.2.0).
+(Sous Kubernetes : `kubectl exec deploy/<agent> -- python -m noyau.cles …`.) La clé n'est montrée qu'une fois ; un nombre après le nom règle son débit par minute (30 par défaut). Un agent sans WhatsApp n'a pas de `whatsapp` dans `client.yaml` : il lui faut l'image 0.3.0 ou après.
 
 ## Le webhook chez Meta
 
