@@ -86,3 +86,58 @@ class Redactrice:
         if getattr(r, "stop_reason", None) == "refusal":
             raise ValueError("rédaction refusée par le modèle")
         return lire_reponse("".join(getattr(b, "text", "") for b in r.content))
+
+
+# Le choix des photos d'une fiche (repris de choix-photos.js d'Alix FSP, où c'était Gemini)
+
+CONSIGNE_CHOIX = """Voici les photos d'un bien immobilier de prestige, numérotées dans l'ordre où elles sont jointes (1, 2, 3…). Tu choisis celles d'une fiche de présentation imprimée.
+- La couverture d'abord : la plus belle vue d'ensemble du bien (la façade, le jardin ou la vue), nette, lumineuse, plutôt horizontale.
+- Puis les plus belles, dans l'ordre d'une visite : extérieurs et vue, séjour, cuisine, chambres, salles de bains, détails.
+- Écarte les photos floues, sombres, de travers, en double ou presque, les plans, les logos et les captures d'écran.
+Rends seulement un JSON : {{"ordre": [numéros]}}, la couverture en premier, au plus {max} photos."""
+CANDIDATES = 20
+POIDS_PHOTO = 3_000_000
+POIDS_TOTAL = 14_000_000
+
+
+def lire_choix(texte: str, n: int, maximum: int) -> list[int] | None:
+    """Les numéros rendus, contrôlés (1 à n, sans doublon), ou None ; une réponse coupée garde ce qui est lu."""
+    brut = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", texte or "")
+    try:
+        valeurs = json.loads(brut).get("ordre") or []
+    except (ValueError, AttributeError):
+        m = re.search(r'"ordre"\s*:\s*\[([\d,\s]*)', texte or "")
+        valeurs = [x.strip() for x in m.group(1).split(",")] if m else []
+    ordre = []
+    for v in valeurs:
+        try:
+            i = int(v)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= i <= n and i not in ordre:
+            ordre.append(i)
+    return ordre[:maximum] or None
+
+
+class Choisisseuse(Redactrice):
+    """Claude choisit la couverture et les plus belles photos d'une fiche ; sans réponse lisible, l'ordre d'origine."""
+
+    async def choisir(self, photos: list[bytes], maximum: int = 11) -> list[bytes]:
+        lisibles = [p for p in photos if p and type_image(p)]
+        candidates, poids = [], 0
+        for p in lisibles[:CANDIDATES]:
+            if len(p) > POIDS_PHOTO or poids + len(p) > POIDS_TOTAL:
+                continue
+            candidates.append(p)
+            poids += len(p)
+        if len(candidates) <= 1:
+            return lisibles[:maximum]
+        contenu = [{"type": "image", "source": {"type": "base64", "media_type": type_image(p), "data": base64.b64encode(p).decode()}}
+                   for p in candidates]
+        contenu.append({"type": "text", "text": CONSIGNE_CHOIX.format(max=maximum)})
+        try:
+            r = await self._le_client().messages.create(model=self.modele, max_tokens=500, messages=[{"role": "user", "content": contenu}])
+            ordre = lire_choix("".join(getattr(b, "text", "") for b in r.content), len(candidates), maximum)
+        except Exception:
+            ordre = None
+        return [candidates[i - 1] for i in ordre] if ordre else lisibles[:maximum]

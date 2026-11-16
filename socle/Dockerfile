@@ -1,5 +1,13 @@
 # L'image unique des agents MEGGA : la même chez Cloudflare, en Suisse et chez le client.
 # Publiée et signée par .github/workflows/publier.yml (docs/deploiement.md, « Publier une version »).
+# Le service de fiche PDF (fiche/, pdf-lib) : ses dépendances, installées à part ; seuls Node et le service passent.
+FROM --platform=linux/amd64 node:22.11.0-slim AS fiche
+WORKDIR /fiche
+COPY fiche/package.json fiche/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY fiche/src ./src
+COPY fiche/modeles ./modeles
+
 FROM --platform=linux/amd64 python:3.12-slim
 
 # Passés à la construction : la version (celle de pyproject.toml) et le commit.
@@ -17,6 +25,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 WORKDIR /app
+COPY --from=fiche /usr/local/bin/node /usr/local/bin/node
+COPY --from=fiche /fiche ./fiche
 COPY pyproject.toml ./
 COPY noyau ./noyau
 COPY packs ./packs

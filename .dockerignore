@@ -5,3 +5,6 @@ porte/.wrangler
 **/__pycache__
 tests
 docs
+fiche/node_modules
+fiche/test
+node_modules

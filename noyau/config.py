@@ -120,6 +120,8 @@ class Gestion(Strict):
     sites: dict[str, str] = {}
     # Les noms que les textes d'une annonce ne doivent jamais porter (les gens de l'équipe, l'agent).
     noms_interdits: tuple[str, ...] = ()
+    # Le modèle de fiche PDF du client (fiche/modeles/<modèle> : ses polices et son logo), s'il en a un.
+    fiche: str | None = Field(default=None, pattern=r"^[a-z0-9][a-z0-9-]{0,62}$")
     # Le formulaire « Nouvelle annonce » publié chez Meta (WhatsApp Flow), s'il y en a un.
     formulaire_annonce: str | None = Field(default=None, pattern=r"^\d{6,30}$")
 

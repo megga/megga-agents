@@ -193,11 +193,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         services = None
         if gestion is not None:
             from packs.immobilier.annonces import Services
-            from packs.immobilier.redaction import Redactrice
+            from packs.immobilier.redaction import Choisisseuse, Redactrice
 
+            cle = cles.get("ANTHROPIC_API_KEY")
             services = Services(gestion, personnes, medias, stockage.Etats(env["DATABASE_URL"]), expediteur,
-                                Redactrice(cles["ANTHROPIC_API_KEY"], conf.entreprise) if cles.get("ANTHROPIC_API_KEY") else None,
-                                conf.gestion.noms_interdits, conf.gestion.formulaire_annonce)
+                                Redactrice(cle, conf.entreprise) if cle else None, conf.gestion.noms_interdits,
+                                conf.gestion.formulaire_annonce, Choisisseuse(cle, conf.entreprise) if cle else None,
+                                conf.gestion.fiche, conf.entreprise)
         agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous.
         agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services),

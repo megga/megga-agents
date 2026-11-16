@@ -22,6 +22,7 @@ gestion:
     dubai: https://fspdubai.com
   # Jamais dans le texte d'une annonce (le 12.11.2026, un titre est parti en ligne avec deux prénoms).
   noms_interdits: [Greg, Grégory, Gregory, Julien, Alix]
+  fiche: four-seasons-properties
 roles:
   gestionnaire:
     consignes: >-

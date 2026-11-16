@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 from agno.run import RunContext
 
+from . import fiche as fiches
 from . import garde
 from .gestion import Gestion, GestionErreur
 
@@ -63,6 +64,9 @@ class Services:
     redactrice: object | None = None  # redaction.Redactrice
     noms_interdits: tuple[str, ...] = ()
     formulaire: str | None = None  # l'identifiant du WhatsApp Flow « Nouvelle annonce »
+    choisisseuse: object | None = None  # redaction.Choisisseuse : les photos d'une fiche
+    modele_fiche: str | None = None  # Config.gestion.fiche
+    marque: str = ""  # le nom de l'agence, sur une fiche de marque
 
 
 def normaliser(t) -> str:
@@ -138,6 +142,14 @@ def outils(s: Services) -> list:
 
     def preparer(personne: str, rc: RunContext, action: dict) -> None:
         s.etats.ecrire(personne, "a_confirmer", {**action, "tour": tour(rc)})
+
+    async def octets_media(m: dict, maximum: int = PHOTO_MAX) -> bytes:
+        """Un média reçu : chez Meta, ou une photo tirée d'un PDF reçu (« pdf:<média du PDF>#<rang> »)."""
+        if m["media_id"].startswith("pdf:"):
+            source, _, rang = m["media_id"][4:].partition("#")
+            pdf = await s.exp.telecharger(source, PDF_MAX)
+            return fiches.octets_image(pdf, fiches.images_du_pdf(pdf)[int(rang)])
+        return await s.exp.telecharger(m["media_id"], maximum)
 
     async def photos_des_medias(personne: str, numeros: list[int]) -> list[tuple[int, dict]]:
         sortie = []
@@ -344,7 +356,7 @@ def outils(s: Services) -> list:
             vues = []
             for _, m in photos[:PHOTOS_REDACTION]:
                 try:
-                    vues.append(await s.exp.telecharger(m["media_id"], PHOTO_MAX))
+                    vues.append(await octets_media(m))
                 except Exception:
                     continue
             faits = {k: champs.get(k) for k in ("commune", "quartier", "categorie", "transaction", "adresse", "surface", "terrain",
@@ -511,7 +523,7 @@ def outils(s: Services) -> list:
         for i in range(0, len(photos), 20):
             fichiers = []
             for n, m in photos[i:i + 20]:
-                octets = await s.exp.telecharger(m["media_id"], PHOTO_MAX)
+                octets = await octets_media(m)
                 fichiers.append(("fichier", (f"media-{n}", octets, m["type"] or "image/jpeg")))
             total = (await g(compte, "POST", f"/annonces/{slug}/photos", fichiers=fichiers)).get("photos", total)
         return total
@@ -1077,9 +1089,137 @@ def outils(s: Services) -> list:
         await g(compte, "PUT", f"/annonces/{slug}/prive", corps={"partage": partage})
         return "Mandat enregistré dans la gestion (privé)."
 
+    # La fiche PDF et les photos d'une plaquette (lot 7.3)
+
+    async def fiche_pdf(version: str, langue: str, run_context: RunContext, slug: str = "", reference: str = "",
+                        sans_prix: bool = False, photos_max: int = 11, garder_ordre: bool = False, titre: str = "",
+                        adresse: str = "", prix: str = "", accroche: str = "", description: str = "",
+                        chiffres: dict | None = None, details: list[str] | None = None, equipements: list[str] | None = None,
+                        medias: list[int] | None = None, notes: str = "") -> str:
+        """Compose la fiche PDF d'un bien et l'envoie dans la conversation : d'une annonce du site (slug ou référence),
+        ou d'un bien qui n'y est pas (ses photos reçues et ce qu'en dit le courtier).
+
+        Args:
+            version: anonyme (par défaut) ou marque (avec le logo et les coordonnées du courtier, seulement s'il le demande).
+            langue: fr (par défaut) ou en.
+            slug: l'identifiant d'une annonce du site.
+            reference: la référence d'un bien en ligne, à la place du slug.
+            sans_prix: vrai pour une fiche sans aucun prix ni montant (la fiche partenaire).
+            photos_max: le nombre de photos (1 à 30, 11 par défaut).
+            garder_ordre: vrai pour garder les photos dans leur ordre, sans les faire choisir.
+            titre: pour un bien hors du site.
+            adresse: pour un bien hors du site.
+            prix: pour un bien hors du site, tel qu'il s'affiche.
+            accroche: pour un bien hors du site.
+            description: pour un bien hors du site.
+            chiffres: pour un bien hors du site, {surface, chambres, sdb, pieces, terrain} en nombres entiers.
+            details: pour un bien hors du site, des lignes « Libellé : valeur ».
+            equipements: pour un bien hors du site.
+            medias: pour un bien hors du site, les numéros des photos reçues.
+            notes: pour un bien hors du site, ce qu'en dit le courtier.
+        """
+        personne, compte = qui(run_context)
+        if not s.modele_fiche:
+            raise ValueError("aucun modèle de fiche n'est réglé pour cette agence (réglage de MEGGA)")
+        if version not in ("anonyme", "marque") or langue not in ("fr", "en"):
+            raise ValueError("version : anonyme ou marque ; langue : fr ou en")
+        maximum = min(max(int(photos_max or 11), 1), 30)
+        choisir = s.choisisseuse is not None and not garder_ordre
+        if reference and not slug:
+            voulue = re.sub(r"[^0-9A-Z]", "", reference.upper())
+            r = await g(compte, "GET", "/resume")
+            trouve = next((a for a in r.get("annonces") or [] if not a.get("masquee") and voulue and any(
+                re.sub(r"[^0-9A-Z]", "", str(x).upper()) == voulue for x in [a.get("reference"), *(a.get("anciennesReferences") or [])])), None)
+            if trouve is None:
+                raise ValueError(f"aucun bien en ligne n'a la référence {reference[:40]}")
+            slug = trouve["slug"]
+        if slug:
+            await lire(compte, slug)
+            fiche = (await g(compte, "GET", f"/annonces/{slug}/fiche", params={"langue": langue})).get("fiche") or {}
+            if fiche.get("contact"):
+                fiche["contact"]["site"] = s.gestion.site_du_bien(slug).removeprefix("https://")
+            photos = []
+            for chemin in (fiche.get("photos") or [])[:max(maximum, 20) if choisir else maximum]:
+                try:
+                    photos.append(await s.gestion.octets(compte, chemin, PHOTO_MAX))
+                except Exception:
+                    continue
+        else:
+            choisies = await photos_des_medias(personne, medias or [])
+            if not choisies:
+                raise ValueError("il faut au moins une photo reçue, ou le slug d'une annonce du site")
+            photos = [await octets_media(m) for _, m in choisies[:30]]
+            textes = garde.nettoyer({"titre": titre, "accroche": accroche, "description": description})
+            if not textes["titre"] or len(textes["description"]) < 20:
+                if s.redactrice is None:
+                    raise ValueError("donne un titre et une description, ou demande-les au courtier")
+                r = garde.nettoyer(await s.redactrice.rediger({"adresse": adresse, "chiffres": chiffres or {}, "details": details or [],
+                                                               "equipements": equipements or []}, notes, photos[:PHOTOS_REDACTION]))
+                suffixe = "_en" if langue == "en" else ""
+                textes = {"titre": textes["titre"] or r[f"titre{suffixe}"], "accroche": textes["accroche"] or r[f"accroche{suffixe}"],
+                          "description": textes["description"] if len(textes["description"]) >= 20 else r[f"description{suffixe}"]}
+            garde.verifier(textes, s.noms_interdits)
+            contact = None
+            if version == "marque":
+                r = await g(compte, "GET", "/resume")
+                moi = (r.get("moi") or {}).get("courtier")
+                contact = next((c for c in r.get("courtiers") or [] if c.get("slug") == moi), None)
+            fiche = fiches.fiche_libre({"langue": langue, "titre": textes["titre"], "adresse": adresse, "prix": prix,
+                                        "accroche": textes["accroche"], "chiffres": chiffres or {}, "details": details or [],
+                                        "equipements": equipements or []}, garde.blocs(textes["description"]), contact,
+                                       s.gestion.reglage.url.removeprefix("https://"))
+        if choisir:
+            photos = await s.choisisseuse.choisir(photos, maximum)
+        photos = photos[:maximum]
+        if version == "anonyme":
+            fiche = fiches.anonymiser(fiche, s.marque)
+        pdf = await fiches.composer(fiche, photos, s.modele_fiche, version, sans_prix, s.marque)
+        nom = fiches.nom_de_fichier(fiche.get("titre"), langue)
+        media = await s.exp.televerser(pdf, "application/pdf", nom)
+        await s.exp.document(personne, nom, media_id=media, legende=court(fiche.get("titre"), 1024))
+        quoi = "anonyme" if version == "anonyme" else "avec logo et coordonnées"
+        return (f"Fiche PDF envoyée dans la conversation ({nom}, {quoi}{', sans prix' if sans_prix else ''}, "
+                f"{'anglais' if langue == 'en' else 'français'}, {len(photos)} photo(s)). Dis-le en une phrase, sans répéter son contenu.")
+
+    async def photos_du_pdf(media: int, run_context: RunContext, max_photos: int = 20) -> str:
+        """Sort les photos d'une plaquette PDF reçue : elles deviennent des médias, comme des photos reçues.
+
+        Args:
+            media: le numéro du PDF reçu.
+            max_photos: le nombre de photos au plus (1 à 30, 20 par défaut).
+        """
+        personne, _ = qui(run_context)
+        m = pdf_du_media(personne, media)
+        deja = [x for x in s.medias.derniers(personne, 200) if x["media_id"].startswith(f"pdf:{m['media_id']}#")]
+        if deja:
+            return f"Photos déjà sorties de ce PDF : média(s) {', '.join(str(x['n']) for x in deja)}."
+        pdf = await s.exp.telecharger(m["media_id"], PDF_MAX)
+        images = fiches.images_du_pdf(pdf)
+        octets = []
+        for rang, im in enumerate(images):
+            try:
+                octets.append((rang, fiches.octets_image(pdf, im)))
+            except Exception:
+                continue
+        if not octets:
+            return "Aucune photo n'a pu être sortie de ce PDF : demande les photos au courtier."
+        limite = min(max(int(max_photos or 20), 1), 30)
+        gardees = octets
+        if s.choisisseuse is not None and len(octets) > 1:
+            choisies = await s.choisisseuse.choisir([o for _, o in octets], limite)
+            gardees = [x for x in octets if x[1] in choisies]
+            gardees.sort(key=lambda x: choisies.index(x[1]))
+        gardees = gardees[:limite]
+        numeros = []
+        for rang, o in gardees:
+            genre = "image/png" if o[:4] == b"\x89PNG" else "image/jpeg"
+            numeros.append(s.medias.noter(personne, "image", f"pdf:{m['media_id']}#{rang}", genre, f"{m['nom'] or 'pdf'} {rang + 1}"))
+        return (f"{len(numeros)} photo(s) sortie(s) du PDF {media} (« {m['nom']} ») : média(s) {', '.join(map(str, numeros))}. "
+                "Sers-t'en comme de photos reçues (preparer_annonce avec ces médias, et le PDF en pdf) ; ne redemande pas les photos.")
+
     return [lister_annonces, voir_annonce, modifier_annonce, preparer_annonce, creer_annonce, reecrire_annonce,
             masquer_annonce, supprimer_annonce, confirmer_action, ajouter_photos, ajouter_document, couverture_photo,
             ordonner_photos, retirer_photos, acces_annonce, mot_de_passe_site, porte_site, envoyer_mot_de_passe,
             ajouter_video, retirer_video, envoyer_video, montrer_biens, chercher_biens, formulaire_annonce, message_client,
             recherche_client, lister_recherches_clients, biens_pour_recherche, supprimer_recherche_client, lire_bien_prive,
-            proprietaire_bien, partage_bien]
+            proprietaire_bien, partage_bien, fiche_pdf, photos_du_pdf]
