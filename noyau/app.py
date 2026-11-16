@@ -72,7 +72,7 @@ from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
-from .whatsapp import Expediteur, SansWhatsApp, lire_entrants, signature_valide
+from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, lire_echecs, lire_entrants, signature_valide
 
 log = logging.getLogger("megga")
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
@@ -390,10 +390,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             evenement = json.loads(corps)
         except ValueError:
             return Response("corps", status_code=400)
+        # Rejoué par la porte (un webhook qu'elle a gardé pendant une panne du conteneur) : lu jusqu'à 24 heures après.
+        rejoue = requete.headers.get("x-megga-rejoue") == "1" and interne(requete)
+        for echec in lire_echecs(evenement, conf.whatsapp.numero_id):
+            log.warning("envoi refusé par Meta : %s", echec)
+            conversations.noter_journal("envoi_refuse", detail=echec)
         lus = 0
         for m in lire_entrants(evenement, conf.whatsapp.numero_id):
-            if not m.frais():
+            if not m.frais(limite=FENETRE_S if rejoue else FRAICHEUR_S):
                 log.warning("message ancien, sans réponse")
+                conversations.noter_journal("message_ancien", detail="rejoué" if rejoue else "")
                 continue
             if not deja.nouveau(m.id):
                 continue

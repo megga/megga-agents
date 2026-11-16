@@ -121,3 +121,9 @@ test("l'objet ne garde que les secrets prévus, sans les rendre", async () => {
   assert.deepEqual(stock.get("secrets"), { DATABASE_URL: "postgresql://x" });
   await assert.rejects(a.poserSecrets({ AUTRE: "y" }));
 });
+
+test("les simples accusés de Meta ne réveillent pas le conteneur ; un envoi refusé, si", () => {
+  const statut = (s) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "100000000000001" }, statuses: [{ status: s }] } }] }] });
+  for (const s of ["sent", "delivered", "read"]) assert.deepEqual(numerosDe(statut(s)), []);
+  assert.deepEqual(numerosDe(statut("failed")), ["100000000000001"]);
+});

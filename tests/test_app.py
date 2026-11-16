@@ -143,3 +143,38 @@ def test_erreur_du_modele_jamais_envoyee():
         t.portal.call(attendre(app))
     assert len(exp.envois) == 1
     assert "401" not in exp.envois[0][1] and "souci technique" in exp.envois[0][1]
+
+
+def test_les_echecs_de_meta_et_les_messages_rejoues():
+    """Relecture du 16.11.2026 (I9, I12) : un envoi refusé après coup par Meta est noté au journal, sans numéro ; un
+    message trop vieux aussi ; rejoué par la porte (jeton interne), un message d'une heure est encore lu."""
+    journal = []
+
+    class Journal:
+        def noter(self, genre, quantite=1, detail="", quand=None):
+            journal.append((genre, detail))
+
+    agent = FauxAgent()
+    app = creer({"CLIENT_CONFIG": CONF, "META_APP_SECRET": SECRET, "INTERNE_TOKEN": "interne"}, agent=agent,
+                expediteur=FauxExpediteur(), attente=0.01, seuil_regard=30, journal=Journal())
+    refus = json.dumps({"object": "whatsapp_business_account", "entry": [{"changes": [{"field": "messages", "value": {
+        "metadata": {"phone_number_id": "100000000000001"},
+        "statuses": [{"status": "failed", "recipient_id": "41790000000", "errors": [{"code": 131026, "title": "Message undeliverable to +41790000000"}]},
+                     {"status": "delivered", "recipient_id": "41790000000"}]}}]}]}).encode()
+
+    def vieux(ident):
+        d = json.loads(corps(ident=ident))
+        d["entry"][0]["changes"][0]["value"]["messages"][0]["timestamp"] = str(int(time.time()) - 3600)
+        return json.dumps(d).encode()
+
+    with TestClient(app) as t:
+        assert t.post("/whatsapp", content=refus, headers=signe(refus)).text == "reçu 0"
+        c = vieux("wamid.vieux")
+        assert t.post("/whatsapp", content=c, headers=signe(c)).text == "reçu 0"
+        c = vieux("wamid.rejoue")
+        faux = {**signe(c), "x-megga-rejoue": "1", "x-megga-interne": "faux"}
+        assert t.post("/whatsapp", content=c, headers=faux).text == "reçu 0"  # sans le vrai jeton, pas de rejeu
+        assert t.post("/whatsapp", content=c, headers={**signe(c), "x-megga-rejoue": "1", "x-megga-interne": "interne"}).text == "reçu 1"
+        t.portal.call(attendre(app))
+    assert ("envoi_refuse", "131026 Message undeliverable to …") in journal
+    assert [g for g, _ in journal].count("message_ancien") == 2 and len(agent.appels) == 1

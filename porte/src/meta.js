@@ -14,14 +14,20 @@ export async function signatureValide(corps, entete, secret) {
   return crypto.subtle.verify("HMAC", k, Uint8Array.from(h.match(/../g), (x) => parseInt(x, 16)), octets);
 }
 
-/** Les identifiants des numéros (phone_number_id) que touche ce webhook. */
+/**
+ * Les identifiants des numéros (phone_number_id) que touche ce webhook, seulement là où il y a quelque chose à
+ * faire : un message reçu, ou un envoi que Meta a refusé après coup. Les simples accusés (envoyé, remis, lu)
+ * ne réveillent pas le conteneur du client (relecture du 16.11.2026, I12).
+ */
 export function numerosDe(evenement) {
   const ids = new Set();
   if (evenement?.object !== "whatsapp_business_account") return [];
   for (const e of evenement.entry ?? []) {
     for (const c of e.changes ?? []) {
-      const id = c?.value?.metadata?.phone_number_id;
-      if (typeof id === "string" && /^\d{6,30}$/.test(id)) ids.add(id);
+      const v = c?.value;
+      const id = v?.metadata?.phone_number_id;
+      const utile = (v?.messages ?? []).length > 0 || (v?.statuses ?? []).some((s) => s?.status === "failed");
+      if (utile && typeof id === "string" && /^\d{6,30}$/.test(id)) ids.add(id);
     }
   }
   return [...ids];

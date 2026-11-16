@@ -215,3 +215,21 @@ def test_agent_a_ses_outils_et_sa_memoire(tmp_path):
     noms = [getattr(o, "__name__", "") for o in agent.tools]
     assert noms == ["rappeler", "mes_rappels", "annuler_rappel"]
     assert agent.enable_agentic_memory is True
+
+
+def test_un_modele_rappel_refuse_ne_boucle_pas(rappels):
+    """Relecture du 16.11.2026 (I10) : un modèle « rappel » suspendu par Meta ne fait plus échouer le rappel toutes les
+    5 minutes ; il attend le prochain message, et le modèle « message » l'annonce s'il est réglé."""
+    class Refuse(Exp):
+        async def modele(self, vers, nom, langue, variables):
+            if nom == "rappel_client":
+                raise RuntimeError("Meta 400 : modèle en pause")
+            self.journal.append(("modele", vers, nom))
+
+    rappels.ajouter(MOI, time.time() - 1, "relancer M. Exemple")
+    exp = Refuse()
+    c = Conversations(conf(modeles_meta={"rappel": {"nom": "rappel_client"}, "message": {"nom": "attente_client"}}), Agent(), exp,
+                      contacts=Contacts(time.time() - 30 * 3600), rappels=rappels, attente=0.01)
+    bilan = asyncio.run(c.envoyer_rappels_echus(time.time()))
+    assert bilan["echec"] == 0 and bilan["attente"] == 1 and rappels.differes(MOI)
+    assert exp.journal == [("modele", MOI, "attente_client")]

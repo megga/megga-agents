@@ -22,6 +22,14 @@ const CACHE_SUIVI_MS = 5 * 60 * 1000;
 const CACHE_CONVERSATIONS_MS = 60 * 1000;
 const SOMMEIL_SUIVI_MS = 2 * 60 * 1000;
 const ALERTES_MAX = 10;
+// Une alarme en échec (base ou conteneur indisponible) se repose elle-même, de plus en plus tard, sans jamais
+// s'arrêter : Cloudflare ne la retente que six fois, puis l'oublie (relecture du 16.11.2026, I8).
+const REESSAIS_ALARME_MS = [60_000, 120_000, 300_000, 600_000, 900_000];
+// Un webhook que le conteneur n'a pas reçu (démarrage en échec, panne) est gardé et rejoué, au plus ce nombre,
+// pas plus vieux qu'un jour : Meta ne le renvoie pas, la porte lui a déjà répondu (I9).
+const GARDES_MAX = 200;
+const GARDE_MS = 24 * 3600 * 1000;
+const REJOUER_MS = 60_000;
 
 /** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
 export async function jetonInterne(admin, nom) {
@@ -151,6 +159,52 @@ class Conteneur extends DurableObject {
 }
 
 class AgentClient extends Conteneur {
+  /** Un webhook de Meta : s'il n'arrive pas au conteneur, il est gardé pour être rejoué, rien ne se perd. */
+  async fetch(requete) {
+    if (new URL(requete.url).pathname !== "/whatsapp" || requete.method !== "POST") return super.fetch(requete);
+    const corps = await requete.text();
+    const signature = requete.headers.get("x-hub-signature-256") ?? "";
+    try {
+      return await super.fetch(new Request(requete.url, { method: "POST", body: corps, headers: requete.headers }));
+    } catch (e) {
+      await this.garderWebhook(corps, signature);
+      throw e;
+    }
+  }
+
+  async garderWebhook(corps, signature) {
+    const gardes = (await this.ctx.storage.get("webhooks").catch(() => null)) ?? [];
+    gardes.push({ quand: Date.now(), corps, signature });
+    await this.ctx.storage.put("webhooks", gardes.slice(-GARDES_MAX));
+    const t = Date.now() + REJOUER_MS;
+    const a = await this.ctx.storage.getAlarm();
+    if (!a || a > t) await this.ctx.storage.setAlarm(t);
+  }
+
+  /** Les webhooks gardés, rejoués au conteneur qui répond de nouveau (marqués : il les lit même plus vieux que 15 minutes). */
+  async rejouerWebhooks(jeton) {
+    const gardes = (await this.ctx.storage.get("webhooks")) ?? [];
+    if (!gardes.length) return;
+    const restants = [];
+    for (const w of gardes) {
+      if (Date.now() - w.quand > GARDE_MS) continue;
+      try {
+        const r = await this.ctx.container.getTcpPort(PORT).fetch("http://container/whatsapp", {
+          method: "POST",
+          body: w.corps,
+          headers: { "x-hub-signature-256": w.signature, "content-type": "application/json", "x-megga-interne": jeton, "x-megga-rejoue": "1" },
+        });
+        await r.body?.cancel();
+        if (!r.ok) restants.push(w);
+      } catch {
+        restants.push(w);
+      }
+    }
+    if (restants.length) await this.ctx.storage.put("webhooks", restants);
+    else await this.ctx.storage.delete("webhooks");
+    if (restants.length) throw new Error(`${restants.length} webhook(s) gardé(s) pas encore rejoué(s)`);
+  }
+
   async apres(chemin) {
     if (chemin === "/whatsapp") await this.verifierBientot();
   }
@@ -238,14 +292,23 @@ class AgentClient extends Conteneur {
     return { statut: r.status, donnees };
   }
 
-  /** L'heure d'un rappel (ou d'une vérification, ou d'un redémarrage) : le conteneur envoie ce qui est échu. */
+  /**
+   * L'heure d'un rappel (ou d'une vérification, d'un redémarrage, d'un webhook à rejouer) : le conteneur envoie ce qui
+   * est échu. En échec, l'alarme se repose elle-même, une minute plus tard, puis de plus en plus tard (15 minutes au
+   * plus), tant qu'il le faut : rien ne s'arrête après une panne de quelques minutes.
+   */
   async alarm() {
     this.activite = Date.now();
     try {
       await this.traiterAlarme();
+      await this.ctx.storage.delete("echecs_alarme");
     } catch (e) {
       await this.noterAlerte("rappels", e);
-      throw e; // l'alarme est retentée par la plateforme
+      const n = ((await this.ctx.storage.get("echecs_alarme").catch(() => 0)) ?? 0) + 1;
+      await this.ctx.storage.put("echecs_alarme", n).catch(() => {});
+      const t = Date.now() + REESSAIS_ALARME_MS[Math.min(n, REESSAIS_ALARME_MS.length) - 1];
+      const a = await this.ctx.storage.getAlarm().catch(() => null);
+      if (!a || a <= Date.now() || a > t) await this.ctx.storage.setAlarm(t).catch(() => {});
     }
   }
 
@@ -263,8 +326,14 @@ class AgentClient extends Conteneur {
       }
       await this.ctx.storage.delete("a_redemarrer");
     }
-    // Relance (avec la nouvelle configuration s'il y a lieu) et rappels échus.
+    // Relance (avec la nouvelle configuration s'il y a lieu), webhooks gardés, et rappels échus.
     await this.pret();
+    let rejeu = null;
+    try {
+      await this.rejouerWebhooks(jeton);
+    } catch (e) {
+      rejeu = e; // les rappels passent quand même ; l'alarme se reposera
+    }
     const r = await this.ctx.container.getTcpPort(PORT).fetch("http://container/interne/rappels", {
       method: "POST",
       headers: { "x-megga-interne": jeton },
@@ -272,6 +341,7 @@ class AgentClient extends Conteneur {
     if (!r.ok) throw new Error(`rappels ${r.status}`); // l'alarme est retentée par la plateforme
     const { prochain } = await r.json();
     if (prochain) await this.ctx.storage.setAlarm(Math.max(Math.round(prochain * 1000), Date.now() + 5000));
+    if (rejeu) throw rejeu;
   }
 
   /** L'environnement du conteneur : la configuration de l'annuaire, ses secrets et ceux de MEGGA. */
