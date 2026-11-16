@@ -150,9 +150,22 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 2. **Noyau WhatsApp** : vocaux, voix, regroupement, fenêtre de 24 h, modèles Meta, réactions.
 3. **Mémoire, rappels, garde-fous.**
 4. **Pack immobilier**, puis l'agence de démo MEGGA Estates (faux biens, son propre numéro), quand Julien le décide.
-5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design.
+5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design. La console sert aussi à **construire** les agents, pas seulement à les suivre (exigence de Julien, 15.11.2026) :
+   - **le client** (logiciel par abonnement) construit le sien très simplement : métier, prénom, voix, ton, outils à cocher, essai, activation ;
+   - **MEGGA** gère tous les agents de tous les clients, en construit sur mesure, règle l'avancé (modèles, outils, zones, coûts) et peut reprendre la main sur ce qu'un client a fait ;
+   - un seul moteur : l'interface ne fait que remplir la configuration du client (`noyau/config.py`). Côté code, il faut donc :
+     - une API d'administration pour créer, valider, essayer et activer une configuration ;
+     - des droits par rôle (client ou MEGGA) ;
+     - un mode d'essai avant la mise en service ;
+     - un historique des versions de configuration, avec retour à une version précédente.
+   - partir des fondations d'Agno plutôt que tout refaire (validé par Julien, 15.11.2026). Fait : les versions reposent sur les composants d'Agno 3.2 (`agno.db` : brouillon modifiable, version publiée figée, retour par `set_current_version`), derrière **notre propre API, l'atelier** (`docs/atelier.md`), qui ajoute les droits par rôle, l'essai avant mise en service, les gabarits par métier, le suivi et l'annuaire des zones. Les routes HTTP d'AgentOS (`/components`, `/registry`) ne sont pas exposées : elles écrivent des agents Agno sans connaître notre configuration, et leurs droits suivent l'utilisateur du jeton, pas nos rôles. Le « Studio » d'os.agno.com n'est pas retenu (marque Agno, connexion en direct payante, fait pour des développeurs).
+   Pas d'écran dans ce lot : l'interface a son propre lot (8). Le code du lot 5 est fait : l'API de l'atelier tourne derrière la porte.
 6. **Installation chez le client et zone suisse** : Docker Compose et chart Helm, conteneur pilote, canal de pilotage, mises à jour signées, guide, puis la zone suisse chez Exoscale et l'entrée par API. Avancé dès qu'un client suisse signe.
-7. **Alix FSP sur le socle** : parité, essai, bascule sur accord.
+7. **Alix FSP sur le socle** : parité, essai, bascule sur accord. Fait : bascule de Four Seasons sur le +1 650-710-7070 le 16.11.2026 (`docs/bascule-fsp.md`).
+8. **L'interface** (décision de Julien, 15.11.2026) : les écrans de la console, d'après le design que Julien construit dans Claude Design, avec un spécialiste UI/UX. C'est le prochain lot. Elle se branche sur l'API du lot 5, sans toucher au moteur :
+   - la création d'agent pour le client, très épurée : une question par écran (métier, prénom, voix et ton, ce que l'agent sait faire), un essai dans un faux WhatsApp, puis « Mettre en service » ;
+   - le tableau de bord du client : son agent en ligne, quelques chiffres, « Modifier », « Revenir à la version d'avant » ;
+   - la vue MEGGA : tous les clients, les réglages avancés et la reprise en main.
 
 ## Décidé
 
