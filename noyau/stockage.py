@@ -965,9 +965,14 @@ class Veilles:
         with self._e.begin() as c:
             c.execute(update(self._t).where(self._t.c.id == ident).values(donnees=_json(donnees)))
 
-    def retirer(self, ident: str, personne: str | None = None) -> dict | None:
+    def retirer(self, ident: str, personne: str | None = None, genre: str | None = None) -> dict | None:
+        """Retire une veille ou un suivi, seulement de cette personne et de cette sorte s'il les donne."""
         t = self._t
-        condition = t.c.id == ident if personne is None else and_(t.c.id == ident, t.c.personne == personne)
+        condition = t.c.id == ident
+        if personne is not None:
+            condition = and_(condition, t.c.personne == personne)
+        if genre is not None:
+            condition = and_(condition, t.c.genre == genre)
         lignes = self._lignes(condition)
         if not lignes:
             return None

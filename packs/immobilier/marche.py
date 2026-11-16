@@ -24,6 +24,8 @@ from urllib.parse import urlparse
 import httpx
 from agno.run import RunContext
 
+from noyau.typographie import nettoyer
+
 from . import carnet as carnets
 from .annonces import Services, court
 from .gestion import GestionErreur
@@ -320,7 +322,7 @@ class Marche:
                 raise ValueError("aucun de ces numéros dans la dernière recherche")
             pretes = await self.cartes(choisies)
             for _, texte in pretes:
-                await s.exp.texte(personne, texte, apercu=True)
+                await s.exp.texte(personne, nettoyer(texte), apercu=True)
             ecartees = [t["n"] for t in choisies if all(t is not p for p, _ in pretes)]
             if not pretes:
                 return f"Aucune de ces annonces n'est encore en ligne ({', '.join(map(str, ecartees))}) : dis-le, et propose une recherche avancée."
@@ -363,8 +365,8 @@ class Marche:
                 id: l'identifiant de la veille.
             """
             personne, _ = gestionnaire(run_context)
-            v = await asyncio.to_thread(s.veilles.retirer, court(id, 16), personne)
-            if v is None or v["genre"] != "veille":
+            v = await asyncio.to_thread(s.veilles.retirer, court(id, 16), personne, "veille")
+            if v is None:
                 raise ValueError(f"pas de veille {court(id, 16)}")
             return f"Veille {self.nom_veille(v['donnees'])} arrêtée."
 
@@ -466,17 +468,26 @@ class Marche:
                 id: l'identifiant du suivi.
             """
             personne, _ = gestionnaire(run_context)
-            z = await asyncio.to_thread(s.veilles.retirer, court(id, 16), personne)
-            if z is None or z["genre"] != "zone":
+            z = await asyncio.to_thread(s.veilles.retirer, court(id, 16), personne, "zone")
+            if z is None:
                 raise ValueError(f"pas de zone suivie {court(id, 16)}")
             return f"Suivi {carnets.nom_zone(z['donnees'])} arrêté."
 
-        def trouver(annonces: list[dict], bien: str) -> dict | None:
+        def trouver(annonces: list[dict], bien: str) -> dict:
+            """Le bien par sa référence, son slug ou son nom ; un nom qui en désigne plusieurs fait demander lequel."""
             q = court(bien, 120).lower()
-            norme = carnets.plat
-            return (next((a for a in annonces if q and re.sub(r"[^0-9a-z]", "", str(a.get("reference") or "").lower()) == re.sub(r"[^0-9a-z]", "", q)), None)
-                    or next((a for a in annonces if a.get("slug") == q), None)
-                    or next((a for a in annonces if q and norme(q) in norme(a.get("titre"))), None))
+            ref = re.sub(r"[^0-9a-z]", "", q)
+            exact = next((a for a in annonces if ref and re.sub(r"[^0-9a-z]", "", str(a.get("reference") or "").lower()) == ref), None) \
+                or next((a for a in annonces if a.get("slug") == q), None)
+            if exact:
+                return exact
+            par_nom = [a for a in annonces if q and carnets.plat(q) in carnets.plat(a.get("titre"))]
+            if len(par_nom) > 1:
+                raise ValueError("plusieurs biens correspondent : " + " ; ".join(f"{a.get('titre', '')} ({a.get('reference') or a.get('slug')})" for a in par_nom[:8])
+                                 + ". Demande lequel")
+            if not par_nom:
+                raise ValueError("bien introuvable : demande sa référence ou son nom exact")
+            return par_nom[0]
 
         async def comparer_bien(bien: str, run_context: RunContext) -> str:
             """Situe un de nos biens par rapport aux prix du marché du même lieu et du même type (carnet et nos autres biens).
@@ -487,8 +498,6 @@ class Marche:
             _, compte = gestionnaire(run_context)
             annonces = await resume(compte)
             a = trouver(annonces, bien)
-            if a is None:
-                raise ValueError("bien introuvable : demande sa référence ou son nom exact")
             return carnets.comparer(a, await asyncio.to_thread(s.carnet.releves), annonces)
 
         async def clients_pour_bien(run_context: RunContext, bien: str = "", description: str = "") -> str:
@@ -503,8 +512,6 @@ class Marche:
                 raise ValueError("la mémoire des clients n'est pas disponible")
             if bien:
                 a = trouver(await resume(compte), bien)
-                if a is None:
-                    raise ValueError("bien introuvable : demande sa référence ou son nom exact")
                 from .reseau import decrire_annonce
 
                 quoi = decrire_annonce(a)
@@ -566,7 +573,7 @@ class Marche:
 
     async def executer_veille(self, l: dict, maintenant: float) -> None:
         s, v = self.s, dict(l["donnees"])
-        neuves = []
+        neuves, echec = [], False
         try:
             r = await self.rechercher(v["recherche"], v["mode"], v["region"], v["sites"])
             neuves = [t for t in r["trouves"] if t["url"] not in v["vus"]]
@@ -578,7 +585,7 @@ class Marche:
                 except Exception:
                     pass  # sans tri, toutes : la vérification des cartes écarte ce qui n'est pas une annonce
         except Exception:
-            pass  # la semaine suivante réessaie
+            echec = True  # le passage suivant réessaie
         fini = maintenant + FREQUENCES.get(v["frequence"], 86400) > v["fin"]
         if fini:
             await asyncio.to_thread(s.veilles.retirer, l["id"])
@@ -586,6 +593,10 @@ class Marche:
             await asyncio.to_thread(s.veilles.mettre, l["id"], v)
         pretes = await self.cartes(neuves) if neuves else []
         if not pretes:
+            if fini:  # la fin se dit toujours : sans elle, le courtier croirait la veille encore en route
+                pourquoi = "la dernière recherche n'a pas pu se faire (les portails ne répondaient pas)" if echec else "rien de neuf depuis la dernière fois"
+                tete = f"La veille {self.nom_veille(v)} s'arrête aujourd'hui : {pourquoi}. Dis-moi si tu veux la prolonger."
+                await self.prevenir(l["personne"], [{"texte": tete}], "veille", tete)
             return
         tete = f"Veille {self.nom_veille(v)} : {len(pretes)} nouvelle(s) annonce(s)." + (" C'était la dernière recherche de cette veille." if fini else "")
         await self.prevenir(l["personne"], [{"texte": tete}, *({"texte": t, "apercu": True} for _, t in pretes)], "veille", tete)

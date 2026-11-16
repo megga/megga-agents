@@ -12,7 +12,7 @@ from packs.immobilier import carnet as carnets
 from packs.immobilier.marche import Portails, domaine_de, est_annonce, extraire, requetes, sans_marque
 from packs.immobilier.relations import Relations
 from test_lot6_api import base_neuve  # noqa: F401, F811 (la base d'essai, SQLite et Postgres)
-from test_lot7_4 import CONF, GREG, VISITEUR, FausseAssistante, FauxExp, Monde, Tour, fini, run
+from test_lot7_4 import CONF, CONF_WA, GREG, VISITEUR, FausseAssistante, FauxExp, Monde, Tour, fini, run
 
 ANNONCES = {
     "https://www.homegate.ch/acheter/4000123456": ("Villa 6 pièces à Cologny | Homegate.ch", "CHF 9’800’000\n6 pièces\n320 m²\nVue sur le lac."),
@@ -306,3 +306,75 @@ def test_les_portails_de_deepseek():
         run(p.lire("https://homegate.ch/x"))
     with pytest.raises(ValueError, match="pas disponible"):
         run(Portails("").chercher("x", 1))
+
+
+# Corrections de la relecture
+
+
+def test_arreter_une_veille_ne_touche_pas_une_zone(m):
+    t = Tour(GREG, "g1")
+    run(m.mo["surveiller_marche"]("villa Cologny", t))
+    run(m.mo["suivre_zone"]("Cologny", "villa", t))
+    (v,), (z,) = m.s.veilles.de(GREG, "veille"), m.s.veilles.de(GREG, "zone")
+    with pytest.raises(ValueError, match="pas de veille"):
+        run(m.mo["annuler_veille"](z["id"], t))
+    with pytest.raises(ValueError, match="pas de zone"):
+        run(m.mo["arreter_zone"](v["id"], t))
+    assert len(m.s.veilles.de(GREG)) == 2
+    assert "arrêtée" in run(m.mo["annuler_veille"](v["id"], t)) and "arrêté" in run(m.mo["arreter_zone"](z["id"], t))
+
+
+def test_les_rappels_passent_avant_les_veilles(tmp_path):
+    from noyau.tour import Conversations
+    from test_app import FauxAgent
+
+    url = f"sqlite:///{tmp_path}/r.db"
+    contacts, rappels, exp = stockage.Contacts(url), stockage.Rappels(url), ExpApercu()
+    contacts.noter(GREG, time.time() - 60)
+    rappels.ajouter(GREG, time.time() - 1, "appeler M. X")
+    ordre = []
+
+    async def lente(maintenant):
+        ordre.append(("veille", len(exp.envois)))
+        return None
+
+    c = Conversations(CONF_WA, FauxAgent(), exp, contacts=contacts, rappels=rappels, echeances=[lente])
+    run(c.envoyer_rappels_echus(time.time()))
+    assert ordre == [("veille", 1)] and exp.envois[0][2] == "Rappel : appeler M. X"
+
+
+def test_les_cartes_sont_nettoyees(m):
+    m.s.portails.resultats = {"https://www.homegate.ch/acheter/4000123456": ("Villa \u00b7 6 pièces \u2014 Cologny", "CHF 9’800’000, 320 m²")}
+    run(m.mo["chercher_marche"]("villa Cologny", Tour(GREG, "g1")))
+    run(m.mo["montrer_annonces"]([1], Tour(GREG, "g1")))
+    (_, _, carte), = m.exp.envois
+    assert carte.startswith("*Villa, 6 pièces - Cologny*") and not re.search(r"[\u2014\u2013\u00b7]", carte)
+
+
+def test_un_nom_ambigu_fait_demander_lequel(m):
+    with pytest.raises(ValueError, match="plusieurs biens correspondent : Villa contemporaine"):
+        run(m.mo["comparer_bien"]("villa", Tour(GREG, "g1")))
+    with pytest.raises(ValueError, match="plusieurs biens"):
+        run(m.mo["clients_pour_bien"](Tour(GREG, "g1"), bien="villa"))
+    assert "il faut son prix" in run(m.mo["comparer_bien"]("andalouse", Tour(GREG, "g1")))
+
+
+def test_la_fin_d_une_veille_se_dit_toujours(m):
+    async def essai(panne):
+        c = m.conversations()
+        m.ecrit(GREG)
+        await m.mo["surveiller_marche"]("villa Cologny", Tour(GREG, "g1"), frequence="hebdomadaire", semaines=1)
+        (v,) = m.s.veilles.de(GREG, "veille")
+        if panne:
+            async def chercher(requete, nombre):
+                raise ValueError("la recherche répond 503")
+
+            m.s.portails.chercher = chercher
+        await c.envoyer_rappels_echus(v["prochaine"] + 1)
+        await fini(c)
+
+    run(essai(False))
+    assert m.exp.envois[-1][2] == "La veille « villa Cologny » s'arrête aujourd'hui : rien de neuf depuis la dernière fois. Dis-moi si tu veux la prolonger."
+    run(essai(True))
+    assert "la dernière recherche n'a pas pu se faire (les portails ne répondaient pas)" in m.exp.envois[-1][2]
+    assert m.s.veilles.de(GREG) == []

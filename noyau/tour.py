@@ -472,9 +472,9 @@ class Conversations:
     async def envoyer_rappels_echus(self, maintenant: float) -> dict:
         """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
         bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
-        suivant = await self._echeances(maintenant)
         if self.rappels is None:
-            return {"prochain": suivant, **bilan}
+            return {"prochain": await self._echeances(maintenant), **bilan}
+        # Les rappels d'abord : une échéance d'un pack (une recherche sur les portails) peut prendre du temps.
         for r in await asyncio.to_thread(self.rappels.echus, maintenant):
             if self.conf.whatsapp is None:
                 # Un agent sans WhatsApp (seulement par API) ne peut rien envoyer : un rappel d'avant est
@@ -495,6 +495,7 @@ class Conversations:
         if bilan["echec"] and prochain is not None:
             # Un rappel en échec reste à envoyer : il est retenté dans 5 minutes, pas en boucle.
             prochain = max(prochain, maintenant + REESSAI_RAPPEL)
+        suivant = await self._echeances(maintenant)
         if suivant is not None:
             prochain = suivant if prochain is None else min(prochain, suivant)
         return {"prochain": prochain, **bilan}
