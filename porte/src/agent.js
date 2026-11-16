@@ -42,7 +42,9 @@ export async function jetonInterne(admin, nom) {
 // qui a des rôles et une gestion de site (lot 7.1) ses gestionnaires et la clé de sa gestion, et celle de son site
 // pour /site/… (lot 7.4).
 export const SECRETS_CLIENT_REQUIS = ["DATABASE_URL"];
-export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE"];
+// LEADS_SECRET signe les leads envoyés au webhook du client ; MCP_JETON_n ouvre ses serveurs MCP (lot 9.4).
+export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE", "LEADS_SECRET",
+  "MCP_JETON_1", "MCP_JETON_2", "MCP_JETON_3", "MCP_JETON_4", "MCP_JETON_5"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 // L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
 const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
@@ -230,10 +232,10 @@ class AgentClient extends Conteneur {
 
   /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
   async suivre(chemin, recherche = "") {
-    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes|\/audit|\/approbations|\/reprises)?$/.test(chemin)) throw new Error("chemin de suivi");
+    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes|\/audit|\/approbations|\/reprises|\/leads)?$/.test(chemin)) throw new Error("chemin de suivi");
     const cle = chemin + recherche;
     // Les conversations, le journal d'audit et les demandes d'accord changent vite : gardés une minute seulement.
-    const duree = /^\/(conversations|audit|approbations|reprises)/.test(chemin) ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
+    const duree = /^\/(conversations|audit|approbations|reprises|leads)/.test(chemin) ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
     this.cacheSuivi ??= new Map();
     const garde = this.cacheSuivi.get(cle);
     if (garde && Date.now() - garde.quand < duree) return { statut: 200, donnees: garde.donnees };

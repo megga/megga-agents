@@ -113,7 +113,7 @@ class Deja:
 
 
 def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None,
-                     connaissances=None) -> list:
+                     connaissances=None, leads=None, boites_mcp=None) -> list:
     """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle.
     `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés ;
     `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py) ; `connaissances` : la base de
@@ -124,6 +124,10 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         from .connaissances import outils as outils_connaissances
 
         liste += outils_connaissances(connaissances)
+    if "leads" in groupes and leads is not None:  # les leads et les serveurs MCP du client (noyau/connecteurs.py)
+        liste += leads.outils()
+    if "connecteurs" in groupes:
+        liste += list(boites_mcp or [])
     if "annonces" in groupes:
         if services is None:
             raise RuntimeError("outils d'annonces sans gestion du site (Config.gestion et GESTION_CLE)")
@@ -190,7 +194,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
           quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
-          fil_tenu=None, connaissances=None) -> FastAPI:
+          fil_tenu=None, connaissances=None, leads=None, boites_mcp=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -246,6 +250,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         from .connaissances import Base
 
         connaissances = Base(stockage.Connaissances(env["DATABASE_URL"]))
+    # Les leads et les serveurs MCP (noyau/connecteurs.py), pour les agents qui en ont le groupe d'outils.
+    if leads is None and "leads" in groupes_actifs and env.get("DATABASE_URL"):
+        from .connecteurs import Leads
+
+        leads = Leads(stockage.Leads(env["DATABASE_URL"]), conf.leads.webhook if conf.leads else None,
+                      env.get("LEADS_SECRET", ""), conf.id, conf.nom_agent)
+    if boites_mcp is None and "connecteurs" in groupes_actifs:
+        from .connecteurs import outils_mcp
+
+        boites_mcp = outils_mcp(conf.mcp, env)
     if expediteur is None:
         expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
                       if conf.whatsapp else SansWhatsApp())
@@ -306,13 +320,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
             fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, connaissances=connaissances)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, connaissances=connaissances, leads=leads, boites_mcp=boites_mcp)
                            + (transfert.outils_pour(None) if transfert else []),
                            contexte=ensemble(du_fil, gardien.contexte, transfert.contexte if transfert else None), gardien=gardien)
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
         # chaque tour (le fil ; les demandes, les questions, les règles des packs ; l'issue de ses demandes d'accord).
         agents = agents or {nom: construire(conf, base, cles,
-                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, connaissances)
+                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, connaissances, leads, boites_mcp)
                                             + (transfert.outils_pour(nom) if transfert else []),
                                             role=role, nom_role=nom, gardien=gardien,
                                             contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None,
@@ -686,6 +700,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
         return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
                               "apercu": approbations.apercu(d["arguments"])} for d in demandes]}
+
+    @app.get("/interne/suivi/leads")
+    async def interne_leads(requete: Request):
+        """Les leads de la période (lot 9.4), les plus récents d'abord, et ce qu'est devenu leur envoi au webhook."""
+        if (refus := lisible(requete)) is not None:
+            return refus
+        if leads is None:
+            return erreur(409, "cet agent n'enregistre pas de leads (groupe d'outils « leads »)")
+        return {"leads": await asyncio.to_thread(leads.magasin.lister, date(requete.query_params.get("depuis")),
+                                                 borne(requete.query_params.get("limite"), 200, 1000))}
 
     @app.get("/interne/suivi/reprises")
     async def interne_reprises(requete: Request):

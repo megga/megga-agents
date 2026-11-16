@@ -6,8 +6,8 @@ D'après l'étude de marché du 16.11.2026 (le catalogue des fonctionnalités in
 |---|---|
 | **9.1 Approbations et journal d'audit** (fait) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
 | **9.2 Base de connaissances** (fait) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
-| **9.3 Transfert vers un humain** (cette PR) | passer la main à un collaborateur avec un résumé, puis la reprendre |
-| 9.4 Leads et connecteurs | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
+| **9.3 Transfert vers un humain** (fait) | passer la main à un collaborateur avec un résumé, puis la reprendre |
+| **9.4 Leads et connecteurs** (cette PR) | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
 | 9.5 Le client et ses chiffres | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
 | 9.6 Banc d'essai par pack | les scénarios de `parite/` généralisés, mesurés en pass^k à chaque version |
 
@@ -116,3 +116,28 @@ Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{i
 **Ce qui reste.**
 - Une alerte de la console quand une conversation attend depuis longtemps, et l'heure de réponse de l'équipe dans le suivi.
 - Les vocaux reçus pendant une reprise sont relayés comme « [vocal] », sans transcription.
+
+## 9.4 Les leads et les connecteurs
+
+**Pourquoi.** Les ventes sont le cas d'usage des agents qui croît le plus (Zapier 2026 : de 26 % à 37 % des départements), et l'accès aux données le premier obstacle (KPMG). Un lead noté sur-le-champ, à toute heure, ne se perd plus ; un agent branché aux outils du client agit au lieu de seulement répondre.
+
+**Les leads** (groupe d'outils `leads`). L'outil `enregistrer_lead(besoin, score, budget, delai, lieu, nom)` et sa consigne : dès qu'une personne a un vrai besoin, l'agent en fait une fiche, notée de 1 (curieux) à 5 (prêt à décider).
+- Gardée dans la base du client (`megga_leads`), avec la personne (son numéro, ou l'identifiant de son logiciel).
+- Envoyée en arrière-plan au webhook https du client (`Config.leads.webhook`, qu'il règle lui-même : son CRM, un tableur, Zapier), en JSON `{client, agent, lead: {id, besoin, score, budget, delai, lieu, nom, contact, quand}}`, signée par le secret `LEADS_SECRET` s'il est posé (`x-megga-signature: sha256=<HMAC-SHA256 du corps>`). Retentée une fois ; l'issue (`garde`, `envoye`, `echec` et la raison) se lit dans la console.
+
+**Les connecteurs** (groupe d'outils `connecteurs`). Les serveurs MCP du client (`Config.mcp`, réglage de MEGGA) : `{nom, url (https), outils, jeton}`.
+- `outils` : ceux qu'on propose à l'agent (vide : tous, à éviter) ; ils sont préfixés du nom du serveur (`crm_creer_contact`).
+- `jeton` : le numéro du secret qui ouvre le serveur (`MCP_JETON_1` à `5`, posés comme les autres secrets du client), envoyé en `Authorization: Bearer`. Un serveur dont le jeton manque est laissé de côté.
+- Agno se connecte au début d'un tour (transport « streamable-http ») et laisse de côté un serveur injoignable, sans faire échouer le tour.
+- Leurs actions passent par les approbations du 9.1 comme les autres, par leur nom préfixé (`{"crm_creer_contact": "approbation"}`) : une action accordée plus tard rouvre la session du serveur pour se faire.
+
+**Les dépendances** : `mcp` 2.3 et `fastmcp` 4.2 (le client MCP d'Agno demande les deux).
+
+**Les routes** : `GET /atelier/clients/{id}/leads?jours=7` (tous) ; côté porte `GET /admin/clients/{id}/suivi/leads` ; au conteneur `/interne/suivi/leads`.
+
+**La table** (additive) : `megga_leads`.
+
+**Ce qui reste.**
+- Les connecteurs prêts à l'emploi (Google Workspace, Microsoft 365, HubSpot) passent par leurs serveurs MCP et leurs comptes : à brancher client par client, avec un jeton.
+- Une erreur rendue par un serveur MCP comme du texte (et non comme une panne) compte une action accordée comme « faite » : à affiner avec les vrais serveurs.
+- Le renvoi d'un lead en échec depuis la console.

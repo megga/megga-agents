@@ -22,6 +22,9 @@ dependencies = [
   "tokenizers==0.23.3",
   "numpy>=2",
   "pypdf==7.1.0",
+  # Les connecteurs MCP du client (noyau/connecteurs.py) : le client MCP d'Agno demande les deux.
+  "mcp==2.3.0",
+  "fastmcp==4.2.0",
 ]
 
 [project.optional-dependencies]

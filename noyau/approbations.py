@@ -79,11 +79,15 @@ class Gardien:
         self.notifier = notifier
         self.prevenir = prevenir
         self._outils: dict[tuple[str, str], object] = {}
+        self._boites: dict[str, list] = {}  # les boîtes d'outils (serveurs MCP) d'un rôle : leurs fonctions viennent à la connexion
         self._taches: set[asyncio.Task] = set()
 
     def connaitre(self, outils, role: str = "public") -> None:
         """Les outils d'un rôle, par nom : ce qu'une demande accordée fera (le même nom peut servir à deux rôles)."""
         for o in outils:
+            if hasattr(o, "functions") and not callable(o):  # une boîte d'outils (un serveur MCP)
+                self._boites.setdefault(role, []).append(o)
+                continue
             n = nom(o)
             fonction = getattr(o, "entrypoint", o)
             if n and callable(fonction):
@@ -178,6 +182,17 @@ class Gardien:
     async def _faire(self, d: dict) -> tuple[str, str]:
         """L'action accordée, au nom de la personne qui l'a demandée : (faite ou echec, ce que l'outil a rendu)."""
         fonction = self._outils.get((d["role"], d["outil"]))
+        for boite in self._boites.get(d["role"], []) if fonction is None else []:
+            if hasattr(boite, "connect"):  # un serveur MCP : sa session du tour est fermée, on la rouvre pour l'action
+                try:
+                    await boite.connect(force=True)
+                except Exception as e:
+                    log.warning("serveur MCP injoignable pour la demande %s : %s", d["id"], str(e)[:200])
+                    continue
+            trouvee = (getattr(boite, "functions", None) or {}).get(d["outil"])
+            if trouvee is not None:
+                fonction = getattr(trouvee, "entrypoint", trouvee)
+                break
         if fonction is None:
             return "echec", "outil introuvable dans cette version de l'agent"
         arguments = dict(d["arguments"])
