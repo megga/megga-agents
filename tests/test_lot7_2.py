@@ -1,6 +1,7 @@
 """Lot 7.2 : les outils d'annonces d'Alix FSP sur le socle, contre une fausse gestion de site."""
 
 import asyncio
+import time
 import json
 import re
 from dataclasses import dataclass
@@ -355,3 +356,26 @@ def test_l_agent_du_gestionnaire_recoit_les_outils_d_annonces(tmp_path):
     # Sans la clé de la gestion, l'agent ne démarre pas avec ces outils
     with pytest.raises(RuntimeError, match="gestion"):
         creer({**env, "GESTION_CLE": "", "DATABASE_URL": f"sqlite:///{tmp_path}/b.db"})
+
+
+def test_une_action_preparee_perime_en_quinze_minutes(alix):
+    """Relecture du 16.11.2026 (I3) : une suppression préparée puis abandonnée ne se rejoue pas un mois plus tard."""
+    o, site, exp, medias, etats, _ = alix
+    run(o["supprimer_annonce"]("marbella-villa-olie", Tour(GREG, "t1")))
+    vieille = {**etats.lire(GREG, "a_confirmer"), "quand": time.time() - 16 * 60}
+    etats.ecrire(GREG, "a_confirmer", vieille)
+    with pytest.raises(ValueError, match="plus de 15 minutes"):
+        run(o["confirmer_action"]("marbella-villa-olie", Tour(GREG, "t2")))
+    assert "marbella-villa-olie" in site.annonces and etats.lire(GREG, "a_confirmer") is None
+    # Une action d'avant cette règle, sans heure, ne vaut plus rien non plus
+    etats.ecrire(GREG, "a_confirmer", {"action": "supprimer", "slug": "marbella-villa-olie", "tour": "t0"})
+    with pytest.raises(ValueError, match="plus de 15 minutes"):
+        run(o["confirmer_action"]("marbella-villa-olie", Tour(GREG, "t3")))
+    # Un brouillon montré il y a plus de quinze minutes se remontre avant d'être créé
+    medias.noter(GREG, "image", "IMG1", "image/jpeg")
+    run(o["preparer_annonce"](Tour(GREG, "t4"), commune="Cologny", categorie="Villa", transaction="vente", adresse="1223 Cologny",
+                              prix={"montant": 9500000, "devise": "CHF"}, medias=[1]))
+    etats.ecrire(GREG, "brouillon", {**etats.lire(GREG, "brouillon"), "quand": time.time() - 16 * 60})
+    with pytest.raises(ValueError, match="plus de 15 minutes"):
+        run(o["creer_annonce"](Tour(GREG, "t5")))
+    assert "cologny-nouvelle" not in site.annonces and etats.lire(GREG, "brouillon")["pret"] is False

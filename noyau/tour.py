@@ -497,8 +497,9 @@ class Conversations:
                 if m.get("apercu"):  # la carte d'une annonce : son lien avec son aperçu
                     await self.exp.texte(personne, nettoyer(m["texte"]), apercu=True)
                 else:
-                    await self.exp.texte(personne, nettoyer(m["texte"]))
-                self._noter_fil(personne, "envoye", usage, nettoyer(m["texte"]))
+                    await self.exp.texte(personne, m["texte"] if m.get("secret") else nettoyer(m["texte"]))
+                # Un mot de passe ne se range jamais dans le fil (relu par la console et par le résumé du fil).
+                self._noter_fil(personne, "envoye", usage, "(mot de passe envoyé)" if m.get("secret") else nettoyer(m["texte"]))
 
     async def _rappels_differes(self, personne: str) -> None:
         """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant."""
