@@ -10,7 +10,7 @@
 //   POST /site/:client/(bien|demande)
 //                                  le site d'un client (lot 7.4) : un bien entré en ligne, une demande d'information
 //                                  d'une fiche ; transmis tel quel, la clé du site (SITE_CLE) vérifiée par le conteneur
-//   GET  /site/:client/journal[?jours=&qui=]
+//   GET  /site/:client/journal[?jours=]
 //                                  le journal des conversations, pour la page « Alix » de la gestion du site
 //                                  (16.11.2026) ; même clé, vérifiée par le conteneur ; la réponse n'est gardée nulle part
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
@@ -154,12 +154,11 @@ async function lireJournal(requete, env, id, url) {
   if (requete.method !== "GET") return json({ erreur: "méthode : GET" }, 405);
   if (!CLE_SITE.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
   const jours = /^[0-9]{1,2}$/.test(url.searchParams.get("jours") ?? "") ? url.searchParams.get("jours") : "1";
-  const qui = (url.searchParams.get("qui") ?? "").slice(0, 80);
   const client = idValide(id) ? await clientParId(env.ANNUAIRE, id) : null;
   const agent = client && agentDe(env, client);
   if (!agent) return json({ erreur: "agent inconnu" }, 404);
   try {
-    const r = await agent.fetch(new Request(`http://agent/site/journal?${new URLSearchParams({ jours, qui })}`, {
+    const r = await agent.fetch(new Request(`http://agent/site/journal?${new URLSearchParams({ jours })}`, {
       headers: { authorization: requete.headers.get("authorization") },
     }));
     return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });

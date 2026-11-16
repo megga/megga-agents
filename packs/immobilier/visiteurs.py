@@ -343,7 +343,7 @@ class Visiteurs:
             if p.startswith("api:") or s.personnes.compte(p):
                 continue  # les gestionnaires eux-mêmes, et les logiciels par API
             role = await asyncio.to_thread(s.personnes.role, p)
-            nom = l.get("nom") or ""
+            nom = donnee(l.get("nom") or "", 80)  # choisi par la personne elle-même : une donnée, comme ses messages
             if role == "partenaire" and s.partenaires is not None:
                 fiche = await asyncio.to_thread(s.partenaires.lire, p)
                 if fiche:

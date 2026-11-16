@@ -240,16 +240,16 @@ test("le journal des conversations, pour la gestion du site : lu, jamais gardé"
   const e = await env(journal, () => Response.json({ total: 1, personnes: [] }));
   const lire = (chemin, cle = CLE_SITE, methode = "GET") =>
     recevoir(new Request(`https://porte${chemin}`, { method: methode, headers: { authorization: `Bearer ${cle}` } }), e);
-  const r = await lire("/site/cabinet/journal?jours=7&qui=Marion");
+  const r = await lire("/site/cabinet/journal?jours=7&qui=Marion"); // qui : jamais transmis
   assert.equal(r.status, 200);
   assert.equal(r.headers.get("cache-control"), "no-store");
   assert.deepEqual(await r.json(), { total: 1, personnes: [] });
   assert.equal(journal.length, 1);
-  assert.equal(journal[0].chemin, "/site/journal?jours=7&qui=Marion");
+  assert.equal(journal[0].chemin, "/site/journal?jours=7");
   assert.equal(journal[0].auth, `Bearer ${CLE_SITE}`);
   journal.length = 0;
   assert.equal((await lire("/site/cabinet/journal?jours=abc")).status, 200);
-  assert.equal(journal[0].chemin, "/site/journal?jours=1&qui=");
+  assert.equal(journal[0].chemin, "/site/journal?jours=1");
   journal.length = 0;
   assert.equal((await lire("/site/cabinet/journal", "court")).status, 401);
   assert.equal((await lire("/site/cabinet/journal", CLE_SITE, "POST")).status, 405);
