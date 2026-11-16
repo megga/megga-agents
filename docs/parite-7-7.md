@@ -2,6 +2,8 @@
 
 16.11.2026 11:38. Les 36 cas de parite/cas.json, joués sur les deux agents avec le vrai Claude ; juge claude-sonnet-5-5.
 
+Un biais : le joueur du socle n'avance pas l'horloge, et le socle ne vide pas son historique avec le temps, alors qu'Alix repart à neuf après 12 heures. Les cas « le lendemain » (G06, G14, R01, M01, V08) sont plus faciles au socle.
+
 | Cas | Alix | Socle | Titre |
 |---|---|---|---|
 | G01 | 75 % | 100 % | Demande ambiguë : dix biens à Cologny |

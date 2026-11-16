@@ -165,6 +165,8 @@ def principal(argv: list[str]) -> int:
     quand = dt.datetime.now(ZoneInfo("Europe/Zurich")).strftime("%d.%m.%Y %H:%M")
     md = [f"# Banc de parité : Alix {moyenne['Alix']} / 100, socle {moyenne['Socle']} / 100", "",
           f"{quand}. Les {len(lignes)} cas de parite/cas.json, joués sur les deux agents avec le vrai Claude ; juge {juge}.", "",
+          "Un biais : le joueur du socle n'avance pas l'horloge, et le socle ne vide pas son historique avec le temps, alors qu'Alix repart "
+          "à neuf après 12 heures. Les cas « le lendemain » (G06, G14, R01, M01, V08) sont plus faciles au socle.", "",
           "| Cas | Alix | Socle | Titre |", "|---|---|---|---|", *lignes, "", *details]
     Path(args[2]).write_text("\n".join(md) + "\n", encoding="utf-8")
     print(f"Alix {moyenne['Alix']} / 100, socle {moyenne['Socle']} / 100 ({len(lignes)} cas) : {args[2]}")

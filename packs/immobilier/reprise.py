@@ -7,7 +7,10 @@ Ce qui se reprend : les partenaires (et leur règle), les numéros bloqués, les
 les recherches gardées ; pour chaque gestionnaire, ses souvenirs (la mémoire d'Agno), ses règles de travail, son fil,
 ses veilles et ses zones suivies ; le carnet du marché. Une seule fois par base (une marque dans megga_reglages) ;
 `--encore` pour la refaire (rien de ce qui existe n'est doublé : les identifiants sont gardés). Les dates de l'export
-sont en millisecondes, celles du socle en secondes. Rien ne s'affiche des données elles-mêmes, seulement les comptes.
+sont en millisecondes, celles du socle en secondes. Rien ne s'affiche des données elles-mêmes, seulement les comptes ; ils
+ne comptent que ce qui est nouveau. Refaite, la reprise ne double rien : chaque souvenir, veille ou zone garde un identifiant
+tiré de l'export, et un relevé du carnet déjà présent (le même lien, ou la même nature, le même lieu, le même prix et la
+même date) n'est pas noté de nouveau.
 """
 
 from __future__ import annotations
@@ -17,6 +20,8 @@ import sys
 import time
 
 from noyau import stockage
+
+from .carnet import plat as carnets_plat
 
 FORMAT = 1
 MARQUE = "reprise_alix"
@@ -95,9 +100,11 @@ def reprendre(donnees: dict, url: str, conf, maintenant: float | None = None, en
     for g in donnees.get("gestionnaires") or []:
         numero = g["numero"]
         for s in g.get("souvenirs") or []:
-            base.upsert_user_memory(UserMemory(memory=s["texte"], user_id=numero, topics=[s.get("sujet") or "autre"],
+            ident = f"alix-{numero.lstrip('+')}-{s['id']}"
+            nouveau = base.get_user_memory(memory_id=ident, user_id=numero) is None
+            base.upsert_user_memory(UserMemory(memory=s["texte"], memory_id=ident, user_id=numero, topics=[s.get("sujet") or "autre"],
                                                created_at=int(secondes(s.get("cree")) or maintenant), updated_at=int(secondes(s.get("modifie")) or maintenant)))
-            b["souvenirs"] += 1
+            b["souvenirs"] += nouveau
         for r in g.get("regles") or []:
             try:
                 b["regles"] += not regles.apprendre(numero, r["texte"], portee(r.get("portee"), sites), r.get("qui"))["deja"]
@@ -107,28 +114,39 @@ def reprendre(donnees: dict, url: str, conf, maintenant: float | None = None, en
         if fil and fil.get("texte"):
             etats.ecrire(numero, "fil", {"texte": fil["texte"][:1500], "quand": secondes(fil.get("date")) or maintenant, "jusqua": maintenant})
             b["fils"] += 1
-        for v in (g.get("veilles") or {}).values():
+        for cle, v in (g.get("veilles") or {}).items():
             fin = secondes(v.get("fin"))
-            if not fin or fin <= maintenant:
+            ident = f"a{cle}"[:16]
+            if not fin or fin <= maintenant or veilles.existe(ident):
                 continue
             frequence = v.get("frequence") if v.get("frequence") in FREQUENCES else "quotidienne"
             veilles.ajouter(numero, "veille", {"recherche": v.get("recherche", ""), "mode": v.get("mode") or "simple", "region": v.get("region") or "",
                                                "sites": v.get("sites") or [], "pour": v.get("pour") or "", "frequence": frequence, "fin": fin,
-                                               "vus": (v.get("vus") or [])[-300:]}, maintenant + FREQUENCES[frequence])
+                                               "vus": (v.get("vus") or [])[-300:]}, maintenant + FREQUENCES[frequence], ident)
             b["veilles"] += 1
-        for z in (g.get("zones") or {}).values():
+        for cle, z in (g.get("zones") or {}).items():
             fin = secondes(z.get("fin"))
-            if not fin or fin <= maintenant:
+            ident = f"a{cle}"[:16]
+            if not fin or fin <= maintenant or veilles.existe(ident):
                 continue
             veilles.ajouter(numero, "zone", {"lieu": z.get("lieu", ""), "quartier": z.get("quartier"), "type": z.get("type") or "villa",
                                              "region": z.get("region") or "", "restantes": z.get("restantes") or 1, "fin": fin,
-                                             "derniere": z.get("derniere")}, maintenant + SEMAINE)
+                                             "derniere": z.get("derniere")}, maintenant + SEMAINE, ident)
             b["zones"] += 1
     carnet = stockage.Carnet(url)
+
+    def empreinte(r: dict) -> tuple:
+        return (r.get("nature"), carnets_plat(r.get("lieu")), r.get("devise"), round(float(r.get("prix_m2") or 0)), round(float(r.get("date") or 0)))
+
+    deja = {empreinte(r) for r in carnet.releves()}
     for releves in (donnees.get("carnets") or {}).values():
         for r in sorted((releves or {}).get("releves") or [], key=lambda r: r.get("date") or 0):
-            _, nouveau = carnet.noter({**{k: r.get(k) for k in stockage.Carnet.CHAMPS}, "date": secondes(r.get("date")) or maintenant,
-                                       "note": secondes(r.get("note")) or maintenant}, r.get("par"))
+            r = {**{k: r.get(k) for k in stockage.Carnet.CHAMPS}, "date": secondes(r.get("date")) or maintenant,
+                 "note": secondes(r.get("note")) or maintenant, "par": r.get("par")}
+            if empreinte(r) in deja:
+                continue
+            _, nouveau = carnet.noter({k: v for k, v in r.items() if k != "par"}, r["par"])
+            deja.add(empreinte(r))
             b["releves"] += nouveau
     reglages.ecrire(MARQUE, {"quand": maintenant, "export": donnees.get("cree"), "bilan": b})
     return b

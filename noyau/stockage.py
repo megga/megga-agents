@@ -956,8 +956,9 @@ class Veilles:
             Column("cree", Float, nullable=False),
         )
 
-    def ajouter(self, personne: str, genre: str, donnees: dict, prochaine: float) -> str:
-        ident = f"{genre[0]}{_ident(6)}"
+    def ajouter(self, personne: str, genre: str, donnees: dict, prochaine: float, ident: str | None = None) -> str:
+        """`ident` : un identifiant donné (une reprise, packs/immobilier/reprise.py) ; sinon tiré au hasard."""
+        ident = ident or f"{genre[0]}{_ident(6)}"
         with self._e.begin() as c:
             c.execute(insert(self._t).values(id=ident, personne=personne, genre=genre, donnees=_json(donnees), prochaine=prochaine,
                                              cree=time.time()))
@@ -970,6 +971,10 @@ class Veilles:
         for l in lignes:
             l["donnees"] = _de_json(l["donnees"]) or {}
         return lignes
+
+    def existe(self, ident: str) -> bool:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.id).where(self._t.c.id == ident)).first() is not None
 
     def de(self, personne: str, genre: str | None = None) -> list[dict]:
         t = self._t

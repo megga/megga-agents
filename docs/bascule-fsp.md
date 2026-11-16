@@ -18,6 +18,8 @@ node --import $F/alix/test/bouchons/enregistrer.js parite/alix.mjs $F traces/ali
 
 La clé Anthropic se lit dans `~/.config/alix-essai/anthropic.key`, jamais affichée. Un passage complet coûte quelques dollars. Le dernier rapport est dans `docs/lot7.md`.
 
+Un biais à lire avec la note : le joueur du socle n'avance pas l'horloge, et le socle ne vide pas son historique avec le temps (il relit toujours ses douze derniers tours, puis le fil), alors qu'Alix repart à neuf après 12 heures. Les cas « le lendemain » (G06, G14, R01, M01, V08) sont donc plus faciles au socle ; c'est son comportement réel, pas un artifice du banc, mais la comparaison n'y est pas à armes égales.
+
 ## 2. Le numéro de test (**Julien**)
 
 Un numéro au nom de Four Seasons Properties, dans le portefeuille WhatsApp Business de MEGGA, branché sur l'app Meta « Alix MEGGA » (dont le webhook est la porte) :
@@ -48,12 +50,20 @@ Sans un modèle, ce qui part hors des 24 heures attend le prochain message de la
 
 ## 4. La copie des données
 
-1. Sur « Fusionne et déploie » de **Julien** : la route d'export d'Alix (`GET /export`, megga/fourseasonsproperties#132), avec `npx wrangler secret put EXPORT_CLE` (saisie masquée).
-2. L'export, dans un fichier, sans l'afficher : `curl -sS -H "authorization: Bearer $(security find-generic-password -a megga -s fsp-export -w)" https://<fourseasons-alix>/export > export.json`.
-3. L'import dans la base du client (une fois ; `--encore` pour refaire sans doubler) :
+Alix n'a pas d'adresse publique (`workers_dev: false` : seule la liaison de service de `megga-whatsapp` la joint). Pour la copie, une adresse temporaire, ouverte puis refermée le même jour (décidé par Julien, 16.11.2026). Pendant qu'elle est ouverte, toutes les routes d'Alix restent gardées : `/meta` par la signature de Meta, `/demande` et `/bien` par `GESTION_ALIX_CLE`, `/vocal` par `VOCAL_CLE`, `/export` par `EXPORT_CLE`.
+
+1. Sur « Fusionne et déploie » de **Julien** : la route d'export d'Alix (`GET /export`, megga/fourseasonsproperties#132), déployée.
+2. **Julien**, la clé, tirée une fois et rangée deux fois sans s'afficher : dans le trousseau du Mac, puis chez Cloudflare.
+   `security add-generic-password -a megga -s fsp-export -w "$(openssl rand -hex 32)"`
+   `security find-generic-password -a megga -s fsp-export -w | npx wrangler secret put EXPORT_CLE` (dans `alix/` du dépôt du site)
+3. **Julien**, ouvrir l'adresse : tableau de bord Cloudflare, Worker `fourseasons-alix`, Réglages, Domaines et routes, `workers.dev` : activer. L'adresse est `https://fourseasons-alix.<sous-domaine du compte>.workers.dev`.
+4. L'export, dans un fichier, sans l'afficher :
+   `curl -sS --fail -H "authorization: Bearer $(security find-generic-password -a megga -s fsp-export -w)" https://fourseasons-alix.<sous-domaine>.workers.dev/export > export.json`
+5. **Julien**, refermer l'adresse aussitôt : le même réglage, désactivé. Le prochain déploiement d'Alix la refermerait de toute façon (sa configuration dit `workers_dev: false`). Puis `npx wrangler secret delete EXPORT_CLE` : sans clé, `/export` répond 404.
+6. L'import dans la base du client (une fois ; `--encore` pour refaire : rien de ce qui existe n'est doublé) :
    `DATABASE_URL=… CLIENT_CONFIG_FILE=clients/four-seasons-properties.yaml .venv/bin/python -m packs.immobilier.reprise export.json`
-   Il rend les comptes (partenaires, demandes, recherches, souvenirs, règles, fils, veilles, zones, relevés), jamais les données. L'historique des conversations des visiteurs et des partenaires ne se reprend pas.
-4. Effacer `export.json`.
+   Il rend les comptes de ce qui est nouveau (partenaires, demandes, recherches, souvenirs, règles, fils, veilles, zones, relevés), jamais les données. L'historique des conversations des visiteurs et des partenaires ne se reprend pas.
+7. Effacer `export.json`, et la clé du trousseau : `security delete-generic-password -a megga -s fsp-export`.
 
 ## 5. L'essai sur le numéro de test
 

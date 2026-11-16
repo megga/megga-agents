@@ -49,7 +49,10 @@ def test_la_reprise_des_donnees_d_alix(base_neuve):  # noqa: F811
     # Une seule fois ; --encore ne double rien
     with pytest.raises(RuntimeError, match="déjà été reprise"):
         reprendre(EXPORT, url, CONF)
-    assert reprendre(EXPORT, url, CONF, encore=True)["partenaires"] == 0 and len(stockage.Partenaires(url).lister()) == 2
+    encore = reprendre(EXPORT, url, CONF, encore=True)
+    assert all(n == 0 for k, n in encore.items() if k != "fils"), encore  # rien de nouveau, rien de doublé
+    assert len(stockage.Partenaires(url).lister()) == 2 and len(stockage.Carnet(url).releves()) == 2
+    assert len(stockage.base_agno(url).get_user_memories(user_id=GREG)) == 2 and len(stockage.Veilles(url).de(GREG)) == 2
     with pytest.raises(ValueError, match="format"):
         reprendre({"format": 2}, url, CONF, encore=True)
 
