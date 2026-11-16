@@ -93,22 +93,22 @@ roles:
 
         Are you looking to buy, rent or sell?
 whatsapp:
-  # Le numéro de l'essai, +1 669 328 2299 (Telnyx), sur le compte WhatsApp « Four Seasons Properties » (16.11.2026).
-  numero_id: "1402857672917787"
+  # +1 650-710-7070, le numéro d'Alix, sur le compte WhatsApp « FSP » (bascule du 16.11.2026).
+  numero_id: "1391058037432148"
 # Les modèles Meta du socle (docs/modeles-fsp.md), sur le même compte.
 modeles_meta:
-  message: {nom: fsp_socle_attente}
-  message_en: {nom: fsp_socle_attente, langue: en}
-  rappel: {nom: fsp_socle_rappel_2}
-  demande: {nom: fsp_socle_demande_2}
-  partenaire: {nom: fsp_socle_partenaire_2}
-  veille: {nom: fsp_socle_suivi_maj}
-  zone: {nom: fsp_socle_suivi_maj}
-  rapprochement: {nom: fsp_socle_suivi_maj}
-  livraison: {nom: fsp_socle_livraison}
-  reponse_visiteur: {nom: fsp_socle_reponse}
-  reponse_visiteur_en: {nom: fsp_socle_reponse, langue: en}
-  suivi_visiteur: {nom: fsp_socle_suivi}
-  suivi_visiteur_en: {nom: fsp_socle_suivi, langue: en}
-  ouverture: {nom: fsp_socle_ouverture}
-  ouverture_en: {nom: fsp_socle_ouverture, langue: en}
+  message: {nom: fsp_agent_attente}
+  message_en: {nom: fsp_agent_attente, langue: en}
+  rappel: {nom: fsp_agent_rappel}
+  demande: {nom: fsp_agent_demande}
+  partenaire: {nom: fsp_agent_partenaire}
+  veille: {nom: fsp_agent_suivi_maj}
+  zone: {nom: fsp_agent_suivi_maj}
+  rapprochement: {nom: fsp_agent_suivi_maj}
+  livraison: {nom: fsp_agent_livraison}
+  reponse_visiteur: {nom: fsp_agent_reponse}
+  reponse_visiteur_en: {nom: fsp_agent_reponse, langue: en}
+  suivi_visiteur: {nom: fsp_agent_suivi}
+  suivi_visiteur_en: {nom: fsp_agent_suivi, langue: en}
+  ouverture: {nom: fsp_agent_ouverture}
+  ouverture_en: {nom: fsp_agent_ouverture, langue: en}
