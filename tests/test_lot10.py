@@ -328,6 +328,51 @@ def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
     assert [d["titre"] for d in stockage.Connaissances(f"sqlite:///{tmp_path / 'cas'}/banc.db").documents()] == ["Horaires"]
 
 
+def configuration_du_banc(dossier, metier):
+    chemin = dossier / f"banc-{metier}.yaml"
+    conf = gabarits.nouvelle_config(metier, {"id": f"banc-{metier}", "entreprise": "Essai", "zone": "europe"}, "Lea")
+    chemin.write_text(yaml.safe_dump(conf, allow_unicode=True), encoding="utf-8")
+    return str(chemin)
+
+
+def test_le_banc_s_arrete_avant_de_jouer_sans_le_modele_de_recherche(tmp_path, monkeypatch, capsys):
+    """Relecture finale (I3) : des cas rangent des documents ; sans le modèle de recherche, rien n'est joué (ni payé)."""
+    joues = []
+
+    async def faux_passer(conf, construire_agent, juger, k=3, cas=None):
+        joues.append(conf.metier)
+        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "resultats": []}
+
+    monkeypatch.setattr(banc, "passer", faux_passer)
+    monkeypatch.setenv("MEGGA_MODELE_DIR", str(tmp_path / "pas-de-modele"))
+    assert banc.principal([configuration_du_banc(tmp_path, "sante"), "1"]) == 2 and joues == []
+    sortie = capsys.readouterr().out
+    assert all(m in sortie for m in ("modèle de recherche", "pas-de-modele", "socle/modele.py", "MEGGA_MODELE_DIR", "Rien n'a été joué"))
+    assert banc.principal([configuration_du_banc(tmp_path, "generaliste"), "1"]) == 0 and joues == ["general"]   # aucun document
+
+
+def test_le_banc_partage_un_seul_modele_de_recherche(tmp_path, monkeypatch):
+    modele = tmp_path / "modele"
+    modele.mkdir()
+    (modele / "model.onnx").write_bytes(b"")
+    (modele / "tokenizer.json").write_text("{}")
+    monkeypatch.setenv("MEGGA_MODELE_DIR", str(modele))
+    vus = []
+
+    def faux_agent_d_essai(cles, principal=None, vectoriseur=None):
+        vus.append(vectoriseur)
+        return lambda *a: None
+
+    async def faux_passer(conf, construire_agent, juger, k=3, cas=None):
+        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "resultats": []}
+
+    monkeypatch.setattr(banc, "agent_d_essai", faux_agent_d_essai)
+    monkeypatch.setattr(banc, "passer", faux_passer)
+    assert banc.principal([configuration_du_banc(tmp_path, "garage"), "1"]) == 0
+    [v] = vus
+    assert v is not None and v.dossier == modele   # un seul, chargé une fois pour tous les cas
+
+
 # Les cas du banc de chaque nouveau métier
 
 

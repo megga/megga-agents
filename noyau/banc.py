@@ -12,6 +12,10 @@ Les scénarios (`noyau/banc/<métier>.json`, généralisés du banc de parité d
 Un critère est vérifié sur la trace (« outil », « pas_outil », « motifs », « pas_motif ») ou lu par un juge (« juge »),
 un second modèle qui voit la conversation, les outils appelés et les faits du cas.
 
+Les cas qui rangent des documents demandent le modèle de recherche (noyau/connaissances.py) : celui de l'image, ou un
+dossier posé par `python socle/modele.py <dossier>` et donné par MEGGA_MODELE_DIR. Sans lui, le banc s'arrête avant de
+jouer.
+
   python -m noyau.banc <configuration.yaml> [k] [--juge claude-sonnet-5-5]
 """
 
@@ -210,8 +214,21 @@ def principal(argv: list[str]) -> int:
         argv = argv[:i] + argv[i + 2:]
     conf = configuration.lire(argv[0])
     k = int(argv[1]) if len(argv) > 1 else 3
+    cas = scenarios(conf.metier)
+    vectoriseur = None
+    if any(c.get("documents") for c in cas):
+        # Des cas rangent des documents : sans le modèle de recherche, ils échoueraient en route, après avoir payé les
+        # cas d'avant (relecture finale du lot 10, I3). Un seul modèle, chargé une fois pour tous les cas.
+        from .connaissances import Vectoriseur
+
+        vectoriseur = Vectoriseur()
+        if not vectoriseur.disponible():
+            print(f"Le modèle de recherche des documents est absent ({vectoriseur.dossier}) : des cas de ce banc rangent des "
+                  "documents. Posez-le avant de lancer le banc (python socle/modele.py <dossier>, puis "
+                  "MEGGA_MODELE_DIR=<dossier>), ou lancez le banc dans l'image, qui l'a déjà. Rien n'a été joué.")
+            return 2
     cles = {n: os.environ.get(n, "") for n in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY")}
-    r = asyncio.run(passer(conf, agent_d_essai(cles), juge_anthropic(juge, cles["ANTHROPIC_API_KEY"]), k))
+    r = asyncio.run(passer(conf, agent_d_essai(cles, vectoriseur=vectoriseur), juge_anthropic(juge, cles["ANTHROPIC_API_KEY"]), k, cas))
     for c in r["resultats"]:
         print(f"{'tenu ' if c['pass_k'] else 'RATÉ '} {c['id']} {c['titre']} ({c['reussis']}/{r['k']})")
         for e in c["essais"]:
