@@ -72,7 +72,10 @@ Alix n'a pas d'adresse publique (`workers_dev: false` : seule la liaison de serv
 
 Greg et Julien écrivent au numéro de test pendant quelques jours, comme à Alix : annonces, partenaires (un partenaire d'essai), un visiteur, le marché. Le suivi de l'atelier montre les échanges et les échecs. Alix continue de répondre sur l'ancien numéro.
 
-## 6. La bascule (**Julien**, sur accord)
+## 6. La bascule (faite le 16.11.2026, sur l'accord de Julien)
+
+Plus simple que le mode relais prévu ci-dessous : le compte WhatsApp « FSP » du +1 650-710-7070 a été abonné à l'app « Alix MEGGA » (la porte), l'utilisateur système « MEGGA Agents » y a l'accès total, les modèles `fsp_agent_` y sont soumis, la configuration sert ce numéro (version de l'atelier), puis l'app « Alix FSP » a été désabonnée de ce compte : le Worker `fourseasons-alix` n'est pas modifié, il ne reçoit plus rien. Retour arrière : réabonner « Alix FSP », désabonner « Alix MEGGA », remettre la version précédente dans l'atelier. Le +1 669 328 2299 de l'essai revient à MEGGA. Ce qui suit est le plan d'origine, gardé pour mémoire.
+
 
 Comme le prévoit `docs/plan.md` : `fourseasons-alix` transmet les webhooks au socle au lieu d'y répondre, le routeur `megga-whatsapp` reste intact. C'est un second changement dans le dépôt d'Alix (un mode relais, réglé par une variable), à faire seulement sur l'accord de Julien. À trancher à ce moment : le numéro que le socle sert pour Four Seasons (celui d'Alix, ou le numéro de test devenu le sien), car l'annuaire de la porte ne relie qu'un numéro à un client.
 
