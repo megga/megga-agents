@@ -348,8 +348,11 @@ class Marche:
                 semaines: la durée, 4 par défaut, 12 au plus.
             """
             personne, _ = gestionnaire(run_context)
-            if len(await asyncio.to_thread(s.veilles.de, personne, "veille")) >= VEILLES_MAX:
+            en_cours = await asyncio.to_thread(s.veilles.de, personne, "veille")
+            if len(en_cours) >= VEILLES_MAX:
                 raise ValueError(f"déjà {VEILLES_MAX} veilles en cours : demande laquelle arrêter")
+            if pareille := next((x for x in en_cours if carnets.plat(x["donnees"].get("recherche")) == carnets.plat(court(recherche, 100))), None):
+                raise ValueError(f"cette veille existe déjà (id {pareille['id']}) : dis-le, et propose de la changer")
             frequence = frequence if frequence in FREQUENCES else "quotidienne"
             semaines = min(12, max(1, int(semaines or 4)))
             r = await self.rechercher(recherche, mode, region, sites)
@@ -459,8 +462,12 @@ class Marche:
                  "fin": time.time() + (semaines + 1) * SEMAINE, "derniere": None}
             if len(z["lieu"]) < 2:
                 raise ValueError("il faut le lieu")
-            if len(await asyncio.to_thread(s.veilles.de, personne, "zone")) >= ZONES_MAX:
+            en_cours = await asyncio.to_thread(s.veilles.de, personne, "zone")
+            if len(en_cours) >= ZONES_MAX:
                 raise ValueError(f"déjà {ZONES_MAX} zones suivies : demande laquelle arrêter")
+            cle = lambda d: (carnets.plat(d.get("lieu")), carnets.plat(d.get("quartier")), carnets.plat(d.get("type")))  # noqa: E731
+            if pareille := next((x for x in en_cours if cle(x["donnees"]) == cle(z)), None):
+                raise ValueError(f"cette zone est déjà suivie (id {pareille['id']}) : dis-le")
             ident = await asyncio.to_thread(s.veilles.ajouter, personne, "zone", z, time.time() + 5)  # la première recherche tout de suite
             return (f"Suivi {carnets.nom_zone(z)} en place (id {ident}) pour {semaines} semaines : une recherche chaque semaine, les annonces lues "
                     "entrent dans le carnet, et je ne préviens que si la médiane des prix demandés bouge de 5 % ou plus.")
@@ -617,21 +624,24 @@ class Marche:
     async def executer_zone(self, l: dict, maintenant: float) -> None:
         s, z = self.s, dict(l["donnees"])
         avant = z.get("derniere") or carnets.mediane_zone(z, await asyncio.to_thread(s.carnet.releves))
+        echec = False
         try:
             r = await self.rechercher(f"{z['type']} à vendre {z['lieu']}{' ' + z['quartier'] if z.get('quartier') else ''}", "avancee", z["region"])
             await self.relever(l["personne"], [{"url": t["url"], "texte": t["lu"]} for t in r["trouves"] if t["lu"]])
         except Exception:
-            pass
+            echec = True  # la semaine ne compte pas : elle se refait la semaine suivante (dans la limite de « fin »)
         releves = await asyncio.to_thread(s.carnet.releves)
         apres = carnets.mediane_zone(z, releves)
         devise = next((r["devise"] for r in releves if carnets.meme_lieu(r["lieu"], z["lieu"])), "CHF")
-        dit = carnets.variation(avant, apres, z, devise) if z.get("derniere") else None  # la première semaine pose la référence
-        restantes = (z.get("restantes") or 1) - 1 if z.get("derniere") else z.get("restantes") or 12
-        fini = restantes <= 0
+        dit = carnets.variation(avant, apres, z, devise) if z.get("derniere") and not echec else None  # la première semaine pose la référence
+        restantes = (z.get("restantes") or 1) - (0 if echec else 1) if z.get("derniere") else z.get("restantes") or 12
+        fini = restantes <= 0 or maintenant >= float(z.get("fin") or float("inf"))
+        # La référence ne bouge que quand on prévient (ou la première semaine) : trois hausses de 4 % finissent par se dire.
+        reference = apres if apres["mediane"] and (dit or not z.get("derniere")) else avant
         if fini:
             await asyncio.to_thread(s.veilles.retirer, l["id"])
         else:
-            await asyncio.to_thread(s.veilles.mettre, l["id"], {**z, "restantes": restantes, "derniere": apres if apres["mediane"] else avant})
+            await asyncio.to_thread(s.veilles.mettre, l["id"], {**z, "restantes": restantes, "derniere": reference})
         texte = "\n".join(x for x in [dit, f"Le suivi {carnets.nom_zone(z)} s'arrête aujourd'hui : dis-moi si tu veux le prolonger." if fini else ""] if x)
         if texte:
             fin = " se termine aujourd'hui" if fini else ""

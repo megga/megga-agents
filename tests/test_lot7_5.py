@@ -417,3 +417,42 @@ def test_une_veille_ne_perd_pas_une_annonce(m):
     rien, v = run(essai())
     assert rien == [] and m.exp.envois[-1][0] == "carte" and m.exp.envois[-1][2].endswith(nouvelle)
     assert nouvelle in v["donnees"]["vus"]
+
+
+def test_les_mineurs_du_marche(m, tmp_path):
+    """Relecture du 16.11.2026, constats mineurs du marché."""
+    # Le même lieu, mot pour mot
+    assert carnets.meme_lieu("Genève", "Genève, Champel") and not carnets.meme_lieu("Ollon", "Collonge-Bellerive")
+    assert not carnets.meme_lieu("Bern", "Bernex")
+    # Des valeurs presque égales : rien d'écarté
+    s = carnets.statistiques([10000, 10000, 10000, 10000, 10400])
+    assert s["n"] == 5 and s["ecartees"] == 0
+    # Une vente notée avec le lien d'une annonce est un autre relevé
+    c = stockage.Carnet(f"sqlite:///{tmp_path}/c.db")
+    base = {"lieu": "Cologny", "famille": "villa", "devise": "CHF", "prix_m2": 30000, "lien": "https://x.ch/1", "date": 1.0, "note": 1.0}
+    _, a = c.noter({**base, "nature": "annonce"})
+    _, v = c.noter({**base, "nature": "vente", "prix_m2": 28000})
+    assert a and v and sorted(r["nature"] for r in c.releves()) == ["annonce", "vente"]
+
+    # La même veille ne s'ajoute pas deux fois
+    async def deux_fois():
+        m.conversations()
+        m.ecrit(GREG)
+        await m.mo["surveiller_marche"]("villa Cologny", Tour(GREG, "g1"))
+        await m.mo["surveiller_marche"]("Villa  Cologny", Tour(GREG, "g2"))
+
+    with pytest.raises(ValueError, match="existe déjà"):
+        run(deux_fois())
+
+
+def test_la_reference_d_une_zone_ne_glisse_pas():
+    """Relecture du 16.11.2026 : trois hausses de 4 % finissent par se dire (la référence ne bouge qu'à l'alerte)."""
+    z = {"lieu": "Cologny", "type": "villa"}
+    ref = {"mediane": 30000, "n": 5}
+    dits = []
+    for semaine in (31200, 32448, 33746):
+        apres = {"mediane": semaine, "n": 5}
+        dit = carnets.variation(ref, apres, z)
+        dits.append(dit)
+        ref = apres if dit else ref
+    assert dits[0] is None and "(+8 %)" in dits[1]  # 30 000 puis 32 448 : la référence n'a pas glissé à 31 200

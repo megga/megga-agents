@@ -505,6 +505,11 @@ class Visiteurs:
                 return texte
             if s.personnes.compte(numero):
                 raise ValueError("ce numéro est celui d'un gestionnaire : il ne se bloque pas")
+            # Bloquer vient du message du courtier lui-même : le numéro ou le nom y est écrit (relecture du 16.11.2026).
+            dit = s.conversations.entendu(moi) if s.conversations is not None else ""
+            mots_dits = set(re.findall(r"[a-z0-9]+", plat(dit)))
+            if dit and chiffres(numero)[-7:] not in chiffres(dit) and not ({m for m in plat(qui).split() if len(m) >= 3} & mots_dits):
+                raise ValueError("ce numéro n'est pas dans le dernier message du courtier : demande-lui de l'écrire lui-même")
             etait = await asyncio.to_thread(s.partenaires.lire, numero)
             nouveau = await asyncio.to_thread(s.bloques.bloquer, numero, moi, None, court(nom or connu or (etait or {}).get("nom", ""), 60))
             if etait:

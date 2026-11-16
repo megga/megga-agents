@@ -959,8 +959,8 @@ class Carnet:
         t = self._t
         valeurs = {k: r.get(k) for k in self.CHAMPS}
         with self._e.begin() as c:
-            if r.get("lien"):
-                deja = c.execute(select(t.c.id).where(t.c.lien == r["lien"])).scalar()
+            if r.get("lien"):  # la même annonce, relevée de nouveau ; une vente au même lien est un autre relevé
+                deja = c.execute(select(t.c.id).where(t.c.lien == r["lien"], t.c.nature == r.get("nature"))).scalar()
                 if deja is not None:
                     c.execute(update(t).where(t.c.id == deja).values(**{k: v for k, v in valeurs.items() if k not in ("nature", "bas", "haut", "texte", "lien")}))
                     return int(deja), False

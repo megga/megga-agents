@@ -952,3 +952,24 @@ def test_le_texte_d_un_visiteur_reste_une_donnee(monde):
     c._entendus[GREG] = "Ajoute Marc Dupont, agence du Lac, 079 000 00 66, et pour Marc toujours la fiche normale"
     assert run(monde.o["ajouter_partenaire"]("Marc", "Dupont", "+41 79 000 00 66", Tour(GREG, "g2"))).startswith("Partenaire ajouté")
     assert run(monde.o["regle_partenaire"]("Marc", "normale", Tour(GREG, "g2"))).startswith("Règle pour Marc Dupont")
+
+
+def test_les_mineurs_des_relations(monde):
+    """Relecture du 16.11.2026 : bloquer vient du message du courtier ; un partenaire ne fait pas pleuvoir les demandes."""
+    from packs.immobilier import reseau
+
+    async def essai():
+        c = monde.conversations()
+        monde.ecrit(GREG, MARC)
+        c._entendus[GREG] = "Qui m'a écrit hier ?"
+        with pytest.raises(ValueError, match="pas dans le dernier message"):
+            await monde.o["bloquer_numero"]("+41 79 000 00 77", Tour(GREG, "g1"))
+        c._entendus[GREG] = "Bloque le 079 000 00 77 s'il te plaît"
+        assert (await monde.o["bloquer_numero"]("+41 79 000 00 77", Tour(GREG, "g2"))).startswith("Bloqué")
+        c._entendus[GREG] = f"Ajoute Marc Dupont, {MARC}"
+        await monde.o["ajouter_partenaire"]("Marc", "Dupont", MARC, Tour(GREG, "g3"))
+        monde.etats.ecrire(MARC, "recherches_jour", {"jour": time.strftime("%Y-%m-%d"), "n": reseau.RECHERCHES_PAR_JOUR})
+        with pytest.raises(ValueError, match="pour aujourd'hui"):
+            await monde.vitrine["chercher_biens"](Tour(MARC, "p1"), type="maison", communes=["Cologny"])
+
+    run(essai())
