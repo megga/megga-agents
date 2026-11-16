@@ -159,6 +159,15 @@ class Conteneur extends DurableObject {
 }
 
 class AgentClient extends Conteneur {
+  /**
+   * Le jeton des routes internes de ce client. Sans ADMIN_TOKEN, il ne se calculerait qu'à partir du nom du client,
+   * que tout le monde connaît : refusé (relecture du 16.11.2026).
+   */
+  async jeton() {
+    if (!this.env.ADMIN_TOKEN) throw new Error("ADMIN_TOKEN manquant : pas de jeton interne");
+    return jetonInterne(this.env.ADMIN_TOKEN, this.ctx.id.name ?? "");
+  }
+
   /** Un webhook de Meta : s'il n'arrive pas au conteneur, il est gardé pour être rejoué, rien ne se perd. */
   async fetch(requete) {
     if (new URL(requete.url).pathname !== "/whatsapp" || requete.method !== "POST") return super.fetch(requete);
@@ -245,7 +254,7 @@ class AgentClient extends Conteneur {
       await this.noterAlerte("demarrage", e);
       throw e;
     }
-    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const jeton = await this.jeton();
     const r = await this.ctx.container
       .getTcpPort(PORT)
       .fetch(`http://container/interne/suivi${chemin.replace(/:/g, "%3A")}${recherche}`, { headers: { "x-megga-interne": jeton } });
@@ -354,7 +363,7 @@ class AgentClient extends Conteneur {
       await this.noterAlerte("demarrage", e);
       throw e;
     }
-    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const jeton = await this.jeton();
     const options = { method: methode, headers: { "x-megga-interne": jeton } };
     if (corps !== null) {
       options.body = JSON.stringify(corps);
@@ -393,7 +402,7 @@ class AgentClient extends Conteneur {
   }
 
   async traiterAlarme() {
-    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const jeton = await this.jeton();
     if (await this.ctx.storage.get("a_redemarrer")) {
       const c = this.ctx.container;
       if (c?.running) {
@@ -431,7 +440,7 @@ class AgentClient extends Conteneur {
     if (!client) throw new Error("client inconnu ou inactif");
     const secrets = (await this.ctx.storage.get("secrets")) ?? {};
     for (const k of SECRETS_CLIENT_REQUIS) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
-    const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await jetonInterne(this.env.ADMIN_TOKEN ?? "", nom) };
+    const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await this.jeton() };
     for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
     // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.
     return env;

@@ -1,9 +1,9 @@
 # Four Seasons Properties : Alix sur le socle (lot 7). Sans aucun secret : les numéros et comptes des
 # gestionnaires (Greg, Julien) sont dans le secret GESTIONNAIRES, la clé de la gestion du site dans GESTION_CLE.
-# Pas encore de numéro WhatsApp : seulement par API jusqu'au numéro de test (docs/plan.md, lot 7).
-# Les consignes complètes d'Alix FSP arrivent avec ses outils (lots 7.2 à 7.6) : les annonces au 7.2, les
-# partenaires et les visiteurs au 7.4. Ce qui est propre à Four Seasons (Greg, ses destinations, l'accueil de Greg du
-# 15.11.2026) est ici ; le noyau et le pack n'en savent rien.
+# Le numéro d'Alix, +1 650-710-7070, servi par le socle depuis la bascule du 16.11.2026 (docs/bascule-fsp.md).
+# Ce fichier est la configuration de départ : celle qui sert est la version en service dans l'atelier.
+# Ce qui est propre à Four Seasons (Greg, ses destinations, l'accueil de Greg du 15.11.2026) est ici ; le noyau et
+# le pack n'en savent rien.
 version: 1
 id: four-seasons-properties
 nom_agent: Alix

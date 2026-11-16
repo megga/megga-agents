@@ -26,6 +26,6 @@ if os.environ["SITE"]:
     s["SITE_CLE"] = os.environ["SITE"]
 print(json.dumps(s))')
 curl -sS --fail-with-body -X PUT "$porte/admin/clients/$id/secrets" \
-  -H "authorization: Bearer $admin" -H "content-type: application/json" --data-binary @- <<<"$corps"
+  -K <(printf 'header = "authorization: Bearer %s"\n' "$admin") -H "content-type: application/json" --data-binary @- <<<"$corps"
 echo
 unset admin cle gestionnaires site corps
