@@ -125,7 +125,7 @@ def _reecriture(conf, cles):
     """Le modèle qui réécrit une réponse pour l'oral : un agent sans mémoire ni outils."""
     from agno.agent import Agent
 
-    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+    nom = conf.modeles.petit()
     oral = Agent(model=modele(nom, cles), instructions=consignes_orales(conf), telemetry=False, markdown=False)
 
     async def reecrire(demande: str) -> str:
@@ -138,10 +138,10 @@ def _reecriture(conf, cles):
 
 
 def _resumeur(conf, cles):
-    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral à défaut du secours."""
+    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral (Modeles.petit)."""
     from agno.agent import Agent
 
-    nom = conf.modeles.oral or conf.modeles.secours or conf.modeles.principal
+    nom = conf.modeles.petit()
 
     async def resumer(consigne: str, demande: str) -> str:
         sortie = await Agent(model=modele(nom, cles), instructions=[consigne], telemetry=False, markdown=False).arun(demande)

@@ -35,13 +35,24 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+PETIT_CLAUDE = "claude-haiku-5-5"
+
+
 class Modeles(Strict):
     """Le modèle principal, celui qui prend le relais s'il échoue, et celui qui réécrit pour l'oral."""
 
     principal: str = "claude-sonnet-5-5"
     secours: str | None = "deepseek-v4-pro"
-    # La réécriture d'une réponse pour un vocal ; vide : le secours, sinon le principal.
+    # Le petit modèle de la réécriture pour un vocal et du résumé du fil ; vide : Claude Haiku quand le principal est Claude,
+    # sinon le principal. Jamais le secours d'office : il ne sert qu'en panne, et ces textes portent les conversations
+    # (relecture du 16.11.2026, I16).
     oral: str | None = None
+
+    def petit(self) -> str:
+        """Le modèle de l'oral et du fil."""
+        if self.oral:
+            return self.oral
+        return PETIT_CLAUDE if self.principal.startswith("claude-") else self.principal
 
 
 class Voix(Strict):

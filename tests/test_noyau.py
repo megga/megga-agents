@@ -149,3 +149,23 @@ def test_l_import_cree_toutes_nos_tables(tmp_path):
     n = stockage.exporter(a, tmp_path / "x.jsonl")
     assert stockage.importer(tmp_path / "x.jsonl", b) == n
     assert stockage.Reseau(b).de_partenaire("+41790000003", 0)[0]["propositions"][0]["reference"] == "G8LR2DW8"
+
+
+def test_le_fil_et_l_oral_restent_chez_claude(monkeypatch):
+    """Relecture du 16.11.2026 (I16) : sans modèle d'oral réglé, le résumé du fil et la réécriture pour la voix prennent
+    Claude Haiku quand le principal est Claude, jamais le modèle de secours (DeepSeek) d'office."""
+    from noyau import app
+
+    fsp = configuration.lire("clients/four-seasons-properties.yaml")
+    assert fsp.modeles.secours == "deepseek-v4-pro" and fsp.modeles.petit() == "claude-haiku-5-5"
+    assert configuration.Modeles(principal="deepseek-v4-pro", secours=None).petit() == "deepseek-v4-pro"
+    assert configuration.Modeles(oral="claude-sonnet-5-5").petit() == "claude-sonnet-5-5"
+    noms = []
+    monkeypatch.setattr(app, "modele", lambda nom, cles: noms.append(nom))
+    monkeypatch.setattr("agno.agent.Agent.__init__", lambda self, **k: None)
+    import asyncio
+
+    app._reecriture(fsp, {})
+    with pytest.raises(AttributeError):  # le résumeur construit son modèle à chaque résumé ; l'agent factice ne répond pas
+        asyncio.run(app._resumeur(fsp, {})("consigne", "échanges"))
+    assert noms == ["claude-haiku-5-5", "claude-haiku-5-5"]
