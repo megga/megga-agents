@@ -3,6 +3,12 @@
 //   GET  /meta                     l'abonnement du webhook de l'app Meta « Alix MEGGA »
 //   POST /meta                     un webhook : signature vérifiée, puis transmis tel quel
 //                                  au conteneur de chaque client concerné
+//   POST /api/:client/messages     un logiciel parle à l'agent d'un client (clé du logiciel, vérifiée
+//                                  par le conteneur) : transmis tel quel, réponse rendue telle quelle.
+//                                  Adresse publique : https://api.megga.ai (API_HOTE), qui ne sert que
+//                                  cette route ; workers.dev la sert aussi, en secours
+//   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
+//                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
@@ -28,6 +34,10 @@ export { AgentEtatsUnis, AgentEurope, Atelier } from "./agent.js";
 const texte = (t, status = 200) => new Response(t, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
 const json = (v, status = 200) => Response.json(v, { status });
 const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.headers.get("authorization") ?? "").replace(/^Bearer /, ""), env.ADMIN_TOKEN);
+// L'entrée par API : une clé bien formée (noyau/api.py), un corps de 16 Kio au plus.
+const CLE_API = /^Bearer mga_[A-Za-z0-9_-]{43}$/;
+const TAILLE_API = 16 * 1024;
+const HOTE_API = "api.megga.ai";
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
@@ -36,12 +46,18 @@ const TAILLE_PILOTAGE = 256 * 1024;
 
 export async function recevoir(requete, env, ctx) {
   const url = new URL(requete.url);
+  const api = url.pathname.match(/^\/api\/([^/]+)\/messages$/);
+  // Sur l'hôte de l'API, rien d'autre : ni Meta, ni l'administration, ni l'atelier, ni le pilotage.
+  if (url.hostname === (env.API_HOTE || HOTE_API)) return api ? messageApi(requete, env, api[1]) : json({ erreur: "introuvable" }, 404);
   if (url.pathname === "/" && requete.method === "GET") return texte("ok");
   if (url.pathname === "/meta" && requete.method === "GET") {
     const defi = defiAbonnement(requete.url, env.META_VERIFY_TOKEN);
     return defi === null ? texte("refusé", 403) : texte(defi);
   }
   if (url.pathname === "/meta" && requete.method === "POST") return webhook(requete, env, ctx);
+  if (api) return messageApi(requete, env, api[1]);
+  const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
+  if (cles) return clesApi(requete, env, cles[1], cles[2] ?? "");
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
@@ -84,6 +100,66 @@ async function pilote(requete, env) {
   if (Number(longueur) > TAILLE_PILOTAGE) return texte("relevé trop gros", 413);
   const atelier = atelierDe(env);
   return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
+}
+
+/**
+ * Un message d'un logiciel pour l'agent d'un client. La porte ne garde rien et ne journalise aucun texte :
+ * elle vérifie la forme (clé, taille), puis transmet au conteneur, qui vérifie la clé et répond.
+ */
+async function messageApi(requete, env, id) {
+  if (requete.method !== "POST") return json({ erreur: "méthode : POST" }, 405);
+  // Sans clé bien formée, rien ne réveille le conteneur.
+  if (!CLE_API.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
+  const longueur = requete.headers.get("content-length") ?? "";
+  if (!/^[0-9]{1,9}$/.test(longueur)) return json({ erreur: "longueur attendue" }, 411);
+  if (Number(longueur) > TAILLE_API) return json({ erreur: "requête trop grosse" }, 413);
+  const client = idValide(id) ? await clientParId(env.ANNUAIRE, id) : null;
+  const agent = client && agentDe(env, client);
+  if (!agent) return json({ erreur: "agent inconnu" }, 404);
+  const corps = await requete.arrayBuffer();
+  try {
+    const r = await agent.fetch(
+      new Request("http://agent/api/messages", {
+        method: "POST",
+        body: corps,
+        headers: { authorization: requete.headers.get("authorization"), "content-type": "application/json" },
+      }),
+    );
+    // Seuls le statut, le type et l'attente passent : rien d'autre du conteneur ne sort.
+    const entetes = { "content-type": r.headers.get("content-type") ?? "application/json" };
+    const attente = r.headers.get("retry-after");
+    if (attente) entetes["retry-after"] = attente;
+    return new Response(r.body, { status: r.status, headers: entetes });
+  } catch (e) {
+    console.error("message par API en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "agent injoignable" }, 503);
+  }
+}
+
+/** Les clés des logiciels d'un client : la porte transmet à son conteneur, qui les garde en empreinte. */
+async function clesApi(requete, env, id, chemin) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const permis = chemin ? requete.method === "DELETE" : ["GET", "POST"].includes(requete.method);
+  if (!permis) return texte("méthode", 405);
+  if (chemin && !/^\/[0-9a-f]{12}$/.test(chemin)) return texte("identifiant de clé", 400);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  let corps = null;
+  if (requete.method === "POST") {
+    try {
+      corps = await requete.json();
+    } catch {
+      return texte("corps", 400);
+    }
+  }
+  try {
+    const { statut, donnees } = await agent.cles(requete.method, chemin, corps);
+    return json(donnees, statut);
+  } catch (e) {
+    console.error("clés en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "conteneur injoignable" }, 503);
+  }
 }
 
 async function webhook(requete, env, ctx) {

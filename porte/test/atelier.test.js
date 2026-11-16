@@ -10,7 +10,7 @@ import { recevoir } from "../src/index.js";
 // Un vrai SQLite (le moteur de D1), avec les migrations de l'annuaire, derrière l'interface de D1.
 function d1() {
   const db = new DatabaseSync(":memory:");
-  for (const f of ["0001_annuaire.sql", "0002_versions.sql"]) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
+  for (const f of ["0001_annuaire.sql", "0002_versions.sql", "0003_sans_whatsapp.sql"]) db.exec(readFileSync(new URL(`../migrations/${f}`, import.meta.url), "utf8"));
   const requete = (sql, args = []) => ({
     bind: (...a) => requete(sql, a),
     first: async () => db.prepare(sql).get(...args) ?? null,

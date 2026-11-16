@@ -174,6 +174,18 @@ def parcours(essai: Essai) -> None:
     essai.attendre("l'agent répond, sur son fichier",
                    lambda: essai.sante_agent().get("configuration") == {"source": "fichier"}, 240)
 
+    print("Entrée par API : une clé créée chez le client, un logiciel parle à l'agent")
+    sortie = essai.compose("exec", "-T", "agent", "python", "-m", "noyau.cles", "creer", "dossier").splitlines()
+    cle = sortie[-1].strip()
+    assert cle.startswith("mga_") and "dossier" in essai.compose("exec", "-T", "agent", "python", "-m", "noyau.cles", "lister")
+    appel = ("import json,sys,urllib.request as u\n"
+             "r=u.Request('http://localhost:8080/api/messages',data=json.dumps({'personne':'patient-1','texte':'Bonjour'}).encode(),"
+             "headers={'authorization':'Bearer '+sys.argv[1],'content-type':'application/json'})\n"
+             "try:\n  print(u.urlopen(r).status)\nexcept u.HTTPError as e:\n  print(e.code, json.load(e).get('erreur'))")
+    # Sans clé de modèle dans cet essai, le tour échoue proprement : l'excuse, jamais l'erreur.
+    assert essai.compose("exec", "-T", "agent", "python", "-c", appel, cle).strip() == "503 l'agent n'a pas pu répondre"
+    assert essai.compose("exec", "-T", "agent", "python", "-c", appel, "mga_" + "x" * 43).strip() == "401 clé refusée"
+
     print("Mise en service : MEGGA crée le client et enregistre la clé de l'installation")
     conf = yaml.safe_load((essai.dossier / "client.yaml").read_text())
     code, d = essai.atelier("POST", "/atelier/clients", {"config": conf})

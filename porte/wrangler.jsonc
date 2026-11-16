@@ -8,6 +8,10 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
   "workers_dev": true,
+  // L'adresse publique de l'entrée par API (lot 6.6) : seule /api/<client>/messages y est servie.
+  // workers.dev reste l'adresse de secours, et celle de Meta, de l'administration, de l'atelier et du pilotage.
+  // Prérequis : la zone megga.ai sur le compte Cloudflare de MEGGA, sinon wrangler deploy échoue.
+  "routes": [{ "pattern": "api.megga.ai", "custom_domain": true }],
   "preview_urls": false,
   // Une application de conteneurs par zone, contrainte à sa juridiction.
   // La même image partout (socle/Dockerfile) ; « basic » : 1/4 vCPU, 1 Gio.
@@ -53,7 +57,8 @@
   // L'étiquette de la version déployée (wrangler deploy --tag <commit>), remise aux conteneurs.
   "version_metadata": { "binding": "VERSION_PORTE" },
   // L'adresse publique de la porte : l'atelier l'appelle pour mettre une configuration en service.
-  "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev" },
+  // API_HOTE : l'hôte de l'entrée par API, qui ne sert rien d'autre.
+  "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev", "API_HOTE": "api.megga.ai" },
   // L'annuaire des clients (D1, juridiction UE, créé le 15.11.2026).
   "d1_databases": [
     { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "637715e3-6675-4310-bbdd-27a4f3b5d8c2", "migrations_dir": "migrations" }

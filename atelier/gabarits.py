@@ -54,7 +54,9 @@ GABARITS: dict[str, dict[str, Any]] = {
 }
 
 # Ce qu'il faut pour créer un client d'après un gabarit (MEGGA).
-IDENTITE = ("id", "entreprise", "zone", "numero_id")
+IDENTITE = ("id", "entreprise", "zone")
+# Facultatif : sans numéro, l'agent ne sert que par API (noyau/api.py).
+NUMERO = "numero_id"
 
 
 def lister() -> list[dict]:
@@ -87,10 +89,11 @@ def nouvelle_config(nom: Any, client: Any, nom_agent: Any) -> dict:
         "id": client["id"],
         "entreprise": client["entreprise"],
         "zone": client["zone"],
-        "whatsapp": {"numero_id": client["numero_id"]},
         "nom_agent": nom_agent,
         **reglages_pour(nom, {}),
     }
+    if client.get(NUMERO):
+        config["whatsapp"] = {"numero_id": client[NUMERO]}
     for k in ("langue", "fuseau"):
         if client.get(k):
             config[k] = client[k]

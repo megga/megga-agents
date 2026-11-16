@@ -31,6 +31,13 @@ Routes (toutes sous /atelier) :
   POST  /clients/{id}/jetons                    MEGGA : un jeton pour le client, montré une fois
   DELETE /clients/{id}/jetons                   MEGGA : retire tous les jetons du client
 
+Entrée par API (zones de la porte ; MEGGA ou le client) : les clés des logiciels, gardées en empreinte
+dans la base du client, jamais dans l'atelier. Hors Cloudflare, elles se créent chez le client
+(python -m noyau.cles).
+  GET   /clients/{id}/cles                      les clés, sans empreinte
+  POST  /clients/{id}/cles                      {logiciel, par_minute?} une clé, montrée une fois
+  DELETE /clients/{id}/cles/{cle}               retire une clé, tout de suite
+
 Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/suivi[?jours=7]           état, activité (tours, personnes, modèles, voix) ;
                                                 coûts pour MEGGA seulement
@@ -71,10 +78,11 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
+from noyau import api as entree_api
 from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
-from noyau.config import Config
+from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
 from . import gabarits, regles
@@ -89,6 +97,13 @@ from .versions import Versions
 log = logging.getLogger("megga.atelier")
 ID = re.compile(r"^[a-z0-9][a-z0-9-]{1,62}$")
 CONVERSATION = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
+
+
+def trop_ancienne(agent: dict | None, schema_minimum: int) -> bool:
+    """L'agent d'une installation, d'après son dernier relevé, sert-il une image d'avant ce schéma de nos tables ?
+    Inconnu (pas de relevé, agent muet) : on ne sait pas, faux ; l'installation jugera l'ordre elle-même."""
+    schema = (agent or {}).get("schema")
+    return isinstance(schema, int) and not isinstance(schema, bool) and schema < schema_minimum
 
 
 @dataclass(frozen=True)
@@ -373,6 +388,11 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         renvoyée si l'installation ne la sert pas (refusée, en échec, expirée)."""
         if canal.cle is None:
             raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
+        if conf.whatsapp is None:
+            # Deux versions soutenues : l'image précédente exige un numéro et refuserait l'ordre.
+            agent = (await bd(installation_de, ident, courante) or {}).get("agent")
+            if trop_ancienne(agent, SANS_WHATSAPP_SCHEMA):
+                raise Refus(409, f"l'installation sert l'image {agent.get('version')}, qui exige un numéro WhatsApp : installez d'abord une image récente")
         en_cours = await bd(canal.en_cours, ident, numero)
         if en_cours is not None:
             raise Refus(409, f"l'ordre {en_cours} porte déjà cette version à l'installation")
@@ -416,6 +436,53 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         megga(qui)
         client_de(qui, ident)
         return {"client": ident, "retires": jetons.revoquer(ident)}
+
+    # L'entrée par API : les clés des logiciels
+
+    def cles_par_porte(qui: Identite, ident: str) -> None:
+        client_de(qui, ident)
+        if zone_de(ident) not in regles.ZONES_PORTE:
+            raise Refus(409, "hors Cloudflare, les clés se créent chez le client : python -m noyau.cles creer <logiciel> (docs/api.md)")
+        if porte is None:
+            raise Refus(503, "porte non réglée (PORTE_URL)")
+
+    async def appel_cles(ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
+        try:
+            return await porte.cles(ident, methode, chemin, corps)
+        except PorteErreur as e:
+            if e.statut in (400, 404, 409):
+                raise Refus(e.statut, "clé refusée par le conteneur", {"texte": e.texte}) from e
+            raise Refus(502 if e.statut else 504, f"clés indisponibles : {raison(e)}", {"statut": e.statut, "texte": e.texte}) from e
+
+    @r.get("/clients/{ident}/cles")
+    async def lister_cles(ident: str, qui: Identite = Depends(identite)):
+        await bd(cles_par_porte, qui, ident)
+        return {"client": ident, **await appel_cles(ident)}
+
+    @r.post("/clients/{ident}/cles", status_code=201)
+    async def creer_cle(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """Une clé pour un logiciel du client : montrée ici une seule fois ; seule son empreinte part au conteneur."""
+        logiciel = corps.get("logiciel")
+        if not isinstance(logiciel, str) or not entree_api.LOGICIEL.fullmatch(logiciel):
+            raise Refus(400, "logiciel : un nom court, en minuscules (lettres, chiffres, tirets, 20 au plus)")
+        try:
+            debit = entree_api.par_minute(corps.get("par_minute"))
+        except ValueError as e:
+            raise Refus(400, str(e)) from e
+        await bd(cles_par_porte, qui, ident)
+        cle_id, cle, empreinte = entree_api.nouvelle_cle()
+        await appel_cles(ident, "POST", corps={"id": cle_id, "logiciel": logiciel, "empreinte": empreinte, "par_minute": debit})
+        log.info("clé %s créée pour %s (%s, %s)", cle_id, ident, logiciel, qui.role)
+        return {"client": ident, "id": cle_id, "logiciel": logiciel, "par_minute": debit, "cle": cle}
+
+    @r.delete("/clients/{ident}/cles/{cle_id}")
+    async def retirer_cle(ident: str, cle_id: str, qui: Identite = Depends(identite)):
+        if not entree_api.IDENT_CLE.fullmatch(cle_id):
+            raise Refus(400, "identifiant de clé")
+        await bd(cles_par_porte, qui, ident)
+        r = await appel_cles(ident, "DELETE", f"/{cle_id}")
+        log.info("clé %s de %s retirée (%s)", cle_id, ident, qui.role)
+        return {"client": ident, **r}
 
     # Le suivi
 
@@ -516,7 +583,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     async def echanges(ident: str, personne: str, requete: Request, qui: Identite = Depends(identite)):
         limite = limite_de(requete.query_params.get("limite"))
         if not PERSONNE.fullmatch(personne):
-            raise Refus(400, "personne : un numéro")
+            raise Refus(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
         await bd(suivable, qui, ident, True)
         return await lire_suivi(ident, f"/conversations/{personne}", limite=limite)
 

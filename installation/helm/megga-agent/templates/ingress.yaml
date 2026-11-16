@@ -1,7 +1,8 @@
 {{- if .Values.ingress.enabled }}
 {{- if not .Values.ingress.host }}{{ fail "ingress.host : le nom de domaine public du webhook" }}{{ end }}
 {{- if not (or .Values.ingress.tlsSecret .Values.ingress.tlsAilleurs) }}{{ fail "ingress.tlsSecret : Meta exige HTTPS (ou ingress.tlsAilleurs si un répartiteur de charge s'en charge)" }}{{ end }}
-# Seul le webhook de Meta est exposé, en HTTPS ; /sante et les routes internes restent dans le cluster.
+# Exposés en HTTPS : le webhook de Meta et l'entrée par API des logiciels du client (docs/api.md) ;
+# /sante et les routes internes restent dans le cluster.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -24,6 +25,12 @@ spec:
       http:
         paths:
           - path: /whatsapp
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "megga-agent.nom" . }}
+                port: {name: http}
+          - path: /api/messages
             pathType: Exact
             backend:
               service:

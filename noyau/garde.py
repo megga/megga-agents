@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from collections import deque
@@ -57,6 +58,22 @@ class Debit:
             return False
         q.append(maintenant)
         return True
+
+    def libre(self, personne: str, maintenant: float | None = None) -> bool:
+        """Un tour serait-il permis ? Sans le compter (permis le compte)."""
+        maintenant = time.monotonic() if maintenant is None else maintenant
+        q = self._tours.get(personne)
+        while q and maintenant - q[0] > self.fenetre:
+            q.popleft()
+        return not q or len(q) < self.maximum
+
+    def attente(self, personne: str, maintenant: float | None = None) -> int:
+        """Les secondes avant qu'un tour se libère (au moins 1) : l'en-tête Retry-After."""
+        maintenant = time.monotonic() if maintenant is None else maintenant
+        q = self._tours.get(personne)
+        if not q or len(q) < self.maximum:
+            return 1
+        return max(1, math.ceil(q[0] + self.fenetre - maintenant))
 
     def prevenir(self, personne: str, maintenant: float | None = None) -> bool:
         """Faut-il le dire ? Une fois par fenêtre, pas à chaque message."""

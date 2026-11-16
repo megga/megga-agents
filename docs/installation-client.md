@@ -67,7 +67,7 @@ docker compose up -d
 
 La quatrième ligne crée la clé de l'installation, sans l'afficher ; elle ne sert qu'au pilote. Avec `PILOTAGE=non`, elle peut attendre.
 
-Sans `client.yaml`, l'installation s'arrête net (« bind source path does not exist ») au lieu de démarrer un agent sans configuration. L'entrée HTTPS (Caddy) obtient seule son certificat, et ne laisse passer que `/whatsapp` : `/sante` et les routes internes de l'agent ne sont jamais exposées. Pour vérifier :
+Sans `client.yaml`, l'installation s'arrête net (« bind source path does not exist ») au lieu de démarrer un agent sans configuration. L'entrée HTTPS (Caddy) obtient seule son certificat, et ne laisse passer que `/whatsapp` et `/api/messages` (l'entrée des logiciels du client, `docs/api.md`) : `/sante` et les routes internes de l'agent ne sont jamais exposées. Pour vérifier :
 
 ```bash
 docker compose ps                      # agent « healthy »
@@ -95,7 +95,19 @@ Le pilote, avec `pilotage.mode` à `suivi` ou `complet` : sa clé dans un Secret
 - **Secrets en fichiers** : sans Secret Kubernetes, le coffre du client (pilote CSI de Vault, Key Vault…) monte ses fichiers par `extraVolumes` et `extraVolumeMounts`, et chaque secret se déclare dans `extraEnv` sous la forme `<NOM>_FILE` (par exemple `ANTHROPIC_API_KEY_FILE=/mnt/secrets/anthropic`).
 - **HTTPS** : exigé par Meta. Le chart refuse de s'installer sans `ingress.tlsSecret`, sauf `ingress.tlsAilleurs=true` si un répartiteur de charge l'assure devant l'ingress.
 
-Le chart lance un seul agent (deux répondraient deux fois), le remplace en arrêtant l'ancien d'abord, le fait tourner sans droits (utilisateur 10001, disque en lecture seule), et n'expose que `/whatsapp`.
+Le chart lance un seul agent (deux répondraient deux fois), le remplace en arrêtant l'ancien d'abord, le fait tourner sans droits (utilisateur 10001, disque en lecture seule), et n'expose que `/whatsapp` et `/api/messages`.
+
+## Les logiciels du client (entrée par API)
+
+Un logiciel du client (dossier médical, site) peut parler à l'agent sans WhatsApp : `POST https://<domaine>/api/messages`, avec une clé par logiciel (`docs/api.md`). Les clés se créent sur le serveur, dans la base du client ; MEGGA n'en voit aucune :
+
+```bash
+docker compose exec agent python -m noyau.cles creer dossier-patients
+docker compose exec agent python -m noyau.cles lister
+docker compose exec agent python -m noyau.cles retirer <id>
+```
+
+(Sous Kubernetes : `kubectl exec deploy/<agent> -- python -m noyau.cles …`.) La clé n'est montrée qu'une fois ; un nombre après le nom règle son débit par minute (30 par défaut). Un agent sans WhatsApp n'a pas de `whatsapp` dans `client.yaml` : il lui faut une image qui la connaît (celle qui suit la 0.2.0).
 
 ## Le webhook chez Meta
 

@@ -54,7 +54,7 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `GET /catalogue` | tous | métiers, outils, zones, modèles, réglages du client |
 | `GET /gabarits` | tous | les modèles par métier et leurs réglages |
 | `GET /clients` | tous | les clients et leur état (annuaire, conteneur) ; un client ne voit que le sien |
-| `POST /clients` | MEGGA | `{config}`, ou `{gabarit, client: {id, entreprise, zone, numero_id}, nom_agent}` : un nouveau client |
+| `POST /clients` | MEGGA | `{config}`, ou `{gabarit, client: {id, entreprise, zone, numero_id?}, nom_agent}` : un nouveau client (sans numéro : seulement par API) |
 | `GET /clients/{id}` | tous | le client, sa version en service et sa configuration |
 | `GET /clients/{id}/versions` | tous | l'historique |
 | `GET /clients/{id}/versions/{v}` | tous | une version |
@@ -66,8 +66,17 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `POST /clients/{id}/reprise` | MEGGA | `{gere_par_megga}` : reprendre ou rendre la main |
 | `POST /clients/{id}/jetons` | MEGGA | un jeton pour le client |
 | `DELETE /clients/{id}/jetons` | MEGGA | retire ses jetons |
+| `GET /clients/{id}/cles` | tous | les clés des logiciels du client (entrée par API), sans empreinte |
+| `POST /clients/{id}/cles` | tous | `{logiciel, par_minute?}` : une clé, montrée une fois |
+| `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
 
-Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+
+## L'entrée par API (lot 6.6)
+
+Un logiciel du client parle à son agent sans WhatsApp, à l'adresse `https://api.megga.ai/api/<client>/messages` (`docs/api.md`, pour le développeur). Les clés se créent ici pour un client servi par la porte : l'atelier tire la clé, la rend une seule fois, et n'en envoie que l'empreinte (SHA-256) au conteneur du client, par la porte. L'empreinte est gardée dans la base du client (`megga_cles_api`), jamais dans l'atelier : une clé se vérifie là où elle sert, se retire sans redémarrage, et suit le client s'il déménage. Hors Cloudflare, l'atelier refuse (`409`) : les clés se créent sur l'installation (`python -m noyau.cles`), rien n'entrant chez le client.
+
+Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `whatsapp`, et l'annuaire pas de numéro. Hors Cloudflare, une telle version n'est pas envoyée à une installation dont l'agent sert une image d'avant ce lot (nos tables en version 1, d'après son dernier relevé) : elle exigerait un numéro.
 
 ## Le suivi
 
@@ -75,9 +84,9 @@ Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l
 
 | Route | Rôle | Effet |
 |---|---|---|
-| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours, tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente ; **coûts pour MEGGA seulement** |
+| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours (dont `tours_api`, venus d'un logiciel), tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente, refus de débit par API (`api_debit` du journal) ; **coûts pour MEGGA seulement** |
 | `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
-| `GET /clients/{id}/conversations/{personne}` | tous | ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
+| `GET /clients/{id}/conversations/{personne}` | tous | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
 | `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
 | `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
 
@@ -125,6 +134,7 @@ Les versions sont les composants d'Agno 3.2 (`agno.db` : `create_component_with_
 - **Un numéro, un client** : `essai-megga` et `megga-estates` ont le même numéro ; la porte refusera d'activer le second tant que le premier le garde.
 - **Installations hors Cloudflare** : piloter une installation garde l'atelier éveillé (un relevé par minute ; environ 7,5 $ par mois pour le conteneur), et aussi le calcul Neon de sa base, qui ne passe plus en veille : environ 19 $ par mois de plus, et davantage s'il est partagé avec les bases des clients. À régler avant la première installation pilotée : une petite base Neon à part pour l'atelier, ou des relevés absorbés par la porte quand rien ne change. La zone suisse viendra avec Exoscale.
 - **Mises à jour de l'image (lot 6.4)** : aucune installation n'en accepte tant que `socle/cosign.pub` n'existe pas (`scripts/cle_signature.sh`, Julien), puis qu'une version n'est pas publiée avec elle. Sous Helm avec Argo CD ou Flux (sans lecture du cluster), les mises à jour par le pilote restent à éviter ; le droit de changer les deux Deployments couvre tout leur pod, à fermer chez le client par une ValidatingAdmissionPolicy (à écrire avec lui). La rotation des clés de pilotage et de signature (une image qui porte l'ancienne et la nouvelle le temps du passage) n'est pas traitée. La restauration d'une sauvegarde reste à la main.
+- **Entrée par API (lot 6.6)** : la migration `0003` de l'annuaire passe au déploiement ; la base de chaque client passe à la version 2 de nos tables à son réveil. Le débit d'une clé est tenu en mémoire du conteneur (remis à zéro au redémarrage). Avant le déploiement : la zone `megga.ai` doit être sur le compte Cloudflare de MEGGA (`docs/deploiement.md`). Restent : un domaine par client (Cloudflare for SaaS, une colonne domaine dans l'annuaire, la recherche par hôte), plus tard et seulement si un client le demande ; un appel vers le logiciel (webhook) pour les rappels, les vocaux, la réponse au fil de l'eau, et une limite à la porte avant le réveil d'un conteneur (Cloudflare Rate Limiting) si des clés mal formées ou devinées arrivaient en nombre.
 - **Inscription d'un client** : créer le compte (identifiant, entreprise, zone, numéro WhatsApp) reste à MEGGA ; le client règle ensuite son agent lui-même.
 - **Connexion des clients** : un jeton par client pour l'instant ; la vraie connexion (comptes, mots de passe) viendra avec l'interface.
 - **Essais** : la base d'essai est sur le disque du conteneur, effacée à chaque réveil ; un essai consomme des jetons de modèle comme une vraie conversation.

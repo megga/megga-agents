@@ -84,6 +84,18 @@ jobs:
           docker logs pilote 2>&1 | grep -q "rien ne sort"
           if docker run --rm -e MEGGA_SERVICE=pilote -e PILOTAGE=suivi -e CLIENT_CONFIG="$CONF" -e DATABASE_URL=sqlite:////tmp/p.db megga-agents:essai; then exit 1; fi
 
+  api:
+    # De bout en bout : l'entrée par API, la vraie porte devant un vrai agent, un faux Claude local.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: uv venv --python 3.12 && uv pip install -e .
+      - run: .venv/bin/python tests/api/essai_bout_en_bout.py
+
   pilotage:
     # De bout en bout : l'installation Compose du guide, son pilote, et un atelier d'essai à côté.
     runs-on: ubuntu-latest
@@ -115,6 +127,7 @@ jobs:
           helm lint installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml
           helm template essai installation/helm/megga-agent -f installation/helm/megga-agent/exemple-valeurs.yaml > /tmp/rendu.yaml
           grep -q "path: /whatsapp" /tmp/rendu.yaml
+          grep -q "path: /api/messages" /tmp/rendu.yaml
           V=installation/helm/megga-agent/exemple-valeurs.yaml
           # la configuration par --set-file, comme dans le guide
           helm template essai installation/helm/megga-agent -f $V --set-file config=clients/exemple.yaml | grep -q "entreprise: Entreprise exemple"
