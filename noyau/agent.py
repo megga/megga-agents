@@ -97,13 +97,18 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     outils = filtrer(list(outils or []), regles)
     gardien = gardien or Gardien()
     gardien.connaitre(outils, nom_role or "public")
+    fixes = consignes(config, role)
+    if config.transfert and nom_role != "gestionnaire":  # passer la main à l'équipe (noyau/reprises.py)
+        from .reprises import CONSIGNE as PASSER_LA_MAIN
+
+        fixes.append(PASSER_LA_MAIN)
     return Agent(
         id=f"{config.id}-{nom_role}" if nom_role else config.id,
         name=config.nom_agent,
         model=principal,
         fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
         db=db,
-        instructions=instructions_du_tour(consignes(config, role), contexte),
+        instructions=instructions_du_tour(fixes, contexte),
         add_history_to_context=True,
         num_history_runs=12,
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.

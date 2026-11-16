@@ -419,3 +419,30 @@ test("la porte ne transmet un document qu'à MEGGA, avec sa longueur, pas au-del
   assert.equal((await appel("exemple/connaissances", "PUT", "{}")).status, 405);
   assert.equal((await appel("exemple/connaissances", "POST", "{}", "admin", { "content-length": String(13 * 1024 * 1024) })).status, 413);
 });
+
+test("le transfert vers un humain (lot 9.3) : la porte transmet prendre, répondre, rendre ; bornée et réservée à MEGGA", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async (u, o = {}) => {
+      vus.push([new URL(u).pathname, o.body]);
+      return Response.json({ id: 4, etat: "prise" });
+    },
+  });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  assert.deepEqual(await agent.reprise("4", { action: "message", texte: "Bonjour" }), { statut: 200, donnees: { id: 4, etat: "prise" } });
+  assert.deepEqual(vus, [["/interne/reprises/4", '{"action":"message","texte":"Bonjour"}']]);
+  await assert.rejects(agent.reprise("../x", { action: "rendre" }), /conversation/);
+  await agent.suivre("/reprises", "?etat=ouverte");
+  assert.equal(vus.at(-1)[0], "/interne/suivi/reprises");
+  const journal = [];
+  const e = env(journal);
+  await put(e, "exemple", { version: 1, config: config() });
+  const post = (corps, jeton = "admin") =>
+    recevoir(new Request("https://porte/admin/clients/exemple/reprises/4", { method: "POST", body: JSON.stringify(corps), headers: { authorization: `Bearer ${jeton}` } }), e);
+  assert.equal((await post({ action: "voler" })).status, 400);
+  assert.equal((await post({ action: "message", texte: 3 })).status, 400);
+  assert.equal((await post({ action: "rendre" }, "faux")).status, 401);
+});

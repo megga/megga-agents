@@ -660,6 +660,32 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             if e.statut in (400, 404, 409):
                 raise Refus(e.statut, "décision refusée", {"texte": e.texte}) from e
             raise Refus(502 if e.statut else 504, f"décision non transmise : {raison(e)}", {"statut": e.statut}) from e
+    # Le transfert vers un humain (lot 9.3, noyau/reprises.py) : la console prend une conversation, répond du numéro de
+    # l'entreprise, puis la rend à l'agent. Comme les conversations, rien ne quitte une installation hors Cloudflare.
+
+    @r.get("/clients/{ident}/reprises")
+    async def reprises(ident: str, requete: Request, qui: Identite = Depends(identite)):
+        """Les conversations confiées à l'équipe ; `etat=ouverte` : celles que personne n'a encore prises."""
+        etat = requete.query_params.get("etat")
+        if etat is not None and etat not in ("ouverte", "prise", "rendue", "expiree"):
+            raise Refus(400, "etat : ouverte, prise, rendue, expiree")
+        await bd(suivable, qui, ident, True)
+        return await lire_suivi(ident, "/reprises", etat=etat, limite=limite_de(requete.query_params.get("limite")))
+
+    @r.post("/clients/{ident}/reprises/{numero}")
+    async def reprendre(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """{action: prendre | message | rendre, texte?} : la réponse part du numéro de l'entreprise."""
+        action, texte = corps.get("action"), corps.get("texte", "")
+        if action not in ("prendre", "message", "rendre") or not isinstance(texte, str) or (action == "message" and not texte.strip()):
+            raise Refus(400, "{action: prendre | message | rendre, texte (pour un message)}")
+        await bd(suivable, qui, ident, True)
+        try:
+            return await porte.reprise(ident, numero, {"action": action, "texte": texte})
+        except PorteErreur as e:
+            if e.statut in (400, 404, 409):
+                raise Refus(e.statut, "action refusée", {"texte": e.texte}) from e
+            raise Refus(502 if e.statut else 504, f"action non transmise : {raison(e)}", {"statut": e.statut}) from e
+
     # La base de connaissances (lot 9.2, noyau/connaissances.py) : les documents restent dans la base du client ; hors
     # Cloudflare, ils s'ajoutent sur son serveur (python -m noyau.connaissances), rien n'entrant chez lui.
 
