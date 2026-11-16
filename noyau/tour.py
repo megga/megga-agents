@@ -39,6 +39,7 @@ REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
 IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
+ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute pendant douze heures, tant que la personne n'a pas répondu
 
 
 def en_echec(sortie) -> bool:
@@ -91,6 +92,8 @@ class Conversations:
         self.fil_tenu = fil_tenu
         # Le dernier message de chaque personne, tel que le modèle l'a lu (une règle apprise doit en venir).
         self._entendus: dict[str, str] = {}
+        # L'heure du dernier modèle « message » envoyé à chaque personne : une annonce suffit tant qu'elle n'a pas répondu.
+        self._annonces: dict[str, float] = {}
         self._boites: dict[str, _Boite] = {}
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
@@ -452,9 +455,18 @@ class Conversations:
         modele = self.conf.modeles_meta.get("message")
         if modele is None:
             return False
+        # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.
+        deja = self._annonces.get(personne)
+        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
+        if deja and time.time() - deja < ANNONCE_VALIDE and (dernier is None or deja > dernier):
+            return True
         try:
             await self.exp.modele(personne, modele.nom, modele.langue, [self.conf.nom_agent])
             self._noter_fil(personne, "envoye", "modele", "un message attend")
+            self._annonces[personne] = time.time()
+            if len(self._annonces) > 5000:
+                for p in list(self._annonces)[:1000]:
+                    del self._annonces[p]
             return True
         except Exception as e:
             log.error("modèle « message » refusé (%s) : %s", self.conf.id, str(e)[:200])

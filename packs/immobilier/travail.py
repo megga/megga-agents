@@ -197,7 +197,8 @@ class Travail:
             r = await s.gestion.appel(compte, "GET", "/resume")
             moi = (r.get("moi") or {}).get("courtier")
             miennes = [a for a in r.get("annonces") or [] if not moi or a.get("courtier") == moi]
-            sans_photo = [a for a in miennes if not (len(a["photos"]) if isinstance(a.get("photos"), list) else a.get("photos"))]
+            # Seulement si la gestion dit les photos : un champ absent n'est pas une annonce sans photo.
+            sans_photo = [a for a in miennes if "photos" in a and not (len(a["photos"]) if isinstance(a["photos"], list) else a["photos"])]
             masquees = [a for a in miennes if a.get("masquee")]
             hors_ligne = [a for a in miennes if a.get("enLigne") is False and not a.get("masquee")]
             for titre, liste in (("Annonces sans photo", sans_photo), ("Annonces masquées", masquees), ("Annonces pas encore en ligne", hors_ligne)):

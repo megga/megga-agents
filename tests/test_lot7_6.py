@@ -170,7 +170,10 @@ def test_apprendre_une_regle(monde):
     assert "marbella" in t["apprendre_regle"].__doc__ and "principal" in t["apprendre_regle"].__doc__
 
 
-def test_le_point(monde):
+def test_le_point(monde, monkeypatch):
+    import test_lot7_4
+
+    monkeypatch.setattr(test_lot7_4, "ANNONCES", [{**test_lot7_4.ANNONCES[0], "photos": []}, *test_lot7_4.ANNONCES[1:]])
     monde.etats.ecrire(GREG, "demandes_site", [{"nom": "Anna", "email": "a@b.ch", "telephone": "", "langue": "fr", "bien": "« Villa », Cologny",
                                               "quand": time.time()}])
     monde.s.questions.poser(VISITEUR, GREG, "La villa est-elle libre ?", "", "fr", None, "Paul")
@@ -216,3 +219,48 @@ def test_la_configuration_du_travail(tmp_path):
     noms = {getattr(t, "__name__", "") for t in c.agents["gestionnaire"].tools}
     assert {"apprendre_regle", "oublier_regle", "regles", "point"} <= noms and isinstance(c.fil_tenu, TenueDuFil)
     assert callable(c.agent.instructions)  # le fil, même pour l'agent de tous
+
+
+# Corrections de la relecture
+
+
+def test_une_annonce_suffit_tant_que_la_personne_n_a_pas_repondu(tmp_path):
+    url = f"sqlite:///{tmp_path}/m.db"
+    conf = configuration.Config.model_validate({**CONF_WA.model_dump(mode="json"), "modeles_meta": {"message": {"nom": "fsp_message"}}})
+    exp, contacts = FauxExp(), stockage.Contacts(url)
+    c = Conversations(conf, FauxAgent(), exp, contacts=contacts, differes=stockage.Differes(url))
+    contacts.noter(GREG, time.time() - 30 * 3600)  # il n'a pas écrit depuis 30 heures
+    for i in range(3):
+        assert run(c.envoyer_de_soi_meme(GREG, [{"texte": f"demande {i}"}], "partenaire")) == "modele"
+    assert [e[0] for e in exp.envois] == ["modele"] and len(c.differes.prendre(GREG)) == 3
+    # Il a répondu depuis, puis la fenêtre s'est refermée : une nouvelle annonce part
+    contacts.noter(GREG, time.time() - 25 * 3600)
+    c._annonces[GREG] = time.time() - 26 * 3600
+    run(c.envoyer_de_soi_meme(GREG, [{"texte": "demande 4"}], "partenaire"))
+    assert [e[0] for e in exp.envois] == ["modele", "modele"]
+
+
+def test_le_point_sans_le_champ_des_photos(monde, monkeypatch):
+    import test_lot7_4
+
+    monkeypatch.setattr(test_lot7_4, "ANNONCES", [{**a, "photos": []} for a in test_lot7_4.ANNONCES])
+    assert "Annonces sans photo" in run(monde.t["point"](Tour(GREG, "g1")))  # le champ est là, vide : signalé
+    for a in test_lot7_4.ANNONCES:
+        a["photos"] = ["a.jpg"]
+    assert "Annonces sans photo" not in run(monde.t["point"](Tour(GREG, "g1")))
+    for a in test_lot7_4.ANNONCES:
+        del a["photos"]
+    assert "Annonces sans photo" not in run(monde.t["point"](Tour(GREG, "g1")))  # la gestion ne dit pas les photos : rien n'est signalé
+
+
+def test_le_dernier_message_est_retenu_pendant_le_tour(tmp_path):
+    vu = {}
+
+    class Agent(FauxAgent):
+        async def arun(self, texte, user_id=None, session_id=None):
+            vu["entendu"] = c.entendu(user_id)  # ce qu'un outil lit pendant le tour
+            return await super().arun(texte, user_id, session_id)
+
+    c = Conversations(CONF_WA, Agent(), FauxExp())
+    run(c._executer(GREG, "Pour Marbella, toujours la vidéo d'abord", "gestionnaire"))
+    assert vu["entendu"] == "Pour Marbella, toujours la vidéo d'abord" and c.entendu(VISITEUR) == ""
