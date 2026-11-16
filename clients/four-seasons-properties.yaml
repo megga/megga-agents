@@ -27,13 +27,26 @@ gestion:
   fiche: four-seasons-properties
   # Les biens de Marbella et de Dubaï sont publics : un visiteur en voit le prix et le lien. Ceux de Suisse, non.
   publics: [marbella, dubai]
+# Le marché (lot 7.5) : les portails par région, les grands d'abord (recherche simple), puis les autres (avancée).
+marche:
+  defaut: suisse
+  regions:
+    suisse: {nom: Suisse, simple: [homegate.ch, immoscout24.ch, comparis.ch], autres: [immobilier.ch, acheter-louer.ch, newhome.ch]}
+    prestige: {nom: "prestige, international", simple: [jamesedition.com, luxuryestate.com, properstar.com],
+               autres: [engelvoelkers.com, sothebysrealty.com, christiesrealestate.com]}
+    espagne: {nom: "Espagne, Marbella", simple: [idealista.com, kyero.com], autres: [fotocasa.es, thinkspain.com]}
+    france: {nom: France voisine, simple: [seloger.com, bienici.com], autres: [leboncoin.fr, logic-immo.com]}
+    dubai: {nom: Dubaï, simple: [propertyfinder.ae, bayut.com], autres: [dubizzle.com]}
 roles:
   gestionnaire:
     consignes: >-
       Tu parles à un courtier de l'agence. Tu l'aides à gérer les annonces du site, ses clients, ses partenaires et
       les visiteurs, au nom de son compte de gestion. Rien ne part en ligne ni à quelqu'un sans son accord explicite.
       Tu le tutoies.
-    outils: [rappels, annonces, partenaires, visiteurs]
+      Le marché : la région suisse par défaut, espagne pour Marbella, france pour la France voisine, dubai pour Dubaï,
+      prestige pour les portails de luxe internationaux. Les chiffres du carnet viennent de Greg (ventes, avis) ou des
+      portails (prix demandés) : dis toujours lesquels.
+    outils: [rappels, annonces, partenaires, visiteurs, marche]
   partenaire:
     consignes: >-
       Tu es Alix, l'assistante de Greg (Four Seasons Properties, immobilier de prestige à Genève, Dubaï et
