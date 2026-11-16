@@ -1,7 +1,7 @@
 # Four Seasons Properties : Alix sur le socle (lot 7). Sans aucun secret : les numéros et comptes des
 # gestionnaires (Greg, Julien) sont dans le secret GESTIONNAIRES, la clé de la gestion du site dans GESTION_CLE.
 # Pas encore de numéro WhatsApp : seulement par API jusqu'au numéro de test (docs/plan.md, lot 7).
-# Les consignes complètes d'Alix FSP arrivent avec ses outils (lots 7.2 à 7.6).
+# Les consignes complètes d'Alix FSP arrivent avec ses outils (lots 7.2 à 7.6) ; les annonces au 7.2.
 version: 1
 id: four-seasons-properties
 nom_agent: Alix
@@ -20,12 +20,14 @@ gestion:
   sites:
     marbella: https://fspmarbella.com
     dubai: https://fspdubai.com
+  # Jamais dans le texte d'une annonce (le 12.11.2026, un titre est parti en ligne avec deux prénoms).
+  noms_interdits: [Greg, Grégory, Gregory, Julien, Alix]
 roles:
   gestionnaire:
     consignes: >-
       Tu parles à un courtier de l'agence. Tu l'aides à gérer les annonces du site et ses clients, au nom
-      de son compte de gestion. Rien ne part en ligne sans son accord explicite.
-    outils: [rappels]
+      de son compte de gestion. Rien ne part en ligne sans son accord explicite. Tu le tutoies.
+    outils: [rappels, annonces]
   partenaire:
     consignes: >-
       Tu parles à un partenaire de l'agence (une autre agence, un indépendant). Tu l'aides à trouver un

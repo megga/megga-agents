@@ -1,0 +1,1085 @@
+"""Les outils d'annonces : gérer les biens du site d'une agence au nom du compte d'un gestionnaire.
+
+Repris d'Alix FSP (annonces.js, brouillon.js, photos.js, videos.js, acces.js, clients.js, recherche.js,
+carrousel.js, formulaire.js). Tout passe par la gestion du site (gestion.py), au nom du compte de la
+personne (secret GESTIONNAIRES). Ce qu'un outil garde d'un tour à l'autre (le brouillon, l'action à
+confirmer) est dans la base du client (stockage.Etats), pas en mémoire.
+
+Une action qui change le site sans retour possible (créer, masquer, supprimer, réécrire, verrouiller)
+se prépare d'abord, se montre, puis ne se fait qu'au message suivant, après un oui : l'outil qui confirme
+refuse s'il est appelé dans le même tour que celui qui a préparé.
+"""
+
+from __future__ import annotations
+
+import re
+import secrets
+import unicodedata
+from dataclasses import dataclass
+
+from agno.run import RunContext
+
+from . import garde
+from .gestion import Gestion, GestionErreur
+
+CATEGORIES = ("Villa", "Maison", "Maison individuelle", "Maison de ville", "Château", "Propriété de campagne", "Appartement",
+              "Appartement terrasse", "Duplex", "Studio", "Attique", "Duplex en attique", "Terrain", "Bureau")
+EQUIPEMENTS = ("air-conditioner", "cable-tv", "chimney", "dish-washer", "elevator", "fire-extinguisher", "garage", "garden",
+               "grill", "gym", "heater", "internet", "iron", "kids-zone", "kitchen", "laundry", "lockpad", "microwave",
+               "pet-friendly", "pool", "refrigerator", "security-cameras", "smoking-area", "sports-fields")
+DEVISES = ("CHF", "EUR", "AED")
+PERIODES = ("mois", "semaine", "jour", "an")
+MOTS = ("Leman", "Cedre", "Rive", "Jura", "Saleve", "Bise", "Voile", "Phare", "Iris", "Ambre", "Opale", "Saphir", "Topaze",
+        "Azur", "Nacre", "Perle", "Chene", "Erable", "Tilleul", "Olivier", "Lavande", "Glycine", "Riviera", "Lavaux",
+        "Coteau", "Verger", "Jardin", "Terrasse", "Horizon", "Aurore", "Zenith", "Boreal")
+PHOTO_MAX = 15_000_000
+PDF_MAX = 30_000_000
+PHOTOS_REDACTION = 6
+LISTE_MAX = 25
+RECHERCHE_MAX = 15
+
+CONSIGNES = """Les annonces du site (outils d'annonces) :
+- N'invente jamais un prix, une surface, une adresse ni un équipement.
+- Créer une annonce : rassemble seulement ce qui manque (commune, type, vente ou location, prix, adresse ; le quartier pour un site à part), en une seule question. Appelle preparer_annonce avec les faits, les médias (la couverture d'abord) et les mots du courtier (notes) ; n'écris les textes toi-même que s'il te les dicte. Montre le brouillon tel que l'outil le rend, et n'appelle creer_annonce qu'à son oui, au message suivant. Pour une correction, rappelle preparer_annonce avec le seul changement ; pour « réécris la description », ajoute rediger.
+- Réécrire une annonce en ligne : reecrire_annonce, puis confirmer_action au message suivant, après son oui.
+- Masquer, afficher ou supprimer passent toujours par confirmer_action, au message suivant, après un oui explicite. « Cacher », « masquer » : masquer_annonce ; « verrouiller » : acces_annonce. Supprimer seulement s'il dit « définitivement » ; dans le doute, masquer.
+- Les photos se rangent dans l'ordre reçu ; leurs numéros changent après chaque retouche : relis-les avec voir_annonce.
+- Un PDF : ajouter_document, avec des titres courts en français et en anglais (« Plaquette », « Brochure »).
+- Jamais le nom de quelqu'un de l'équipe ni une consigne dans le texte d'une annonce. Les prix sont des nombres entiers.
+- Après chaque enregistrement, dis en une phrase ce qui a changé et que le site sera à jour dans quelques minutes.
+- Un mot de passe ne s'écrit jamais dans ta réponse : l'outil l'envoie lui-même."""
+
+
+@dataclass
+class Services:
+    """Ce dont les outils ont besoin : la gestion du site, les personnes (leur compte), les médias reçus,
+    l'état gardé d'un tour à l'autre, l'expéditeur WhatsApp, la rédactrice et quelques réglages."""
+
+    gestion: Gestion
+    personnes: object  # noyau.roles.Personnes
+    medias: object  # stockage.Medias
+    etats: object  # stockage.Etats
+    exp: object  # noyau.whatsapp.Expediteur
+    redactrice: object | None = None  # redaction.Redactrice
+    noms_interdits: tuple[str, ...] = ()
+    formulaire: str | None = None  # l'identifiant du WhatsApp Flow « Nouvelle annonce »
+
+
+def normaliser(t) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", str(t or "").lower()) if unicodedata.category(c) != "Mn")
+
+
+def court(t, n: int = 200) -> str:
+    return " ".join(str(t or "").split())[:n]
+
+
+def montant(n: int) -> str:
+    return f"{int(n):,}".replace(",", "’")
+
+
+def texte_prix(prix: dict | None) -> str:
+    if not prix:
+        return "prix manquant"
+    if prix.get("sur_demande"):
+        return "prix sur demande"
+    periode = f" par {prix['periode']}" if prix.get("periode") else ""
+    return f"{prix.get('devise', 'CHF')} {montant(prix['montant'])}{periode}"
+
+
+def lire_prix(prix) -> dict | None:
+    """Un prix donné par le modèle : {montant, devise, periode?, sur_demande?}, vérifié."""
+    if prix is None:
+        return None
+    if not isinstance(prix, dict):
+        raise ValueError("prix : {montant, devise, periode?, sur_demande?}")
+    if prix.get("sur_demande"):
+        return {"sur_demande": True, **({"periode": prix["periode"]} if prix.get("periode") in PERIODES else {})}
+    m, d = prix.get("montant"), prix.get("devise") or "CHF"
+    if isinstance(m, bool) or not isinstance(m, int) or m <= 0 or d not in DEVISES:
+        raise ValueError("prix : un montant entier et une devise (CHF, EUR, AED), ou sur_demande")
+    sortie = {"montant": m, "devise": d}
+    if prix.get("periode"):
+        if prix["periode"] not in PERIODES:
+            raise ValueError("prix : période mois, semaine, jour ou an")
+        sortie["periode"] = prix["periode"]
+    return sortie
+
+
+def prix_site(prix: dict) -> dict:
+    if prix.get("sur_demande"):
+        return {"surDemande": True, **({"periode": prix["periode"]} if prix.get("periode") else {})}
+    return {k: v for k, v in prix.items() if k in ("montant", "devise", "periode")}
+
+
+def outils(s: Services) -> list:
+    """Les outils d'annonces, liés aux services du client."""
+
+    def qui(rc: RunContext) -> tuple[str, str]:
+        if not rc or not rc.user_id:
+            raise ValueError("personne inconnue")
+        compte = s.personnes.compte(rc.user_id)
+        if not compte:
+            raise ValueError("cette personne n'a pas de compte dans la gestion du site : ces outils ne sont pas pour elle")
+        return rc.user_id, compte
+
+    def tour(rc: RunContext) -> str:
+        return str(getattr(rc, "run_id", "") or "")
+
+    async def g(compte: str, methode: str, chemin: str, **options) -> dict:
+        try:
+            return await s.gestion.appel(compte, methode, chemin, **options)
+        except GestionErreur as e:
+            raise ValueError(f"la gestion du site refuse : {e.message}") from e
+
+    async def lire(compte: str, slug: str) -> dict:
+        if not re.fullmatch(r"[a-z0-9-]{1,120}", str(slug or "")):
+            raise ValueError("slug : l'identifiant d'une annonce (lettres minuscules, chiffres, tirets)")
+        return await g(compte, "GET", f"/annonces/{slug}")
+
+    def preparer(personne: str, rc: RunContext, action: dict) -> None:
+        s.etats.ecrire(personne, "a_confirmer", {**action, "tour": tour(rc)})
+
+    async def photos_des_medias(personne: str, numeros: list[int]) -> list[tuple[int, dict]]:
+        sortie = []
+        for n in numeros:
+            m = s.medias.lire(personne, int(n)) if isinstance(n, int) and not isinstance(n, bool) else None
+            if m is None:
+                raise ValueError(f"numéro de média inconnu : {n}")
+            if m["genre"] != "image":
+                raise ValueError("ces médias ne sont pas tous des photos")
+            sortie.append((int(n), m))
+        return sortie
+
+    def pdf_du_media(personne: str, n: int) -> dict:
+        m = s.medias.lire(personne, int(n)) if isinstance(n, int) and not isinstance(n, bool) else None
+        if m is None or m["genre"] != "document" or "pdf" not in (m["type"] + m["nom"]).lower():
+            raise ValueError(f"le média {n} n'est pas un PDF reçu")
+        return m
+
+    # Lire
+
+    async def lister_annonces(recherche: str, run_context: RunContext, site: str | None = None) -> str:
+        """Liste les annonces des sites de l'agence (celles de la personne d'abord), filtrées par des mots.
+
+        Args:
+            recherche: des mots à trouver dans l'identifiant, le titre, la commune, la référence ou l'adresse ; vide pour toutes.
+            site: facultatif, le site (le préfixe des identifiants de ses biens), ou « principal ».
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "GET", "/resume")
+        moi = (r.get("moi") or {}).get("courtier")
+        mots = normaliser(recherche)[:80].split()
+        trouvees = []
+        for a in r.get("annonces") or []:
+            foin = normaliser(" ".join(str(a.get(k) or "") for k in ("slug", "titre", "localite", "reference", "adresse")))
+            if not all(m in foin for m in mots):
+                continue
+            if site and (s.gestion.site_du_bien(a.get("slug", "")) != s.gestion.reglage.sites.get(site, s.gestion.reglage.url)):
+                continue
+            trouvees.append(a)
+        trouvees.sort(key=lambda a: a.get("courtier") != moi)
+        communes = ", ".join(c.get("slug", "") for c in (r.get("choix") or {}).get("communes") or [])
+        if not trouvees:
+            return f"Aucune annonce ne correspond. Communes du site : {communes}"
+        lignes = [f"{len(trouvees)} annonce(s){', les 25 premières' if len(trouvees) > LISTE_MAX else ''} (slug | titre | prix | photos) :"]
+        for a in trouvees[:LISTE_MAX]:
+            etat = " | masquée" if a.get("masquee") else (" | pas encore en ligne" if a.get("enLigne") is False else "")
+            docs = a.get("documents")
+            docs = len(docs) if isinstance(docs, list) else docs
+            photos = a.get("photos")
+            photos = len(photos) if isinstance(photos, list) else (photos or 0)
+            pdf = f", {docs} PDF" if docs else ""
+            lignes.append(f"{a.get('slug')} | {court(a.get('titre'), 80)}, {a.get('localite', '')} | {a.get('prix', '')} | "
+                          f"{photos} photo(s){pdf}{etat}{' | off-market' if a.get('offMarket') else ''}")
+        lignes.append(f"Communes du site : {communes}")
+        return "\n".join(lignes)
+
+    async def voir_annonce(slug: str, run_context: RunContext) -> str:
+        """Montre une annonce : textes en français et en anglais, prix, photos numérotées, documents, vidéos.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+        """
+        _, compte = qui(run_context)
+        a = (await lire(compte, slug)).get("annonce") or {}
+        en = a.get("en") or {}
+        photos = a.get("photos") or []
+        lignes = [
+            f"Slug : {a.get('slug')}", f"Titre : {a.get('titre', '')}", f"Titre (anglais) : {en.get('titre', '')}",
+            f"Commune : {a.get('localite', '')}, {a.get('adresse', '')}",
+            f"Type : {a.get('categorie', '')}, {'à louer' if a.get('transaction') == 'location' else 'à vendre'}",
+            f"Prix : {a.get('prix', '')}", f"Accroche : {a.get('accroche', '')}", f"Accroche (anglais) : {en.get('accroche', '')}",
+            "Description :", garde.texte(a.get("description")), "Description (anglais) :", garde.texte(en.get("description")),
+        ]
+        if photos:
+            lignes.append(f"Photos ({len(photos)}, la 1 en couverture) :")
+            lignes += [f"{i}. {court(p[1] if isinstance(p, list) and len(p) > 1 else '', 80)}" for i, p in enumerate(photos, 1)]
+        else:
+            lignes.append("Photos : aucune (pas encore en ligne)")
+        docs = [d[1] if isinstance(d, list) and len(d) > 1 else str(d) for d in a.get("documents") or []]
+        lignes.append(f"Documents : {', '.join(docs) or 'aucun'}")
+        videos = a.get("videos") or []
+        lignes.append("Vidéos : " + (", ".join(f"{i}. {v[1]}{' (lien)' if str(v[0]).startswith('https:') else ''}"
+                                              for i, v in enumerate(videos, 1)) or "aucune"))
+        if a.get("masquee"):
+            lignes.append("Masquée : oui")
+        return "\n".join(lignes)
+
+    # Modifier, créer
+
+    async def modifier_annonce(slug: str, run_context: RunContext, titre: str = "", titre_en: str = "", accroche: str = "",
+                               accroche_en: str = "", description: str = "", description_en: str = "", reference: str = "",
+                               prix: dict | None = None) -> str:
+        """Modifie les textes, la référence ou le prix d'une annonce en ligne (vide : inchangé).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            titre: le nouveau titre.
+            titre_en: le nouveau titre anglais.
+            accroche: la nouvelle accroche.
+            accroche_en: la nouvelle accroche anglaise.
+            description: la nouvelle description (« ## » pour un intertitre, « - » pour une liste).
+            description_en: la nouvelle description anglaise.
+            reference: la nouvelle référence (40 caractères au plus).
+            prix: {montant (entier), devise CHF|EUR|AED} ou {sur_demande: true}.
+        """
+        _, compte = qui(run_context)
+        textes = garde.nettoyer({"titre": titre, "titre_en": titre_en, "accroche": accroche, "accroche_en": accroche_en,
+                                 "description": description, "description_en": description_en})
+        champs: dict = {"en": {}}
+        for k in ("titre", "accroche"):
+            if textes[k].strip():
+                champs[k] = textes[k].strip()
+            if textes[f"{k}_en"].strip():
+                champs["en"][k] = textes[f"{k}_en"].strip()
+        if textes["description"].strip():
+            champs["description"] = garde.blocs(textes["description"])
+        if textes["description_en"].strip():
+            champs["en"]["description"] = garde.blocs(textes["description_en"])
+        if prix is not None:
+            champs["prix"] = prix_site(lire_prix(prix))
+        if reference.strip():
+            champs["reference"] = reference.strip()[:40]
+        if not champs["en"]:
+            del champs["en"]
+        if not champs:
+            raise ValueError("rien à modifier")
+        garde.verifier(textes, s.noms_interdits)
+        sha = (await lire(compte, slug)).get("sha")
+        r = await g(compte, "PUT", f"/annonces/{slug}", corps={"sha": sha, "champs": champs})
+        a = r.get("annonce") or {}
+        return f"Annonce enregistrée : {a.get('titre', slug)}, {a.get('prix', '')}. Le site sera à jour dans quelques minutes."
+
+    async def preparer_annonce(run_context: RunContext, commune: str = "", categorie: str = "", transaction: str = "",
+                               adresse: str = "", quartier: str = "", prix: dict | None = None, surface: int | None = None,
+                               terrain: int | None = None, pieces: int | None = None, chambres: int | None = None,
+                               sdb: int | None = None, parkings: int | None = None, equipements: list[str] | None = None,
+                               reference: str = "", medias: list[int] | None = None, pdf: int | None = None, notes: str = "",
+                               titre: str = "", titre_en: str = "", accroche: str = "", accroche_en: str = "",
+                               description: str = "", description_en: str = "", hors_suisse: bool = False,
+                               rediger: bool = False) -> str:
+        """Prépare le brouillon d'une nouvelle annonce, sans rien créer : à montrer, puis creer_annonce à son oui.
+
+        Args:
+            commune: la commune (celle du site, ou officielle).
+            categorie: Villa, Maison, Maison individuelle, Maison de ville, Château, Propriété de campagne, Appartement, Appartement terrasse, Duplex, Studio, Attique, Duplex en attique, Terrain ou Bureau.
+            transaction: vente ou location.
+            adresse: l'adresse affichée.
+            quartier: le quartier (exigé pour un bien d'un site à part).
+            prix: {montant (entier), devise CHF|EUR|AED, periode mois|semaine|jour|an} ou {sur_demande: true}.
+            surface: la surface habitable en m².
+            terrain: la surface du terrain en m².
+            pieces: le nombre de pièces.
+            chambres: le nombre de chambres.
+            sdb: le nombre de salles de bains.
+            parkings: le nombre de places de parc.
+            equipements: parmi air-conditioner, chimney, elevator, garage, garden, gym, pool, security-cameras et les autres équipements du site.
+            reference: la référence de l'annonce.
+            medias: les numéros des photos reçues, la couverture d'abord (40 au plus).
+            pdf: le numéro d'un PDF reçu (la plaquette).
+            notes: ce que le courtier a dit du bien, tel quel.
+            titre: seulement s'il le dicte.
+            titre_en: seulement s'il le dicte.
+            accroche: seulement s'il la dicte.
+            accroche_en: seulement s'il la dicte.
+            description: seulement s'il la dicte.
+            description_en: seulement s'il la dicte.
+            hors_suisse: vrai pour une commune hors de Suisse, qu'il a confirmée.
+            rediger: vrai pour faire réécrire les textes qu'il ne dicte pas.
+        """
+        personne, _ = qui(run_context)
+        avant = (s.etats.lire(personne, "brouillon") or {}).get("champs") or {}
+        nouveaux = garde.nettoyer({k: v for k, v in {
+            "commune": commune, "categorie": categorie, "transaction": transaction, "adresse": adresse, "quartier": quartier,
+            "prix": lire_prix(prix), "surface": surface, "terrain": terrain, "pieces": pieces, "chambres": chambres, "sdb": sdb,
+            "parkings": parkings, "equipements": equipements, "reference": reference, "medias": medias, "pdf": pdf,
+            "notes": notes, "titre": titre, "titre_en": titre_en, "accroche": accroche, "accroche_en": accroche_en,
+            "description": description, "description_en": description_en, "hors_suisse": hors_suisse or None,
+        }.items() if v not in (None, "", [])})
+        champs = {**avant, **nouveaux}
+        if rediger:
+            for k in garde.CHAMPS:
+                if k not in nouveaux:
+                    champs.pop(k, None)
+        if champs.get("categorie") and champs["categorie"] not in CATEGORIES:
+            raise ValueError(f"categorie : une de {', '.join(CATEGORIES)}")
+        if champs.get("transaction") and champs["transaction"] not in ("vente", "location"):
+            raise ValueError("transaction : vente ou location")
+        if any(e not in EQUIPEMENTS for e in champs.get("equipements") or []):
+            raise ValueError(f"equipements : parmi {', '.join(EQUIPEMENTS)}")
+        photos = await photos_des_medias(personne, champs.get("medias") or [])
+        if champs.get("pdf"):
+            pdf_du_media(personne, champs["pdf"])
+        exiges = ["commune", "categorie", "transaction", "adresse", "prix"]
+        if champs.get("commune") and s.gestion.site_du_bien(f"{normaliser(champs['commune'])}-x") != s.gestion.reglage.url.rstrip("/"):
+            exiges.append("quartier")
+        manque = [k for k in exiges if not champs.get(k)]
+        if manque:
+            # Ce qui est déjà dit est gardé : au prochain appel, seulement ce qui manque.
+            s.etats.ecrire(personne, "brouillon", {"champs": champs, "tour": tour(run_context), "pret": False})
+            raise ValueError(f"il manque : {', '.join(manque)}. Demande-le en une question, sans l'inventer.")
+        if any(not champs.get(k) for k in garde.CHAMPS):
+            if s.redactrice is None:
+                raise ValueError("la rédaction n'est pas réglée : écris toi-même titre, accroche et description, en français et en anglais, d'après les mots du courtier, et rappelle preparer_annonce")
+            vues = []
+            for _, m in photos[:PHOTOS_REDACTION]:
+                try:
+                    vues.append(await s.exp.telecharger(m["media_id"], PHOTO_MAX))
+                except Exception:
+                    continue
+            faits = {k: champs.get(k) for k in ("commune", "quartier", "categorie", "transaction", "adresse", "surface", "terrain",
+                                                "pieces", "chambres", "sdb", "parkings", "equipements") if champs.get(k)}
+            try:
+                redige = garde.nettoyer(await s.redactrice.rediger(faits, champs.get("notes", ""), vues))
+            except Exception as e:
+                raise ValueError(f"la rédaction a échoué ({str(e)[:80]}) : écris toi-même les textes en français et en anglais d'après les mots du courtier, et rappelle preparer_annonce") from e
+            for k in garde.CHAMPS:
+                if not champs.get(k):
+                    champs[k] = redige[k]
+            champs.setdefault("adresse_en", redige.get("adresse_en") or champs["adresse"])
+        champs.setdefault("adresse_en", champs["adresse"].replace("Genève", "Geneva"))
+        garde.verifier(champs, s.noms_interdits)
+        s.etats.ecrire(personne, "brouillon", {"champs": champs, "tour": tour(run_context), "pret": True})
+        chiffres = ", ".join(x for x in (
+            f"{champs['surface']} m²" if champs.get("surface") else "", f"terrain {champs['terrain']} m²" if champs.get("terrain") else "",
+            f"{champs['chambres']} chambres" if champs.get("chambres") else "", f"{champs['pieces']} pièces" if champs.get("pieces") else "") if x)
+        return (
+            "Brouillon prêt, rien n'est encore créé. Montre-le tel quel :\n"
+            f"Titre : {champs['titre']}\nAccroche : {champs['accroche']}\nDescription : {court(champs['description'], 600)}\n"
+            f"{champs['categorie']}, {'à louer' if champs['transaction'] == 'location' else 'à vendre'}, {champs['adresse']}, "
+            f"{texte_prix(champs['prix'])}{', ' + chiffres if chiffres else ''}, {len(photos)} photo(s)"
+            f"{', la plaquette PDF en document' if champs.get('pdf') else ''}, avec sa version anglaise.\n"
+            "Demande son accord. creer_annonce seulement à son oui, au message suivant."
+        )
+
+    async def creer_annonce(run_context: RunContext) -> str:
+        """Crée l'annonce du brouillon préparé, à son oui (au message suivant celui du brouillon). Sans argument."""
+        personne, compte = qui(run_context)
+        b = s.etats.lire(personne, "brouillon")
+        if not b or not b.get("pret"):
+            raise ValueError("aucun brouillon complet : prépare-le d'abord avec preparer_annonce")
+        if b.get("tour") == tour(run_context):
+            raise ValueError("la personne n'a pas encore vu le brouillon : montre-le et attends son oui")
+        c = b["champs"]
+        photos = await photos_des_medias(personne, c.get("medias") or [])
+        pdf = pdf_du_media(personne, c["pdf"]) if c.get("pdf") else None
+        envoi = {k: c[k] for k in ("categorie", "transaction", "adresse", "quartier", "titre", "accroche", "surface", "terrain",
+                                   "pieces", "chambres", "sdb", "parkings", "reference") if c.get(k) not in (None, "")}
+        envoi.update(localite=c["commune"], description=garde.blocs(c["description"]), prix=prix_site(c["prix"]),
+                     equipements=c.get("equipements") or [],
+                     en={"adresse": c.get("adresse_en") or c["adresse"], "titre": c["titre_en"], "accroche": c["accroche_en"],
+                         "description": garde.blocs(c["description_en"])})
+        if c.get("hors_suisse"):
+            envoi["hors_suisse"] = True
+        r = await g(compte, "POST", "/annonces", corps={"champs": envoi})
+        slug = (r.get("annonce") or {}).get("slug") or r.get("slug")
+        s.etats.ecrire(personne, "brouillon", None)
+        s.etats.ecrire(personne, "derniere", slug)
+        suite = []
+        if pdf is not None:
+            try:
+                await ranger_pdf(compte, slug, pdf, "Plaquette", "Brochure")
+                suite.append("La plaquette PDF est rangée avec l'annonce.")
+            except Exception:
+                suite.append("La plaquette PDF n'a pas pu être rangée : propose ajouter_document.")
+        if not photos:
+            return f"Annonce créée, slug {slug}, sans photo. Elle sera en ligne dès sa première photo : demande les photos. " + " ".join(suite)
+        try:
+            total = await ranger_photos(compte, slug, photos)
+            return f"Annonce créée, slug {slug}, avec {total} photo(s) : elle sera en ligne dans quelques minutes. " + " ".join(suite)
+        except Exception:
+            return f"Annonce créée, slug {slug}, mais ses photos n'ont pas pu être rangées : propose ajouter_photos. " + " ".join(suite)
+
+    async def reecrire_annonce(slug: str, run_context: RunContext, notes: str = "") -> str:
+        """Propose une nouvelle rédaction d'une annonce en ligne (rien n'est changé avant confirmer_action, à son oui).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            notes: ce que le courtier veut voir changer ou mettre en avant.
+        """
+        personne, compte = qui(run_context)
+        if s.redactrice is None:
+            raise ValueError("la rédaction n'est pas réglée : propose modifier_annonce avec les textes qu'il dicte")
+        a = (await lire(compte, slug)).get("annonce") or {}
+        vues = []
+        for p in (a.get("photos") or [])[:PHOTOS_REDACTION]:
+            try:
+                vues.append(await s.gestion.octets(compte, f"/gestion/images/{p[0] if isinstance(p, list) else p}", PHOTO_MAX))
+            except Exception:
+                continue
+        faits = {"commune": a.get("localite"), "categorie": a.get("categorie"), "transaction": a.get("transaction"),
+                 "details": [f"{d.get('libelle')} : {d.get('valeur')}" for d in a.get("details") or [] if isinstance(d, dict)],
+                 "equipements": a.get("equipements") or []}
+        r = garde.nettoyer(await s.redactrice.rediger(faits, notes, vues))
+        garde.verifier(r, s.noms_interdits)
+        fr, en = garde.blocs(r["description"]), garde.blocs(r["description_en"])
+        if garde.forme(fr) != garde.forme(en):
+            raise ValueError("les descriptions française et anglaise n'ont pas la même forme : rappelle reecrire_annonce")
+        preparer(personne, run_context, {"action": "réécrire", "slug": slug, "reecrire": {
+            "titre": r["titre"], "accroche": r["accroche"], "description": fr,
+            "en": {"titre": r["titre_en"], "accroche": r["accroche_en"], "description": en}}})
+        return (f"Nouvelle rédaction proposée pour « {a.get('titre', slug)} », {a.get('localite', '')} ; rien n'est changé. Montre-la :\n"
+                f"Titre : {r['titre']}\nAccroche : {r['accroche']}\nDescription : {court(r['description'], 600)}\n"
+                "confirmer_action seulement à son oui, au message suivant.")
+
+    # Masquer, supprimer, confirmer
+
+    async def masquer_annonce(slug: str, masquer: bool, run_context: RunContext) -> str:
+        """Prépare de masquer (ou d'afficher de nouveau) une annonce ; confirmer_action à son oui, au message suivant.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            masquer: vrai pour la masquer, faux pour l'afficher de nouveau.
+        """
+        personne, compte = qui(run_context)
+        a = (await lire(compte, slug)).get("annonce") or {}
+        if bool(a.get("masquee")) == bool(masquer):
+            return f"« {a.get('titre', slug)} » est déjà {'masquée' if masquer else 'sur le site'}."
+        action = "masquer" if masquer else "afficher"
+        preparer(personne, run_context, {"action": action, "slug": slug})
+        effet = "elle ne sera plus visible sur le site" if masquer else "elle sera de nouveau visible sur le site"
+        return (f"À confirmer ({action}) : « {a.get('titre', slug)} », {a.get('localite', '')} ({a.get('prix', '')}) ; {effet}. "
+                "Demande un oui explicite ; n'appelle confirmer_action qu'au message suivant, après ce oui.")
+
+    async def supprimer_annonce(slug: str, run_context: RunContext) -> str:
+        """Prépare de supprimer définitivement une annonce (seulement s'il dit « définitivement ») ; confirmer_action à son oui.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+        """
+        personne, compte = qui(run_context)
+        a = (await lire(compte, slug)).get("annonce") or {}
+        preparer(personne, run_context, {"action": "supprimer", "slug": slug})
+        return (f"À confirmer (supprimer) : « {a.get('titre', slug)} », {a.get('localite', '')} ({a.get('prix', '')}) ; "
+                "elle sera retirée du site pour de bon, avec ses photos. Demande un oui explicite ; "
+                "n'appelle confirmer_action qu'au message suivant, après ce oui.")
+
+    async def confirmer_action(slug: str, run_context: RunContext) -> str:
+        """Fait l'action préparée (masquer, afficher, supprimer, réécrire, verrouiller, mot de passe), à son oui explicite,
+        au message suivant celui qui l'a préparée.
+
+        Args:
+            slug: l'identifiant de l'annonce de l'action préparée (ou « site », ou le préfixe d'un site, pour un mot de passe).
+        """
+        personne, compte = qui(run_context)
+        attente = s.etats.lire(personne, "a_confirmer")
+        if not attente or attente.get("slug") != slug:
+            raise ValueError("aucune action préparée pour celle-ci : prépare-la d'abord")
+        if attente.get("tour") == tour(run_context):
+            raise ValueError("la personne n'a pas encore répondu : montre ce qui va se faire et attends son oui")
+        s.etats.ecrire(personne, "a_confirmer", None)
+        action = attente["action"]
+        if attente.get("acces"):
+            return await faire_acces(personne, compte, slug, attente["acces"])
+        if action == "réécrire":
+            sha = (await lire(compte, slug)).get("sha")
+            r = await g(compte, "PUT", f"/annonces/{slug}", corps={"sha": sha, "champs": attente["reecrire"]})
+            return f"Nouvelle rédaction enregistrée : « {(r.get('annonce') or {}).get('titre', slug)} ». Le site sera à jour dans quelques minutes."
+        if action == "supprimer":
+            r = await g(compte, "DELETE", f"/annonces/{slug}")
+            return f"Annonce « {r.get('titre', slug)} » supprimée. Le site sera à jour dans quelques minutes."
+        r = await g(compte, "PUT", f"/annonces/{slug}/visibilite", corps={"masquee": action == "masquer"})
+        titre = (r.get("annonce") or {}).get("titre", slug)
+        if action == "masquer":
+            return f"« {titre} » est masquée : elle disparaît du site dans quelques minutes."
+        return f"« {titre} » est de nouveau sur le site, dans quelques minutes."
+
+    # Photos et documents
+
+    async def ranger_photos(compte: str, slug: str, photos: list[tuple[int, dict]]) -> int:
+        total = 0
+        for i in range(0, len(photos), 20):
+            fichiers = []
+            for n, m in photos[i:i + 20]:
+                octets = await s.exp.telecharger(m["media_id"], PHOTO_MAX)
+                fichiers.append(("fichier", (f"media-{n}", octets, m["type"] or "image/jpeg")))
+            total = (await g(compte, "POST", f"/annonces/{slug}/photos", fichiers=fichiers)).get("photos", total)
+        return total
+
+    async def ranger_pdf(compte: str, slug: str, m: dict, titre: str, titre_en: str) -> dict:
+        octets = await s.exp.telecharger(m["media_id"], PDF_MAX)
+        return await g(compte, "POST", f"/annonces/{slug}/documents", brut=(octets, "application/pdf"),
+                       params={"titre": titre[:120], "titre_en": titre_en[:120], "nom": m["nom"] or "document.pdf"})
+
+    async def ajouter_photos(slug: str, medias: list[int], run_context: RunContext) -> str:
+        """Ajoute à une annonce des photos reçues dans la conversation.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            medias: les numéros des photos reçues (1 à 20).
+        """
+        personne, compte = qui(run_context)
+        if not 1 <= len(medias or []) <= 20:
+            raise ValueError("medias : de 1 à 20 numéros de photos reçues")
+        await lire(compte, slug)
+        total = await ranger_photos(compte, slug, await photos_des_medias(personne, medias))
+        return f"{len(medias)} photo(s) ajoutée(s) ; l'annonce en a {total} et sera en ligne dans quelques minutes."
+
+    async def ajouter_document(slug: str, media: int, titre: str, titre_en: str, run_context: RunContext) -> str:
+        """Range un PDF reçu (plaquette, plans) avec une annonce, sur sa fiche.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            media: le numéro du PDF reçu.
+            titre: un titre court en français (« Plaquette », « Plans »).
+            titre_en: le même en anglais (« Brochure », « Floor plans »).
+        """
+        personne, compte = qui(run_context)
+        r = await ranger_pdf(compte, slug, pdf_du_media(personne, media), titre, titre_en)
+        return f"PDF « {titre} » ajouté à la fiche ({r.get('documents', 1)} document(s)). Visible sur le site dans quelques minutes."
+
+    async def photos_annonce(compte: str, slug: str) -> list[str]:
+        a = (await lire(compte, slug)).get("annonce") or {}
+        return [p[0] if isinstance(p, list) else str(p) for p in a.get("photos") or []]
+
+    def numeros_valides(numeros: list[int], n: int) -> None:
+        for x in numeros:
+            if isinstance(x, bool) or not isinstance(x, int) or not 1 <= x <= n:
+                raise ValueError(f"il n'y a pas de photo {x} : l'annonce en a {n}")
+        if len(set(numeros)) != len(numeros):
+            raise ValueError("un numéro de photo en double")
+
+    async def ecrire_photos(compte: str, slug: str, avant: list[str], apres: list[str], phrase: str) -> str:
+        await g(compte, "PUT", f"/annonces/{slug}/photos", corps={"avant": avant, "photos": apres})
+        return f"{phrase} Le site sera à jour dans quelques minutes. Les numéros ont changé : relis-les avec voir_annonce avant de les citer."
+
+    async def couverture_photo(slug: str, numero: int, run_context: RunContext) -> str:
+        """Met une photo de l'annonce en couverture.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            numero: le numéro de la photo (voir_annonce).
+        """
+        _, compte = qui(run_context)
+        avant = await photos_annonce(compte, slug)
+        numeros_valides([numero], len(avant))
+        if numero == 1:
+            return "C'est déjà la couverture."
+        apres = [avant[numero - 1]] + [p for i, p in enumerate(avant, 1) if i != numero]
+        return await ecrire_photos(compte, slug, avant, apres, f"La photo {numero} est maintenant la couverture.")
+
+    async def ordonner_photos(slug: str, ordre: list[int], run_context: RunContext) -> str:
+        """Remet les photos d'une annonce dans un nouvel ordre (tous les numéros, la couverture d'abord).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            ordre: tous les numéros des photos, dans le nouvel ordre.
+        """
+        _, compte = qui(run_context)
+        avant = await photos_annonce(compte, slug)
+        numeros_valides(ordre, len(avant))
+        if len(ordre) != len(avant):
+            raise ValueError(f"donne l'ordre des {len(avant)} photos, chacune une fois")
+        return await ecrire_photos(compte, slug, avant, [avant[i - 1] for i in ordre], "Les photos sont dans le nouvel ordre.")
+
+    async def retirer_photos(slug: str, numeros: list[int], run_context: RunContext) -> str:
+        """Retire des photos d'une annonce.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            numeros: les numéros des photos à retirer.
+        """
+        _, compte = qui(run_context)
+        avant = await photos_annonce(compte, slug)
+        numeros_valides(numeros, len(avant))
+        if len(numeros) >= len(avant):
+            raise ValueError("une annonce garde au moins une photo : pour la retirer du site, masquer_annonce ou supprimer_annonce")
+        apres = [p for i, p in enumerate(avant, 1) if i not in numeros]
+        phrase = f"Photo(s) {', '.join(map(str, sorted(numeros)))} retirée(s), il en reste {len(apres)}."
+        if 1 in numeros:
+            phrase += " La suivante devient la couverture."
+        return await ecrire_photos(compte, slug, avant, apres, phrase)
+
+    # Accès et mots de passe : jamais un mot de passe dans ce que lit le modèle
+
+    def mot_de_passe_valide(mdp: str | None) -> str | None:
+        if mdp is None or mdp == "":
+            return None
+        if not 6 <= len(mdp) <= 64 or mdp != mdp.strip():
+            raise ValueError("mot de passe : de 6 à 64 caractères, sans espace au début ni à la fin")
+        return mdp
+
+    def nouveau_mot_de_passe() -> str:
+        return f"{secrets.choice(MOTS)}-{secrets.randbelow(10000):04d}"
+
+    async def administrateur(compte: str) -> None:
+        if ((await g(compte, "GET", "/resume")).get("moi") or {}).get("role") != "admin":
+            raise ValueError("réservé à un administrateur de la gestion du site")
+
+    async def acces_annonce(slug: str, action: str, run_context: RunContext, mot_de_passe: str = "") -> str:
+        """Verrouille une annonce sous mot de passe, ou change son mot de passe ; confirmer_action à son oui.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            action: verrouiller, deverrouiller ou changer.
+            mot_de_passe: seulement s'il le dicte (sinon il est tiré au hasard, et jamais montré).
+        """
+        personne, compte = qui(run_context)
+        if action not in ("verrouiller", "deverrouiller", "changer"):
+            raise ValueError("action : verrouiller, deverrouiller ou changer")
+        a = (await lire(compte, slug)).get("annonce") or {}
+        acces = await g(compte, "GET", f"/annonces/{slug}/acces")
+        if action == "deverrouiller":
+            if not acces.get("prive"):
+                return f"« {a.get('titre', slug)} » n'est pas verrouillée."
+            raise ValueError("un bien sous mot de passe (mandat off-market) ne devient jamais public depuis WhatsApp : ça se fait dans la gestion du site")
+        if action == "verrouiller" and acces.get("prive") and acces.get("motDePasse"):
+            return f"« {a.get('titre', slug)} » est déjà verrouillée ; pour changer son mot de passe, action changer."
+        if action == "changer" and not acces.get("prive"):
+            return f"« {a.get('titre', slug)} » n'est pas verrouillée : propose plutôt de la verrouiller."
+        mdp = mot_de_passe_valide(mot_de_passe)
+        nom = "verrouiller" if action == "verrouiller" else "changer le mot de passe"
+        preparer(personne, run_context, {"action": nom, "slug": slug, "acces": {"cible": "annonce", "motDePasse": mdp}})
+        effet = "elle ne s'ouvrira plus qu'avec un mot de passe, que je t'enverrai" if action == "verrouiller" else "son mot de passe changera, et je t'enverrai le nouveau"
+        return (f"À confirmer ({nom}) : « {a.get('titre', slug)} », {a.get('localite', '')} ; {effet}. "
+                "Demande un oui explicite ; n'appelle confirmer_action qu'au message suivant, après ce oui.")
+
+    async def mot_de_passe_site(run_context: RunContext, mot_de_passe: str = "") -> str:
+        """Change le mot de passe du site principal (administrateur seulement) ; confirmer_action (slug « site ») à son oui.
+
+        Args:
+            mot_de_passe: seulement s'il le dicte (sinon tiré au hasard, jamais montré).
+        """
+        personne, compte = qui(run_context)
+        await administrateur(compte)
+        preparer(personne, run_context, {"action": "mot de passe du site", "slug": "site",
+                                         "acces": {"cible": "site", "motDePasse": mot_de_passe_valide(mot_de_passe)}})
+        return ("À confirmer (mot de passe du site) : le site principal demandera un nouveau mot de passe, que je t'enverrai. "
+                "Demande un oui explicite ; n'appelle confirmer_action (slug « site ») qu'au message suivant, après ce oui.")
+
+    async def porte_site(site: str, action: str, run_context: RunContext, mot_de_passe: str = "") -> str:
+        """Ferme, ouvre ou change le mot de passe d'un site à part de l'agence (administrateur seulement) ; confirmer_action à son oui.
+
+        Args:
+            site: le préfixe du site (celui des identifiants de ses biens).
+            action: fermer, ouvrir ou changer.
+            mot_de_passe: seulement s'il le dicte.
+        """
+        personne, compte = qui(run_context)
+        if site not in s.gestion.reglage.sites:
+            raise ValueError(f"site : un de {', '.join(s.gestion.reglage.sites) or 'aucun'}")
+        if action not in ("fermer", "ouvrir", "changer"):
+            raise ValueError("action : fermer, ouvrir ou changer")
+        await administrateur(compte)
+        mdp = None if action == "ouvrir" else mot_de_passe_valide(mot_de_passe)
+        preparer(personne, run_context, {"action": f"{action} le site {site}", "slug": site,
+                                         "acces": {"cible": "porte", "site": site, "action": action, "motDePasse": mdp}})
+        effet = {"fermer": "il demandera un mot de passe, que je t'enverrai", "ouvrir": "il s'ouvrira à tous, sans mot de passe",
+                 "changer": "son mot de passe changera, et je t'enverrai le nouveau"}[action]
+        hote = s.gestion.reglage.sites[site].removeprefix("https://")
+        return (f"À confirmer ({action}) : {hote} ; {effet}. Demande un oui explicite ; "
+                f"n'appelle confirmer_action (slug « {site} ») qu'au message suivant, après ce oui.")
+
+    async def envoyer_secret(personne: str, titre: str, mdp: str) -> None:
+        await s.exp.texte(personne, titre)
+        await s.exp.texte(personne, mdp)
+
+    async def faire_acces(personne: str, compte: str, slug: str, acces: dict) -> str:
+        mdp = acces.get("motDePasse")
+        if acces["cible"] == "porte":
+            site, action = acces["site"], acces["action"]
+            if action == "ouvrir":
+                corps = {"actif": False}
+            elif action == "changer":
+                corps = {"actif": True, "motDePasse": mdp or nouveau_mot_de_passe()}
+            else:
+                corps = {"actif": True, "motDePasse": mdp or "", "motDePasseSiAbsent": nouveau_mot_de_passe()}
+            r = await g(compte, "PUT", f"/acces/porte/{site}", corps=corps)
+            if action == "ouvrir":
+                return "Le site est ouvert à tous, dans quelques minutes."
+            await envoyer_secret(personne, f"Mot de passe de {s.gestion.reglage.sites[site].removeprefix('https://')} :",
+                                 r.get("motDePasse") or corps.get("motDePasse") or corps["motDePasseSiAbsent"])
+            return "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+        mdp = mdp or nouveau_mot_de_passe()
+        if acces["cible"] == "site":
+            await g(compte, "PUT", "/acces/site", corps={"motDePasse": mdp})
+            await envoyer_secret(personne, "Mot de passe du site :", mdp)
+            return "Mot de passe du site changé et envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+        r = await g(compte, "PUT", f"/annonces/{slug}/acces", corps={"prive": True, "motDePasse": mdp})
+        a = r.get("annonce") or {}
+        await envoyer_secret(personne, f"Mot de passe de « {a.get('titre', slug)} », {a.get('localite', '')} :", mdp)
+        return "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+
+    async def envoyer_mot_de_passe(slug: str, run_context: RunContext) -> str:
+        """Envoie dans la conversation le mot de passe d'une annonce verrouillée.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+        """
+        personne, compte = qui(run_context)
+        a = (await lire(compte, slug)).get("annonce") or {}
+        acces = await g(compte, "GET", f"/annonces/{slug}/acces")
+        if not acces.get("prive"):
+            return f"« {a.get('titre', slug)} » n'est pas verrouillée : son lien suffit."
+        if not acces.get("motDePasse"):
+            return f"« {a.get('titre', slug)} » n'a pas de mot de passe connu : propose acces_annonce (changer)."
+        await envoyer_secret(personne, f"Mot de passe de « {a.get('titre', slug)} », {a.get('localite', '')} :", acces["motDePasse"])
+        return "Mot de passe envoyé dans la conversation. Dis-le en une phrase, sans le répéter."
+
+    # Vidéos
+
+    async def ajouter_video(slug: str, lien: str, titre: str, titre_en: str, run_context: RunContext) -> str:
+        """Ajoute à une annonce une vidéo par son lien (YouTube, Vimeo, une adresse https).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            lien: l'adresse https de la vidéo.
+            titre: un titre court en français.
+            titre_en: le même en anglais.
+        """
+        _, compte = qui(run_context)
+        if not re.fullmatch(r"https://\S{4,500}", lien or ""):
+            raise ValueError("lien : une adresse https. Une vidéo reçue en fichier se range pour l'instant depuis la gestion du site.")
+        r = await g(compte, "POST", f"/annonces/{slug}/videos", corps={"lien": lien, "titre": titre[:120], "titre_en": titre_en[:120]})
+        return f"Vidéo « {titre} » ajoutée à l'annonce ({r.get('videos', 1)} vidéo(s)). Visible sur le site dans quelques minutes."
+
+    async def retirer_video(slug: str, numero: int, run_context: RunContext) -> str:
+        """Retire une vidéo d'une annonce.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            numero: le numéro de la vidéo (voir_annonce).
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "DELETE", f"/annonces/{slug}/videos", corps={"numero": numero})
+        return f"Vidéo {numero} retirée ; il en reste {r.get('videos', 0)}. Le site sera à jour dans quelques minutes."
+
+    async def envoyer_video(slug: str, run_context: RunContext, numero: int | None = None) -> str:
+        """Envoie dans la conversation une vidéo d'une annonce (ou les trois premières).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            numero: le numéro de la vidéo ; sans lui, les trois premières.
+        """
+        personne, compte = qui(run_context)
+        a = (await lire(compte, slug)).get("annonce") or {}
+        videos = a.get("videos") or []
+        choisies = [videos[numero - 1]] if numero and 1 <= numero <= len(videos) else videos[:3] if not numero else []
+        if not choisies:
+            return "Cette annonce n'a pas cette vidéo." if numero else "Cette annonce n'a pas de vidéo."
+        for ref, titre in ((v[0], v[1] if len(v) > 1 else "") for v in choisies):
+            legende = f"{a.get('titre', slug)}, {a.get('localite', '')} : {titre}"
+            if str(ref).startswith("https:"):
+                await s.exp.texte(personne, f"{legende}\n{ref}")
+            else:
+                await s.exp.document(personne, str(ref).rsplit("/", 1)[-1], lien=s.gestion.lien_signe("videos", str(ref)), legende=legende)
+        return f"{len(choisies)} vidéo(s) envoyée(s) dans la conversation. Dis-le en une phrase."
+
+    # Montrer, chercher
+
+    def montant_de(a: dict) -> tuple[int | None, str, str]:
+        if isinstance(a.get("montant"), int):
+            return a["montant"], a.get("devise") or "CHF", a.get("periode") or ""
+        p = str(a.get("prix") or "")
+        chiffres = re.sub(r"\D", "", p.split("/")[0])
+        devise = m.group(1) if (m := re.match(r"^(EUR|AED)", p.strip())) else "CHF"
+        periode = m.group(1) if (m := re.search(r"/\s*(mois|semaine|jour|an)", p)) else ""
+        return (int(chiffres) if chiffres else None), devise, periode
+
+    async def montrer_biens(slugs: list[str], introduction: str, run_context: RunContext) -> str:
+        """Montre plusieurs biens en carrousel (une carte par bien, avec sa photo et un bouton vers sa fiche).
+
+        Args:
+            slugs: les identifiants des biens (2 à 10).
+            introduction: une phrase d'introduction.
+        """
+        personne, compte = qui(run_context)
+        voulus = list(dict.fromkeys(slugs or []))[:10]
+        if len(voulus) < 2:
+            return "Un seul bien : présente-le simplement, sans carrousel."
+        r = await g(compte, "GET", "/resume")
+        par_slug = {a.get("slug"): a for a in r.get("annonces") or []}
+        cartes, ecartes = [], []
+        for sl in voulus:
+            a = par_slug.get(sl)
+            if not a or a.get("masquee") or a.get("enLigne") is False or not a.get("couverture"):
+                ecartes.append(sl)
+                continue
+            chiffres = ", ".join(x for x in (f"{a['chambres']} chambre(s)" if a.get("chambres") else "",
+                                             f"{a['surface']} m²" if a.get("surface") else "") if x)
+            cartes.append({"image": s.gestion.lien_signe("images", a["couverture"]),
+                           "texte": court(f"{court(a.get('titre'), 70)}\n{a.get('localite', '')}, {a.get('prix', '')}\n{chiffres}", 160),
+                           "bouton": "Voir la fiche", "url": f"{s.gestion.site_du_bien(sl)}/property/{sl}"})
+        if len(cartes) < 2:
+            return "Moins de deux biens montrables (en ligne, avec une photo) : présente-les simplement."
+        await s.exp.carrousel(personne, court(introduction, 1024), cartes)
+        suite = f" ; écartés (masqués, pas en ligne ou sans photo) : {', '.join(ecartes)}" if ecartes else ""
+        return f"{len(cartes)} carte(s) envoyée(s){suite}. Termine en une phrase au plus, sans répéter les biens."
+
+    async def chercher_biens(run_context: RunContext, transaction: str = "", budget_min: int = 0, budget_max: int = 0,
+                             devise: str = "CHF", chambres_min: int = 0, surface_min: int = 0, terrain_min: int = 0,
+                             communes: list[str] | None = None, categories: list[str] | None = None,
+                             equipements: list[str] | None = None, mots: str = "") -> str:
+        """Cherche parmi les biens de l'agence par critères (budget, chambres, surface, communes, type, équipements, mots).
+
+        Args:
+            transaction: vente ou location.
+            budget_min: le budget minimum.
+            budget_max: le budget maximum.
+            devise: CHF, EUR ou AED.
+            chambres_min: le nombre de chambres minimum.
+            surface_min: la surface habitable minimum en m².
+            terrain_min: la surface de terrain minimum en m².
+            communes: les communes voulues.
+            categories: les types de bien voulus.
+            equipements: les équipements exigés.
+            mots: des mots à trouver (référence, nom de rue…).
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "GET", "/resume")
+        cs = [normaliser(c) for c in communes or [] if c]
+        cats = [normaliser(c).rstrip("s") for c in categories or [] if c]
+        ms = [m for m in normaliser(mots).split() if len(m) >= 2]
+        trouves = []
+        for a in r.get("annonces") or []:
+            if a.get("masquee"):
+                continue
+            if transaction and a.get("transaction") != transaction:
+                continue
+            m, d, _ = montant_de(a)
+            if (budget_min or budget_max) and m is not None and (d != devise or (budget_min and m < budget_min) or (budget_max and m > budget_max)):
+                continue
+            if chambres_min > 0 and (a.get("chambres") or 0) < chambres_min:
+                continue
+            if surface_min > 0 and (a.get("surface") or 0) < surface_min:
+                continue
+            if terrain_min > 0 and (a.get("terrain") or 0) < terrain_min:
+                continue
+            loc = normaliser(a.get("localite"))
+            if cs and not any(c in loc or loc in c for c in cs):
+                continue
+            if cats and not any(c in normaliser(a.get("categorie")) for c in cats):
+                continue
+            if any(e not in (a.get("equipements") or []) for e in equipements or []):
+                continue
+            mots_bien = normaliser(" ".join(str(a.get(k) or "") for k in ("slug", "titre", "localite", "adresse", "reference"))).replace("-", " ").split()
+            if any(not any(w.startswith(x) for w in mots_bien) for x in ms):
+                continue
+            trouves.append((m is None, m or 0, a))
+        if not trouves:
+            return "Aucun bien ne correspond. Propose d'élargir un critère (budget, commune, chambres)."
+        trouves.sort(key=lambda t: (t[0], t[1]))
+        lignes = []
+        for _, _, a in trouves[:RECHERCHE_MAX]:
+            chiffres = ", ".join(x for x in (f"{a['chambres']} ch." if a.get("chambres") else "", f"{a['surface']} m²" if a.get("surface") else "",
+                                             f"terrain {a['terrain']} m²" if a.get("terrain") else "") if x)
+            etat = " | pas encore en ligne" if a.get("enLigne") is False else (" | off-market" if a.get("offMarket") else "")
+            lignes.append(f"{a.get('slug')} | {court(a.get('titre'), 70)}, {a.get('localite', '')} | {a.get('categorie', '')}, "
+                          f"{'à louer' if a.get('transaction') == 'location' else 'à vendre'} | {a.get('prix') or 'prix sur demande'} | {chiffres}{etat}")
+        return "\n".join(lignes)
+
+    async def formulaire_annonce(run_context: RunContext, introduction: str = "") -> str:
+        """Envoie le formulaire « Nouvelle annonce » de WhatsApp, à remplir au lieu de dicter.
+
+        Args:
+            introduction: une phrase pour l'accompagner.
+        """
+        personne, _ = qui(run_context)
+        if not s.formulaire:
+            return "Le formulaire n'est pas encore publié : demande les informations ici, en une question."
+        import time as _t
+
+        await s.exp.formulaire(personne, s.formulaire, introduction or "Remplis la nouvelle annonce ici :", "Remplir",
+                               f"annonce:{int(_t.time() * 1000)}", "ANNONCE")
+        return "Formulaire envoyé. Dis-le en une phrase ; à sa réponse, prépare le brouillon avec preparer_annonce."
+
+    async def message_client(slug: str, langue: str, run_context: RunContext) -> str:
+        """Envoie dans la conversation un message prêt à transférer à un client : titre, adresse, chiffres, prix, lien
+        (et le mot de passe d'un bien verrouillé).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            langue: fr ou en.
+        """
+        personne, compte = qui(run_context)
+        if langue not in ("fr", "en"):
+            raise ValueError("langue : fr ou en")
+        f = (await g(compte, "GET", f"/annonces/{slug}/fiche", params={"langue": langue})).get("fiche") or {}
+        acces = await g(compte, "GET", f"/annonces/{slug}/acces")
+        if acces.get("prive") and not acces.get("motDePasse"):
+            raise ValueError("ce bien est verrouillé sans mot de passe connu : propose acces_annonce (changer)")
+        sep = ": " if langue == "en" else " : "
+        lignes = [f.get("titre", ""), f.get("adresse", "")]
+        lignes += [f"{c.get('libelle')}{sep}{c.get('valeur')}" for c in f.get("chiffres") or [] if isinstance(c, dict)]
+        lignes += [f.get("prix", ""), f"{s.gestion.site_du_bien(slug)}{'/en' if langue == 'en' else ''}/property/{slug}"]
+        if acces.get("prive"):
+            lignes.append(f"{'Password' if langue == 'en' else 'Mot de passe'}{sep}{acces['motDePasse']}")
+        await s.exp.texte(personne, "\n".join(l for l in lignes if l))
+        return ("Message à transférer envoyé dans la conversation" + (", avec le mot de passe du bien" if acces.get("prive") else "")
+                + ". Dis-le en une phrase, sans répéter le message ni aucun mot de passe.")
+
+    # Les recherches des clients et les informations privées d'un bien (jamais pour un client, un partenaire, un visiteur)
+
+    def resume_criteres(c: dict) -> str:
+        parts = []
+        if c.get("transaction"):
+            parts.append("à louer" if c["transaction"] == "location" else "à acheter")
+        if c.get("types"):
+            parts.append(" ou ".join(c["types"]))
+        if c.get("communes"):
+            parts.append(", ".join(c["communes"]))
+        d, mn, mx = c.get("devise") or "CHF", c.get("budgetMin"), c.get("budgetMax")
+        per = f" / {c['periode']}" if c.get("periode") else ""
+        if mn and mx:
+            parts.append(f"{d} {montant(mn)} à {montant(mx)}{per}")
+        elif mx:
+            parts.append(f"jusqu'à {d} {montant(mx)}{per}")
+        elif mn:
+            parts.append(f"dès {d} {montant(mn)}{per}")
+        if c.get("chambres"):
+            parts.append(f"{c['chambres']} chambres au moins")
+        if c.get("surface"):
+            parts.append(f"{c['surface']} m² au moins")
+        return ", ".join(parts) or "sans critère"
+
+    async def recherche_client(run_context: RunContext, id: str = "", client: dict | None = None, transaction: str = "",
+                               communes: list[str] | None = None, types: list[str] | None = None, budget_min: int | None = None,
+                               budget_max: int | None = None, devise: str = "", periode: str = "", chambres_min: int | None = None,
+                               surface_min: int | None = None, notes: str = "") -> str:
+        """Enregistre (ou modifie) la recherche d'un client dans la gestion, et dit quels biens y correspondent.
+
+        Args:
+            id: l'identifiant d'une recherche existante, pour la modifier.
+            client: {nom, telephone, email} ; le nom est exigé pour une nouvelle recherche.
+            transaction: vente ou location.
+            communes: les communes voulues (20 au plus).
+            types: maison, appartement, terrain ou bureau.
+            budget_min: le budget minimum (0 l'efface).
+            budget_max: le budget maximum (0 l'efface).
+            devise: CHF, EUR ou AED.
+            periode: mois, semaine, jour ou an, pour une location.
+            chambres_min: le nombre de chambres minimum (0 l'efface).
+            surface_min: la surface minimum en m² (0 l'efface).
+            notes: ce que le client a dit d'autre.
+        """
+        _, compte = qui(run_context)
+        criteres = {k: v for k, v in {"transaction": transaction or None, "communes": (communes or [])[:20] or None,
+                                      "types": types or None, "budgetMin": budget_min, "budgetMax": budget_max,
+                                      "devise": devise or None, "periode": periode or None, "chambres": chambres_min,
+                                      "surface": surface_min}.items() if v is not None}
+        corps = {k: v for k, v in {"client": client, "criteres": criteres or None, "notes": notes or None}.items() if v}
+        if not id and not (client or {}).get("nom"):
+            raise ValueError("Il me faut au moins le nom du client.")
+        r = await g(compte, "PUT" if id else "POST", f"/clients/recherches/{id}" if id else "/clients/recherches", corps=corps)
+        rech = r.get("recherche") or {}
+        n = len(rech.get("biens") or [])
+        suite = f"{n} bien(s) correspondent : biens_pour_recherche pour les voir." if n else "Aucun bien ne correspond pour l'instant."
+        return (f"Recherche {'modifiée' if id else 'enregistrée'} dans la gestion (id {rech.get('id')}) : "
+                f"{(rech.get('client') or {}).get('nom', '')}, {resume_criteres(rech.get('criteres') or {})}. {suite}")
+
+    async def lister_recherches_clients(run_context: RunContext, client: str = "") -> str:
+        """Liste les recherches des clients enregistrées dans la gestion.
+
+        Args:
+            client: un nom (ou une partie) pour filtrer.
+        """
+        _, compte = qui(run_context)
+        rs = (await g(compte, "GET", "/clients")).get("recherches") or []
+        rs = [r for r in rs if normaliser(client) in normaliser((r.get("client") or {}).get("nom"))]
+        if not rs:
+            return "Aucune recherche de client."
+        return "\n".join(f"- {r.get('id')} : {(r.get('client') or {}).get('nom', '')} ({resume_criteres(r.get('criteres') or {})}), "
+                         f"{len(r.get('biens') or [])} bien(s)" for r in rs[:30])
+
+    async def biens_pour_recherche(id: str, run_context: RunContext) -> str:
+        """Les biens qui correspondent à la recherche d'un client.
+
+        Args:
+            id: l'identifiant de la recherche.
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "GET", f"/clients/recherches/{id}/biens")
+        biens = r.get("biens") or []
+        if not biens:
+            return "Aucun bien ne correspond pour l'instant."
+        return "\n".join(f"- {b.get('titre', '')}, {(b.get('quartier') + ', ') if b.get('quartier') else ''}{b.get('localite', '')}, "
+                         f"{b.get('prix', '')}{', ' + str(b['chambres']) + ' ch.' if b.get('chambres') else ''}"
+                         f"{', ' + str(b['surface']) + ' m²' if b.get('surface') else ''}{', off-market' if b.get('offMarket') else ''}"
+                         f" (slug {b.get('slug')})" for b in biens)
+
+    async def supprimer_recherche_client(id: str, run_context: RunContext) -> str:
+        """Supprime la recherche d'un client.
+
+        Args:
+            id: l'identifiant de la recherche.
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "DELETE", f"/clients/recherches/{id}")
+        return f"Recherche de {(r.get('client') or {}).get('nom', 'ce client')} supprimée."
+
+    async def lire_bien_prive(slug: str, run_context: RunContext) -> str:
+        """Les informations privées d'un bien : propriétaire, mandat, recherches de clients qui y correspondent.
+
+        Args:
+            slug: l'identifiant de l'annonce.
+        """
+        _, compte = qui(run_context)
+        r = await g(compte, "GET", f"/annonces/{slug}/prive")
+        p, pa = r.get("proprietaire") or {}, r.get("partage") or {}
+        proprio = ", ".join(str(p[k]) for k in ("nom", "telephone", "email", "adresse") if p.get(k)) or "inconnu"
+        mandat = "en direct" if pa.get("mode") != "partage" else f"partagé avec {', '.join(str(pa[k]) for k in ('agence', 'agent') if pa.get(k))}" + (f" ({pa['contact']})" if pa.get("contact") else "")
+        rech = ", ".join(f"{(x.get('client') or {}).get('nom', '')} ({x.get('id')})" for x in r.get("recherches") or []) or "aucune"
+        return (f"Propriétaire : {proprio}. Mandat : {mandat}. Recherches clients qui correspondent : {rech}. "
+                "Privé : jamais pour un client, un partenaire ou un visiteur.")
+
+    async def proprietaire_bien(slug: str, run_context: RunContext, nom: str = "", telephone: str = "", email: str = "",
+                                adresse_postale: str = "") -> str:
+        """Enregistre le propriétaire d'un bien (privé, dans la gestion).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            nom: son nom.
+            telephone: son téléphone.
+            email: son e-mail.
+            adresse_postale: son adresse postale.
+        """
+        _, compte = qui(run_context)
+        proprio = {k: v for k, v in {"nom": nom, "telephone": telephone, "email": email, "adresse": adresse_postale}.items() if v}
+        if not proprio:
+            raise ValueError("rien à enregistrer")
+        await g(compte, "PUT", f"/annonces/{slug}/prive", corps={"proprietaire": proprio})
+        return "Propriétaire enregistré dans la gestion (privé)."
+
+    async def partage_bien(slug: str, mode: str, run_context: RunContext, agence: str = "", agent: str = "", contact: str = "") -> str:
+        """Enregistre le mandat d'un bien : en direct, ou partagé avec une autre agence (privé, dans la gestion).
+
+        Args:
+            slug: l'identifiant de l'annonce.
+            mode: direct ou partage.
+            agence: l'agence partenaire.
+            agent: l'agent de cette agence.
+            contact: son téléphone ou son e-mail.
+        """
+        _, compte = qui(run_context)
+        if mode not in ("direct", "partage"):
+            raise ValueError("mode : direct ou partage")
+        partage = {"mode": mode, **{k: v for k, v in {"agence": agence, "agent": agent, "contact": contact}.items() if v}}
+        await g(compte, "PUT", f"/annonces/{slug}/prive", corps={"partage": partage})
+        return "Mandat enregistré dans la gestion (privé)."
+
+    return [lister_annonces, voir_annonce, modifier_annonce, preparer_annonce, creer_annonce, reecrire_annonce,
+            masquer_annonce, supprimer_annonce, confirmer_action, ajouter_photos, ajouter_document, couverture_photo,
+            ordonner_photos, retirer_photos, acces_annonce, mot_de_passe_site, porte_site, envoyer_mot_de_passe,
+            ajouter_video, retirer_video, envoyer_video, montrer_biens, chercher_biens, formulaire_annonce, message_client,
+            recherche_client, lister_recherches_clients, biens_pour_recherche, supprimer_recherche_client, lire_bien_prive,
+            proprietaire_bien, partage_bien]

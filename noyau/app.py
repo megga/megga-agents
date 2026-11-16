@@ -92,10 +92,17 @@ class Deja:
         return True
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None) -> list:
-    """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle."""
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None) -> list:
+    """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle.
+    `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés."""
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
     liste = outils_rappels(rappels, conf.fuseau) if "rappels" in groupes else []
+    if "annonces" in groupes:
+        if services is None:
+            raise RuntimeError("outils d'annonces sans gestion du site (Config.gestion et GESTION_CLE)")
+        from packs.immobilier.annonces import outils as outils_annonces
+
+        liste += outils_annonces(services)
     if "immobilier" in groupes:
         from packs.immobilier import Catalogue, outils as outils_immobilier
 
@@ -153,13 +160,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             log.error("configuration poussée refusée (%s) : l'agent sert son fichier", refus)
     cles = {k: env.get(k, "") for k in CLES}
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
-    if agent is None:
+    construire_agents = agent is None
+    if construire_agents:
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
-        base = stockage.base_agno(env["DATABASE_URL"])
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
-        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous.
-        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils), role=role, nom_role=nom)
-                            for nom, role in conf.les_roles().items()}
         reecrire = reecrire or _reecriture(conf, cles)
     if env.get("DATABASE_URL"):
         journal = journal or stockage.Journal(env["DATABASE_URL"])
@@ -176,11 +179,31 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             personnes = Personnes(conf, gestionnaires, stockage.Bloques(env["DATABASE_URL"]), stockage.Partenaires(env["DATABASE_URL"]))
     if personnes is None:
         personnes = Personnes(conf)
-    if conf.les_roles() and agents is None:
-        raise RuntimeError("des rôles sans agents")
     if expediteur is None:
         expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
                       if conf.whatsapp else SansWhatsApp())
+    # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
+    gestion = None
+    if conf.gestion is not None and env.get("GESTION_CLE"):
+        from packs.immobilier.gestion import Gestion
+
+        gestion = Gestion(conf.gestion, env["GESTION_CLE"])
+    if construire_agents:
+        base = stockage.base_agno(env["DATABASE_URL"])
+        services = None
+        if gestion is not None:
+            from packs.immobilier.annonces import Services
+            from packs.immobilier.redaction import Redactrice
+
+            services = Services(gestion, personnes, medias, stockage.Etats(env["DATABASE_URL"]), expediteur,
+                                Redactrice(cles["ANTHROPIC_API_KEY"], conf.entreprise) if cles.get("ANTHROPIC_API_KEY") else None,
+                                conf.gestion.noms_interdits, conf.gestion.formulaire_annonce)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
+        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous.
+        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services),
+                                            role=role, nom_role=nom) for nom, role in conf.les_roles().items()}
+    if conf.les_roles() and agents is None:
+        raise RuntimeError("des rôles sans agents")
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
@@ -251,12 +274,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     app.state.config = conf
     app.state.conversations = conversations
     app.state.personnes = personnes
-    # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
-    app.state.gestion = None
-    if conf.gestion is not None and env.get("GESTION_CLE"):
-        from packs.immobilier.gestion import Gestion
-
-        app.state.gestion = Gestion(conf.gestion, env["GESTION_CLE"])
+    app.state.gestion = gestion
     app.state.taches = conversations.taches
 
     @app.get("/sante")

@@ -30,18 +30,26 @@ class Gestion:
         self._transport = transport
         self._delai = delai
 
-    async def appel(self, compte: str, methode: str, chemin: str, corps=None, fichiers=None) -> dict:
-        """Un appel à la gestion au nom de ce compte ; une panne ou un refus devient une GestionErreur (statut 0 : sans réponse)."""
+    async def appel(self, compte: str, methode: str, chemin: str, corps=None, fichiers=None, params=None,
+                    brut: tuple[bytes, str] | None = None) -> dict:
+        """Un appel à la gestion au nom de ce compte ; une panne ou un refus devient une GestionErreur (statut 0 : sans réponse).
+
+        `fichiers` : un formulaire multipart ; `brut` : (octets, type) envoyés tels quels (un PDF)."""
         if not compte:
             raise GestionErreur(403, "aucun compte de gestion pour cette personne")
         if not chemin.startswith("/") or ".." in chemin:
             raise GestionErreur(400, "chemin de gestion")
         entetes = {"authorization": f"Bearer {self._cle}", "x-gestion-compte": compte}
+        options: dict = {"params": params}
+        if brut is not None:
+            options["content"], entetes["content-type"] = brut
+        elif fichiers is not None:
+            options["files"], options["data"] = fichiers, corps
+        elif corps is not None:
+            options["json"] = corps
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=self._delai) as c:
-                r = await c.request(methode, f"{self._url}/api/gestion{chemin}", headers=entetes,
-                                    json=corps if fichiers is None else None, data=corps if fichiers is not None else None,
-                                    files=fichiers)
+                r = await c.request(methode, f"{self._url}/api/gestion{chemin}", headers=entetes, **options)
         except httpx.HTTPError as e:
             raise GestionErreur(0, f"la gestion ne répond pas ({type(e).__name__})") from e
         try:
@@ -51,6 +59,30 @@ class Gestion:
         if r.status_code >= 400:
             raise GestionErreur(r.status_code, str((donnees or {}).get("erreur") or f"la gestion répond {r.status_code}")[:300])
         return donnees if isinstance(donnees, dict) else {"donnees": donnees}
+
+    async def octets(self, compte: str, chemin: str, maximum: int = 15_000_000) -> bytes:
+        """Un fichier du site lu sous la gestion (une photo : /gestion/images/<fichier>)."""
+        if not chemin.startswith("/gestion/") or ".." in chemin:
+            raise GestionErreur(400, "chemin de fichier")
+        try:
+            async with httpx.AsyncClient(transport=self._transport, timeout=self._delai) as c:
+                r = await c.get(f"{self._url}{chemin}", headers={"authorization": f"Bearer {self._cle}", "x-gestion-compte": compte})
+        except httpx.HTTPError as e:
+            raise GestionErreur(0, f"la gestion ne répond pas ({type(e).__name__})") from e
+        if r.status_code >= 400 or len(r.content) > maximum:
+            raise GestionErreur(r.status_code, "fichier absent ou trop lourd")
+        return r.content
+
+    def lien_signe(self, dossier: str, fichier: str, duree: int = 3600, maintenant: float | None = None) -> str:
+        """Un lien temporaire vers une photo ou une vidéo du site (que Meta va chercher lui-même), signé de la clé."""
+        import hashlib
+        import hmac
+        import time
+
+        prefixe = {"images": "photo", "videos": "video"}[dossier]
+        fin = int((time.time() if maintenant is None else maintenant) + duree)
+        signature = hmac.new(self._cle.encode(), f"{prefixe}:{fichier}:{fin}".encode(), hashlib.sha256).hexdigest()
+        return f"{self._url}/{dossier}/{fichier}?jeton={fin}.{signature}"
 
     def site_du_bien(self, identifiant: str) -> str:
         """L'adresse du site d'un bien : celui de son préfixe (« marbella-… ») s'il en a un, sinon le site principal."""

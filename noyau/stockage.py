@@ -226,6 +226,7 @@ def preparer(url: str) -> None:
     Bloques(url)
     Partenaires(url)
     Medias(url)
+    Etats(url)
     Ordres(url)
     JournalPilotage(url)
     Reglages(url)
@@ -565,6 +566,34 @@ class Medias:
         with self._e.connect() as c:
             lignes = list(c.execute(select(t).where(t.c.personne == personne).order_by(t.c.n.desc()).limit(limite)))
         return [dict(l._mapping) for l in reversed(lignes)]
+
+
+class Etats:
+    """Ce qu'un outil garde d'un tour à l'autre pour une personne (table megga_etats) : un brouillon, une action
+    à confirmer… En JSON, par clé ; survit au sommeil du conteneur."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_etats",
+            Column("personne", String(PERSONNE), primary_key=True),
+            Column("cle", String(40), primary_key=True),
+            Column("valeur", Text, nullable=False),
+            Column("quand", Float, nullable=False),
+        )
+
+    def lire(self, personne: str, cle: str) -> Any:
+        t = self._t
+        with self._e.connect() as c:
+            v = c.execute(select(t.c.valeur).where(t.c.personne == personne, t.c.cle == cle)).scalar()
+        return _de_json(v)
+
+    def ecrire(self, personne: str, cle: str, valeur: Any) -> None:
+        t = self._t
+        with self._e.begin() as c:
+            c.execute(delete(t).where(t.c.personne == personne, t.c.cle == cle))
+            if valeur is not None:
+                c.execute(insert(t).values(personne=personne, cle=cle, valeur=_json(valeur), quand=time.time()))
 
 
 class Journal:
