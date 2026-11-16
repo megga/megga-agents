@@ -41,8 +41,8 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 - **Garde-fous** (`garde.py`) : ni tiret long ni point médian ; jamais un nom de `gestion.noms_interdits` ni une consigne (« PDF », « brouillon ») dans un texte ; un titre ni trop court ni une liste de mots.
 - **Photos et documents** : `ajouter_photos`, `couverture_photo`, `ordonner_photos`, `retirer_photos`, `ajouter_document`, d'après les médias reçus (« média 3 ») et les numéros de `voir_annonce`.
 - **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
-- **Vidéos** : `ajouter_video` (par lien, à confirmer), `envoyer_video`, `retirer_video`.
-- **À confirmer aussi** (décidé par Julien, 16.11.2026) : `retirer_photos`, et `supprimer_recherche_client` (`confirmer_action` avec « recherche-<id> »). Rien de ce qui change le site public ou la gestion ne se fait d'un seul appel.
+- **Vidéos** : `ajouter_video` (par lien) et `retirer_video`, à confirmer ; `envoyer_video`.
+- **À confirmer aussi** (décidé par Julien, 16.11.2026) : `retirer_photos`, et `supprimer_recherche_client` (`confirmer_action` avec « recherche-<id> », le nom du client montré). Une seule action attend à la fois : une autre préparée dans le même tour est refusée. Le oui part avec la version de l'annonce que le courtier a vue : si elle a changé entre-temps, rien n'est écrasé. Restent d'un seul appel, parce qu'ils ajoutent sans rien retirer ni changer de texte public : ranger des photos ou un document reçus, changer la couverture ou l'ordre des photos, une recherche de client, le propriétaire et le partage d'un bien privé.
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
 - **Clients** : `recherche_client`, `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
 
