@@ -44,3 +44,22 @@ def test_avec_qui_alix_a_parle(monde):
     assert "envoyé : Bien sûr, quel est votre budget ?" in detail
     assert "Personne ne correspond" in run(o["activite"](Tour(GREG, "g4"), qui="Stella"))
     assert run(o["activite"](Tour(GREG, "g5"), qui="0031")).count(MARION) == 1
+
+
+def test_la_route_du_journal_pour_la_gestion(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from test_lot7_4 import CLE_SITE, Monde, serveur
+
+    m = Monde(f"sqlite:///{tmp_path}/fsp.db")
+    app, _, exp = serveur(tmp_path, relations=m.relations)
+    with TestClient(app) as t:
+        assert t.get("/site/journal").status_code == 401
+        assert t.get("/site/journal", headers={"authorization": "Bearer " + "x" * 40}).status_code == 401
+        r = t.get("/site/journal?jours=7", headers={"authorization": f"Bearer {CLE_SITE}"})
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+        j = r.json()
+        assert j["jours"] == 7 and j["periode"] == "ces 7 derniers jours" and isinstance(j["personnes"], list)
+    (tmp_path / "b").mkdir()
+    app2, *_ = serveur(tmp_path / "b", relations=m.relations, site=False)
+    assert TestClient(app2).get("/site/journal", headers={"authorization": f"Bearer {CLE_SITE}"}).status_code == 404
