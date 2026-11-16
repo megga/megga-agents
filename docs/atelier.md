@@ -67,7 +67,7 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `POST /clients/{id}/jetons` | MEGGA | un jeton pour le client |
 | `DELETE /clients/{id}/jetons` | MEGGA | retire ses jetons |
 | `GET /clients/{id}/cles` | tous | les clés des logiciels du client (entrée par API), sans empreinte |
-| `POST /clients/{id}/cles` | tous | `{logiciel, par_minute?}` : une clé, montrée une fois |
+| `POST /clients/{id}/cles` | tous | `{logiciel, par_minute?}` : une clé, montrée une fois ; le client : 5 clés en service et 30 par minute au plus, MEGGA jusqu'à 600 ; une fois l'agent en service |
 | `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
@@ -76,7 +76,9 @@ Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée 
 
 Un logiciel du client parle à son agent sans WhatsApp, à l'adresse `https://api.megga.ai/api/<client>/messages` (`docs/api.md`, pour le développeur). Les clés se créent ici pour un client servi par la porte : l'atelier tire la clé, la rend une seule fois, et n'en envoie que l'empreinte (SHA-256) au conteneur du client, par la porte. L'empreinte est gardée dans la base du client (`megga_cles_api`), jamais dans l'atelier : une clé se vérifie là où elle sert, se retire sans redémarrage, et suit le client s'il déménage. Hors Cloudflare, l'atelier refuse (`409`) : les clés se créent sur l'installation (`python -m noyau.cles`), rien n'entrant chez le client.
 
-Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `whatsapp`, et l'annuaire pas de numéro. Hors Cloudflare, une telle version n'est pas envoyée à une installation dont l'agent sert une image d'avant ce lot (nos tables en version 1, d'après son dernier relevé) : elle exigerait un numéro.
+Le débit d'une clé protège la facture des modèles : un client crée lui-même jusqu'à 5 clés en service, à 30 messages par minute au plus ; au-delà, MEGGA les règle (jusqu'à 600). Une clé se crée une fois une version de l'agent en service, sa base existant alors.
+
+Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `whatsapp`, et l'annuaire pas de numéro. Les rappels WhatsApp qui attendaient encore sont alors annulés (notés `rappel_echec`, « sans WhatsApp ») ; un rappel en échec pour une autre raison est retenté 5 minutes plus tard, plus en boucle. Hors Cloudflare, une telle version n'est pas envoyée à une installation dont l'agent sert une image d'avant ce lot (nos tables en version 1, d'après son dernier relevé) : elle exigerait un numéro.
 
 ## Le suivi
 

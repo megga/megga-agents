@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import os
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -296,14 +297,20 @@ class PorteAuxCles(FaussePorte):
     def __init__(self):
         super().__init__()
         self.cles_recues = []
+        self.gardees: dict[str, list] = {}
 
     async def cles(self, ident, methode="GET", chemin="", corps=None):
         self.cles_recues.append((ident, methode, chemin, corps))
+        liste = self.gardees.setdefault(ident, [])
         if methode == "POST":
+            liste.append({"id": corps["id"], "logiciel": corps["logiciel"], "par_minute": corps["par_minute"], "retiree": None})
             return {"id": corps["id"], "logiciel": corps["logiciel"], "par_minute": corps["par_minute"]}
         if methode == "DELETE":
+            for c in liste:
+                if c["id"] == chemin[1:]:
+                    c["retiree"] = 1.0
             return {"id": chemin[1:], "retiree": True}
-        return {"cles": []}
+        return {"cles": [dict(c) for c in liste]}
 
 
 @pytest.fixture
@@ -316,23 +323,30 @@ def atelier(tmp_path):
     return t
 
 
+def en_service(t, ident="exemple", **autres):
+    """Un client créé et mis en service : la base de son agent existe, ses clés peuvent s'y garder."""
+    nouveau_client(t, id=ident, **autres)
+    r = t.post(f"/atelier/clients/{ident}/versions/1/activer", headers=MEGGA, json={"forcer": True})
+    assert r.status_code == 200, r.text
+
+
 def test_l_atelier_cree_une_cle_montree_une_fois(atelier):
-    nouveau_client(atelier)
-    r = atelier.post("/atelier/clients/exemple/cles", headers=MEGGA, json={"logiciel": "dossier", "par_minute": 12})
+    en_service(atelier)
+    r = atelier.post("/atelier/clients/exemple/cles", headers=MEGGA, json={"logiciel": "dossier", "par_minute": 120})
     assert r.status_code == 201, r.text
     d = r.json()
-    assert api.CLE.fullmatch(d["cle"]) and (d["logiciel"], d["par_minute"]) == ("dossier", 12)
+    assert api.CLE.fullmatch(d["cle"]) and (d["logiciel"], d["par_minute"]) == ("dossier", 120)
     # Seule l'empreinte part au conteneur ; l'atelier ne garde rien de la clé
     (ident, methode, chemin, corps), = atelier.porte.cles_recues
     assert (ident, methode, corps["id"]) == ("exemple", "POST", d["id"])
     assert corps["empreinte"] == hashlib.sha256(d["cle"].encode()).hexdigest() and d["cle"] not in json.dumps(corps)
-    assert atelier.get("/atelier/clients/exemple/cles", headers=MEGGA).json() == {"client": "exemple", "cles": []}
+    assert [c["id"] for c in atelier.get("/atelier/clients/exemple/cles", headers=MEGGA).json()["cles"]] == [d["id"]]
     assert atelier.delete(f"/atelier/clients/exemple/cles/{d['id']}", headers=MEGGA).json() == {"client": "exemple", "id": d["id"], "retiree": True}
 
 
 def test_le_client_cree_ses_cles_et_seulement_les_siennes(atelier):
-    nouveau_client(atelier)
-    nouveau_client(atelier, id="voisin", whatsapp={"numero_id": "100000000000077"})
+    en_service(atelier)
+    en_service(atelier, "voisin", whatsapp={"numero_id": "100000000000077"})
     client = jeton_client(atelier)
     assert atelier.post("/atelier/clients/exemple/cles", headers=client, json={"logiciel": "site"}).json()["par_minute"] == api.PAR_MINUTE
     assert atelier.post("/atelier/clients/voisin/cles", headers=client, json={"logiciel": "site"}).status_code == 404
@@ -340,6 +354,29 @@ def test_le_client_cree_ses_cles_et_seulement_les_siennes(atelier):
     for mauvais in ({"logiciel": "Mon Site"}, {}, {"logiciel": "site", "par_minute": 601}, {"logiciel": "site", "par_minute": True}):
         assert atelier.post("/atelier/clients/exemple/cles", headers=client, json=mauvais).status_code == 400
     assert atelier.delete("/atelier/clients/exemple/cles/pas-une-cle", headers=client).status_code == 400
+
+
+def test_le_debit_et_le_nombre_de_cles_du_client_sont_bornes(atelier):
+    """Le débit protège la facture des modèles : au-delà du défaut, et au-delà de 5 clés, c'est MEGGA."""
+    en_service(atelier)
+    client = jeton_client(atelier)
+    r = atelier.post("/atelier/clients/exemple/cles", headers=client, json={"logiciel": "site", "par_minute": api.PAR_MINUTE + 1})
+    assert r.status_code == 403 and "MEGGA" in r.json()["erreur"]
+    ids = [atelier.post("/atelier/clients/exemple/cles", headers=client, json={"logiciel": "site"}).json()["id"]
+           for _ in range(api.CLES_CLIENT_MAX)]
+    r = atelier.post("/atelier/clients/exemple/cles", headers=client, json={"logiciel": "site"})
+    assert r.status_code == 409 and str(api.CLES_CLIENT_MAX) in r.json()["erreur"]
+    # Une clé retirée libère une place ; MEGGA n'a pas ces bornes
+    atelier.delete(f"/atelier/clients/exemple/cles/{ids[0]}", headers=client)
+    assert atelier.post("/atelier/clients/exemple/cles", headers=client, json={"logiciel": "site"}).status_code == 201
+    assert atelier.post("/atelier/clients/exemple/cles", headers=MEGGA, json={"logiciel": "site", "par_minute": 600}).status_code == 201
+
+
+def test_pas_de_cle_avant_la_mise_en_service(atelier):
+    nouveau_client(atelier)
+    r = atelier.post("/atelier/clients/exemple/cles", headers=MEGGA, json={"logiciel": "dossier"})
+    assert r.status_code == 409 and "en service" in r.json()["erreur"]
+    assert atelier.porte.cles_recues == []
 
 
 def test_hors_cloudflare_les_cles_se_creent_chez_le_client(atelier):
@@ -437,3 +474,110 @@ def test_les_cles_sous_postgres():
     assert not c.ajouter(ident, "dossier", empreinte, 5)
     assert c.par_empreinte(api.empreinte(cle)) == {"id": ident, "logiciel": "dossier", "par_minute": 5}
     assert c.retirer(ident) and c.par_empreinte(empreinte) is None
+
+
+# Seconde relecture
+
+
+class Lent(FauxAgent):
+    async def arun(self, texte, user_id=None, session_id=None):
+        self.appels.append((texte, user_id, session_id))
+        await asyncio.sleep(5)
+
+
+def test_un_tour_trop_long_rend_l_excuse_et_libere_la_personne(sqlite):
+    t, agent, _, app = agent_api(sqlite, agent=Lent())
+    app.state.conversations.delai_api = 0.05
+    _, entete = nouvelle_cle(sqlite)
+    r = t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "x"})
+    assert r.status_code == 503 and r.json()["erreur"] == "l'agent n'a pas pu répondre"
+    asyncio.run(attendre(app)())
+    assert stockage.Journal(sqlite).totaux(0)["tour_echec"]["nombre"] == 1
+    assert app.state.conversations._verrous == {}  # la personne n'est plus retenue
+
+
+def test_les_verrous_sont_oublies_apres_le_tour(sqlite):
+    t, _, _, app = agent_api(sqlite)
+    _, entete = nouvelle_cle(sqlite)
+    for i in range(5):
+        assert t.post("/api/messages", headers=entete, json={"personne": f"p{i}", "texte": "x"}).status_code == 200
+    assert app.state.conversations._verrous == {}
+
+
+def test_les_tours_d_une_personne_passent_l_un_apres_l_autre():
+    from noyau.tour import Conversations
+
+    conv = Conversations(configuration.lire(SANS_WHATSAPP), FauxAgent(), FauxExpediteur())
+    actifs, maximum = [], []
+
+    async def tour(i):
+        async with conv._a_son_tour("p1"):
+            actifs.append(i)
+            maximum.append(len(actifs))
+            await asyncio.sleep(0.01)
+            actifs.remove(i)
+
+    async def tout():
+        await asyncio.gather(*(tour(i) for i in range(4)))
+
+    asyncio.run(tout())
+    assert max(maximum) == 1 and conv._verrous == {}
+
+
+def test_le_debit_oublie_les_personnes_silencieuses():
+    d = Debit(maximum=2, fenetre=60)
+    for i in range(Debit.BALAYAGE - 1):
+        d.permis(f"p{i}", 0)
+    assert len(d._tours) == Debit.BALAYAGE - 1
+    d.permis("nouveau", 100)  # le millième tour balaie ceux sortis de la fenêtre
+    assert list(d._tours) == ["nouveau"]
+    d.rendre("nouveau")
+    assert d.libre("nouveau", 100) and not d._tours["nouveau"]
+
+
+def test_une_place_de_cle_est_rendue_si_le_tour_n_a_pas_lieu(sqlite):
+    t, agent, _, app = agent_api(sqlite)
+    _, entete = nouvelle_cle(sqlite, par_minute=1)
+    conv = app.state.conversations
+    origine = conv.repondre_api
+
+    async def deja_pris(personne, texte):  # une autre requête de la même personne a pris la dernière place
+        return None
+
+    conv.repondre_api = deja_pris
+    assert t.post("/api/messages", headers=entete, json={"personne": "p1", "texte": "x"}).status_code == 429
+    conv.repondre_api = origine
+    assert t.post("/api/messages", headers=entete, json={"personne": "p2", "texte": "x"}).status_code == 200
+
+
+def test_un_agent_sans_whatsapp_annule_les_rappels_d_avant(sqlite):
+    t, _, _, app = agent_api(sqlite, rappels=stockage.Rappels(sqlite))
+    rappels = stockage.Rappels(sqlite)
+    ident = rappels.ajouter("41790000000", 1.0, "appeler le notaire")
+    r = t.post("/interne/rappels", headers={"x-megga-interne": "interne"})
+    assert r.json()["echec"] == 1 and r.json()["prochain"] is None
+    assert rappels.lister("41790000000") == [] and rappels.en_attente() == 0
+    asyncio.run(attendre(app)())
+    assert stockage.Journal(sqlite).alertes(0)[0]["detail"] == "sans WhatsApp"
+    assert ident
+
+
+def test_un_rappel_en_echec_est_retente_dans_5_minutes(sqlite):
+    class EnPanne(FauxExpediteur):
+        async def texte(self, vers, texte):
+            raise RuntimeError("Meta injoignable")
+
+    agent = FauxAgent()
+    app = creer({"CLIENT_CONFIG": json.dumps(CONF), "DATABASE_URL": sqlite, "INTERNE_TOKEN": "interne"}, agent=agent,
+                expediteur=EnPanne(), rappels=stockage.Rappels(sqlite), contacts=stockage.Contacts(sqlite))
+    stockage.Contacts(sqlite).noter("41790000000", time.time())  # dans les 24 heures
+    stockage.Rappels(sqlite).ajouter("41790000000", 1.0, "appeler")
+    r = TestClient(app).post("/interne/rappels", headers={"x-megga-interne": "interne"}).json()
+    assert r["echec"] == 1 and r["prochain"] >= time.time() + 290
+
+
+def test_la_commande_ne_montre_pas_une_cle_non_enregistree(sqlite, monkeypatch):
+    monkeypatch.setattr(stockage.ClesApi, "ajouter", lambda *a, **k: False)
+    lignes = []
+    assert cles.principal(["creer", "dossier"], {"DATABASE_URL": sqlite}, lignes.append) == 1
+    assert lignes == ["La clé n'a pas pu être enregistrée : réessayez."]

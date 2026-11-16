@@ -29,8 +29,10 @@ LOGICIEL = re.compile(r"^[a-z0-9][a-z0-9-]{0,19}$")
 IDENTIFIANT = re.compile(r"^(?=.*[A-Za-z])[A-Za-z0-9._-]{1,40}$")
 TEXTE_MAX = 4000
 CORPS_MAX = 16 * 1024
-PAR_MINUTE = 30  # par défaut, pour une clé
-PAR_MINUTE_MAX = 600
+PAR_MINUTE = 30  # par défaut, pour une clé ; au plus ce débit pour une clé créée par le client lui-même
+PAR_MINUTE_MAX = 600  # le plus haut, réglé par MEGGA
+CLES_CLIENT_MAX = 5  # les clés en service qu'un client crée lui-même dans l'atelier
+DELAI_TOUR = 110.0  # secondes : au-delà, le tour est abandonné et le logiciel reçoit l'excuse (503)
 
 
 def nouvelle_cle() -> tuple[str, str, str]:
@@ -77,6 +79,9 @@ class DebitCles:
 
     def permis(self, cle: dict, maintenant: float | None = None) -> bool:
         return self._debit(cle).permis(cle["id"], maintenant)
+
+    def rendre(self, cle: dict) -> None:
+        self._debit(cle).rendre(cle["id"])
 
     def attente(self, cle: dict, maintenant: float | None = None) -> int:
         """Les secondes avant qu'un tour se libère (Retry-After)."""
