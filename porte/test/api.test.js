@@ -199,3 +199,38 @@ test("api.megga.ai : l'adresse publique ne sert que l'entrée par API", async ()
   assert.equal((await recevoir(new Request("https://megga-agents.essai.workers.dev/admin/clients/cabinet/cles", { headers: { authorization: "Bearer admin" } }), e)).status, 200);
   assert.equal((await message(e, "cabinet", { personne: "p1", texte: "x" }, CLE, {}, "megga-agents.essai.workers.dev")).status, 200);
 });
+
+// Lot 7.4 : le site d'un client (un bien entré en ligne, une demande d'information), transmis tel quel.
+const CLE_SITE = "s".repeat(40);
+const duSite = (e, id, route, corps, cle = CLE_SITE, methode = "POST") => {
+  const texte = JSON.stringify(corps);
+  return recevoir(
+    new Request(`https://porte/site/${id}/${route}`, {
+      method: methode,
+      body: methode === "POST" ? texte : undefined,
+      headers: { authorization: `Bearer ${cle}`, "content-type": "application/json", "content-length": String(new TextEncoder().encode(texte).length) },
+    }),
+    e,
+  );
+};
+
+test("le site d'un client : transmis tel quel, refusé sans réveiller le conteneur", async () => {
+  const journal = [];
+  const e = await env(journal, () => Response.json({ signale: "G8LR2DW8" }, { status: 202 }));
+  const r = await duSite(e, "cabinet", "bien", { reference: "G8LR2DW8" });
+  assert.equal(r.status, 202);
+  assert.deepEqual(await r.json(), { signale: "G8LR2DW8" });
+  assert.deepEqual(journal, [{ j: "eu", nom: "cabinet", chemin: "/site/bien", auth: `Bearer ${CLE_SITE}`, corps: JSON.stringify({ reference: "G8LR2DW8" }) }]);
+  assert.equal((await duSite(e, "cabinet", "demande", { nom: "Anna" })).status, 202);
+  journal.length = 0;
+  assert.equal((await duSite(e, "cabinet", "bien", {}, "court")).status, 401);
+  assert.equal((await duSite(e, "cabinet", "bien", {}, "")).status, 401);
+  assert.equal((await duSite(e, "cabinet", "bien", { x: "y".repeat(17 * 1024) })).status, 413);
+  assert.equal((await duSite(e, "inconnu", "bien", {})).status, 404);
+  assert.equal((await duSite(e, "cabinet", "bien", {}, CLE_SITE, "GET")).status, 405);
+  assert.equal((await duSite(e, "cabinet", "autre", {})).status, 404);
+  // Sur l'hôte de l'API, rien d'autre que /api/…
+  const hote = await recevoir(new Request("https://api.megga.ai/site/cabinet/bien", { method: "POST", body: "{}", headers: { authorization: `Bearer ${CLE_SITE}`, "content-length": "2" } }), e);
+  assert.equal(hote.status, 404);
+  assert.deepEqual(journal, []);
+});

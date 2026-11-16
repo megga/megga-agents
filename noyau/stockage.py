@@ -17,6 +17,8 @@ import datetime as dt
 import decimal
 import gzip
 import json
+import re
+import secrets
 import threading
 import time
 import uuid
@@ -457,16 +459,19 @@ class Bloques:
             Column("personne", String(PERSONNE), primary_key=True),
             Column("quand", Float, nullable=False),
             Column("par", String(PERSONNE), nullable=False, default=""),
+            Column("nom", String(120), nullable=False, default=""),
         )
 
-    def bloquer(self, personne: str, par: str = "", quand: float | None = None) -> bool:
-        """Faux s'il l'était déjà."""
-        try:
-            with self._e.begin() as c:
-                c.execute(insert(self._t).values(personne=personne, quand=quand or time.time(), par=par))
+    def bloquer(self, personne: str, par: str = "", quand: float | None = None, nom: str = "") -> bool:
+        """Faux s'il l'était déjà (son nom est alors mis à jour, s'il en est donné un)."""
+        t = self._t
+        with self._e.begin() as c:
+            if c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is not None:
+                if nom:
+                    c.execute(update(t).where(t.c.personne == personne).values(nom=nom[:120]))
+                return False
+            c.execute(insert(t).values(personne=personne, quand=quand or time.time(), par=par, nom=nom[:120]))
             return True
-        except IntegrityError:
-            return False
 
     def debloquer(self, personne: str) -> bool:
         with self._e.begin() as c:
@@ -478,13 +483,18 @@ class Bloques:
 
     def lister(self) -> list[dict]:
         with self._e.connect() as c:
-            return [dict(l._mapping) for l in c.execute(select(self._t).order_by(self._t.c.quand))]
+            return [dict(l._mapping) for l in c.execute(select(self._t).order_by(self._t.c.quand.desc()))]
+
+
+# Ce qui part d'office à un partenaire, sans demander au gestionnaire (packs/immobilier/reseau.py).
+REGLES_PARTENAIRE = ("partenaire", "normale", "lignes", "rien")
 
 
 class Partenaires:
     """Les partenaires inscrits par le client (table megga_partenaires) : une agence, un indépendant.
 
-    Lot 7.1 : l'inscription et la reconnaissance ; ce qu'un partenaire peut demander vient avec ses outils.
+    `famille` : le nom de famille, pour trier la liste ; `regle` : ce qui lui part d'office (REGLES_PARTENAIRE),
+    vide pour demander chaque fois au gestionnaire. Un partenaire retiré est effacé (ses demandes gardent son nom).
     """
 
     def __init__(self, url: str):
@@ -495,17 +505,22 @@ class Partenaires:
             Column("nom", String(120), nullable=False, default=""),
             Column("ajoute", Float, nullable=False),
             Column("par", String(PERSONNE), nullable=False, default=""),
+            Column("famille", String(60), nullable=False, default=""),
+            Column("agence", String(120), nullable=False, default=""),
+            Column("regle", String(12), nullable=False, default=""),
         )
 
-    def inscrire(self, personne: str, nom: str = "", par: str = "", quand: float | None = None) -> bool:
-        """Faux s'il l'était déjà (son nom est alors mis à jour)."""
+    def inscrire(self, personne: str, nom: str = "", par: str = "", quand: float | None = None, famille: str = "", agence: str = "") -> bool:
+        """Faux s'il l'était déjà (son nom, sa famille et son agence sont alors mis à jour)."""
         t = self._t
         with self._e.begin() as c:
             if c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is not None:
-                if nom:
-                    c.execute(update(t).where(t.c.personne == personne).values(nom=nom[:120]))
+                champs = {k: v for k, v in {"nom": nom[:120], "famille": famille[:60], "agence": agence[:120]}.items() if v}
+                if champs:
+                    c.execute(update(t).where(t.c.personne == personne).values(**champs))
                 return False
-            c.execute(insert(t).values(personne=personne, nom=nom[:120], ajoute=quand or time.time(), par=par))
+            c.execute(insert(t).values(personne=personne, nom=nom[:120], ajoute=quand or time.time(), par=par, famille=famille[:60],
+                                       agence=agence[:120], regle=""))
             return True
 
     def retirer(self, personne: str) -> bool:
@@ -516,9 +531,324 @@ class Partenaires:
         with self._e.connect() as c:
             return c.execute(select(self._t.c.personne).where(self._t.c.personne == personne)).first() is not None
 
-    def lister(self) -> list[dict]:
+    def lire(self, personne: str) -> dict | None:
         with self._e.connect() as c:
-            return [dict(l._mapping) for l in c.execute(select(self._t).order_by(self._t.c.ajoute))]
+            l = c.execute(select(self._t).where(self._t.c.personne == personne)).first()
+        return dict(l._mapping) if l else None
+
+    def regle(self, personne: str, regle: str) -> bool:
+        """La règle d'un partenaire (REGLES_PARTENAIRE), ou « » pour l'effacer ; faux s'il n'est pas inscrit."""
+        if regle and regle not in REGLES_PARTENAIRE:
+            raise ValueError(f"règle inconnue : {regle}")
+        with self._e.begin() as c:
+            return c.execute(update(self._t).where(self._t.c.personne == personne).values(regle=regle)).rowcount > 0
+
+    def lister(self) -> list[dict]:
+        """Par nom de famille (sinon par nom), puis par nom."""
+        with self._e.connect() as c:
+            lignes = [dict(l._mapping) for l in c.execute(select(self._t))]
+        return sorted(lignes, key=lambda p: ((p["famille"] or p["nom"]).lower(), p["nom"].lower()))
+
+
+GARDE_DEMANDE = 30 * 86400  # une demande de partenaire sert un mois, puis s'efface
+GARDE_QUESTION = 30 * 86400  # une question de visiteur aussi
+GARDE_DIFFERE = 30 * 86400  # un message gardé hors des 24 heures aussi (un média chez Meta vit 30 jours)
+GARDE_RECHERCHE = 90 * 86400  # une recherche gardée, trois mois après la dernière fois
+
+
+def _ident(n: int = 8) -> str:
+    return "".join(secrets.choice("abcdefghijkmnpqrstuvwxyz23456789") for _ in range(n))
+
+
+class Reseau:
+    """Les demandes des partenaires et les recherches de leurs clients (packs/immobilier/reseau.py).
+
+      megga_demandes      une recherche d'un partenaire, transmise à un gestionnaire (le nom du partenaire y est copié)
+      megga_propositions  les biens de cette demande (trois au plus) : la référence, ce que la vitrine en dit,
+                          le choix du gestionnaire et ce qu'il en est advenu
+      megga_recherches    les recherches gardées trois mois : un bien qui entre en ligne et y répond devient une demande
+
+    Jamais de prix ni d'adresse d'un bien : seulement ce que la vitrine en dit.
+    """
+
+    def __init__(self, url: str):
+        self._e, self._d = _table(
+            url,
+            "megga_demandes",
+            Column("id", String(16), primary_key=True),
+            Column("partenaire", String(PERSONNE), nullable=False, index=True),
+            Column("nom", String(200), nullable=False, default=""),
+            Column("gestionnaire", String(PERSONNE), nullable=False, index=True),
+            Column("recherche", String(400), nullable=False, default=""),
+            Column("suite", String(16), nullable=False, default=""),  # la recherche gardée d'où vient la demande
+            Column("depuis", Float, nullable=True),  # sa dernière fois
+            Column("cree", Float, nullable=False, index=True),
+            Column("statut", String(12), nullable=False, default="nouvelle"),
+        )
+        _, self._p = _table(
+            url,
+            "megga_propositions",
+            Column("demande", String(16), primary_key=True),
+            Column("rang", Integer, primary_key=True, autoincrement=False),
+            Column("reference", String(40), nullable=False),
+            Column("bien", Text, nullable=False, default="{}"),
+            Column("choix", String(12), nullable=True),
+            Column("etat", String(12), nullable=True),
+            Column("decide", Float, nullable=True),
+        )
+        _, self._r = _table(
+            url,
+            "megga_recherches",
+            Column("id", String(16), primary_key=True),
+            Column("partenaire", String(PERSONNE), nullable=False, index=True),
+            Column("criteres", Text, nullable=False),
+            Column("resume", String(400), nullable=False),
+            Column("cree", Float, nullable=False),
+            Column("derniere", Float, nullable=False),
+            Column("close", Float, nullable=True),
+        )
+
+    def creer(self, partenaire: str, nom: str, gestionnaire: str, recherche: str, biens: list[dict], suite: dict | None = None,
+              maintenant: float | None = None) -> str:
+        """Une demande et ses biens (trois au plus) ; efface celles de plus d'un mois. Rend son identifiant."""
+        maintenant = maintenant or time.time()
+        d, p = self._d, self._p
+        ident = _ident()
+        with self._e.begin() as c:
+            vieilles = select(d.c.id).where(d.c.cree < maintenant - GARDE_DEMANDE)
+            c.execute(delete(p).where(p.c.demande.in_(vieilles)))
+            c.execute(delete(d).where(d.c.cree < maintenant - GARDE_DEMANDE))
+            c.execute(insert(d).values(id=ident, partenaire=partenaire, nom=nom[:200], gestionnaire=gestionnaire, recherche=recherche[:400],
+                                       suite=(suite or {}).get("recherche", ""), depuis=(suite or {}).get("depuis"), cree=maintenant,
+                                       statut="nouvelle"))
+            for rang, b in enumerate((biens or [])[:3]):
+                c.execute(insert(p).values(demande=ident, rang=rang, reference=str(b.get("reference") or "")[:40], bien=_json(b)))
+        return ident
+
+    def lire(self, ident: str) -> dict | None:
+        """La demande et ses propositions, ou None."""
+        d, p = self._d, self._p
+        with self._e.connect() as c:
+            l = c.execute(select(d).where(d.c.id == str(ident))).first()
+            if l is None:
+                return None
+            props = [dict(x._mapping) for x in c.execute(select(p).where(p.c.demande == str(ident)).order_by(p.c.rang))]
+        for x in props:
+            x["bien"] = _de_json(x["bien"]) or {}
+        return {**dict(l._mapping), "propositions": props}
+
+    def marquer(self, ident: str, statut: str) -> None:
+        with self._e.begin() as c:
+            c.execute(update(self._d).where(self._d.c.id == str(ident)).values(statut=statut))
+
+    def reserver(self, ident: str, rang: int, choix: str) -> dict:
+        """Retient le choix d'une proposition s'il n'y en a pas déjà un : {ok: True}, ou {ok: False, choix, etat}.
+        En une écriture conditionnelle : deux choix simultanés ne passent pas tous les deux."""
+        p = self._p
+        with self._e.begin() as c:
+            n = c.execute(update(p).where(p.c.demande == str(ident), p.c.rang == int(rang), p.c.choix.is_(None))
+                          .values(choix=choix, etat="en cours", decide=time.time())).rowcount
+            if n:
+                return {"ok": True}
+            l = c.execute(select(p.c.choix, p.c.etat).where(p.c.demande == str(ident), p.c.rang == int(rang))).first()
+        return {"ok": False, "inconnue": l is None, **(dict(l._mapping) if l else {})}
+
+    def terminer(self, ident: str, rang: int, etat: str) -> None:
+        """Ce qu'il est advenu du choix ; « liberer » l'efface (un envoi qui a échoué se retente)."""
+        p = self._p
+        valeurs = {"choix": None, "etat": None, "decide": None} if etat == "liberer" else {"etat": etat}
+        with self._e.begin() as c:
+            c.execute(update(p).where(p.c.demande == str(ident), p.c.rang == int(rang)).values(**valeurs))
+
+    def _demandes(self, condition, limite: int) -> list[dict]:
+        d = self._d
+        with self._e.connect() as c:
+            ids = [x[0] for x in c.execute(select(d.c.id).where(condition).order_by(d.c.cree.desc()).limit(limite))]
+        return [x for x in (self.lire(i) for i in ids) if x]
+
+    def de_partenaire(self, partenaire: str, depuis: float) -> list[dict]:
+        """Ses demandes depuis cette date, les plus récentes d'abord (cinq au plus)."""
+        return self._demandes(and_(self._d.c.partenaire == partenaire, self._d.c.cree >= depuis), 5)
+
+    def en_attente(self, gestionnaire: str, depuis: float) -> list[dict]:
+        """Les demandes adressées à ce gestionnaire dont un bien attend encore un choix (dix au plus)."""
+        d, p = self._d, self._p
+        attend = select(p.c.demande).where(p.c.choix.is_(None))
+        return self._demandes(and_(d.c.gestionnaire == gestionnaire, d.c.cree >= depuis, d.c.id.in_(attend)), 10)
+
+    def deja_propose(self, partenaire: str, reference: str, depuis: float) -> bool:
+        d, p = self._d, self._p
+        norme = lambda r: re.sub(r"[^0-9A-Z]", "", str(r or "").upper())  # noqa: E731
+        with self._e.connect() as c:
+            refs = c.execute(select(p.c.reference).join(d, d.c.id == p.c.demande).where(d.c.partenaire == partenaire, d.c.cree >= depuis))
+            return any(norme(r[0]) == norme(reference) for r in refs)
+
+    def retenir(self, partenaire: str, criteres: dict, resume: str, maintenant: float | None = None) -> str:
+        """Garde la recherche du client d'un partenaire ; la même, refaite, est seulement rafraîchie."""
+        maintenant = maintenant or time.time()
+        r = self._r
+        with self._e.begin() as c:
+            deja = c.execute(select(r.c.id).where(r.c.partenaire == partenaire, r.c.resume == resume[:400], r.c.close.is_(None))).first()
+            if deja:
+                c.execute(update(r).where(r.c.id == deja[0]).values(derniere=maintenant, criteres=_json(criteres)))
+                return deja[0]
+            ident = f"r{_ident(7)}"
+            c.execute(insert(r).values(id=ident, partenaire=partenaire, criteres=_json(criteres), resume=resume[:400], cree=maintenant,
+                                       derniere=maintenant))
+            return ident
+
+    def recherches(self, partenaire: str | None = None, maintenant: float | None = None) -> list[dict]:
+        """Les recherches gardées en cours (ni closes, ni vieilles de plus de trois mois), les plus récentes d'abord."""
+        maintenant = maintenant or time.time()
+        r = self._r
+        condition = and_(r.c.close.is_(None), r.c.derniere >= maintenant - GARDE_RECHERCHE)
+        if partenaire:
+            condition = and_(condition, r.c.partenaire == partenaire)
+        with self._e.connect() as c:
+            lignes = [dict(l._mapping) for l in c.execute(select(r).where(condition).order_by(r.c.derniere.desc()))]
+        for x in lignes:
+            x["criteres"] = _de_json(x["criteres"]) or {}
+        return lignes
+
+    def clore(self, ident: str) -> dict | None:
+        """Clôt une recherche gardée ; rend la recherche, ou None."""
+        r = self._r
+        with self._e.begin() as c:
+            l = c.execute(select(r).where(r.c.id == str(ident), r.c.close.is_(None))).first()
+            if l is None:
+                return None
+            c.execute(update(r).where(r.c.id == str(ident)).values(close=time.time()))
+        return dict(l._mapping)
+
+    def oublier_partenaire(self, partenaire: str) -> None:
+        """Un partenaire retiré : ses recherches ne sont plus suivies."""
+        with self._e.begin() as c:
+            c.execute(update(self._r).where(self._r.c.partenaire == partenaire, self._r.c.close.is_(None)).values(close=time.time()))
+
+
+class Questions:
+    """Les questions d'un visiteur transmises à un gestionnaire (table megga_questions), et leur suivi :
+    sa réponse, relayée au visiteur ; ou, sans réponse à l'heure dite (`prevenir`), le visiteur prévenu une fois."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_questions",
+            Column("id", String(8), primary_key=True),
+            Column("visiteur", String(PERSONNE), nullable=False, index=True),
+            Column("gestionnaire", String(PERSONNE), nullable=False, index=True),
+            Column("nom", String(120), nullable=False, default=""),
+            Column("question", String(600), nullable=False),
+            Column("sujet", String(160), nullable=False, default=""),
+            Column("langue", String(8), nullable=False, default=""),
+            Column("cree", Float, nullable=False),
+            Column("prevenir", Float, nullable=True, index=True),  # l'heure du suivi, effacée une fois fait ou inutile
+            Column("reponse", Text, nullable=True),
+            Column("prise", Float, nullable=True),  # le gestionnaire s'en charge lui-même
+            Column("prevenu", Float, nullable=True),
+        )
+
+    def poser(self, visiteur: str, gestionnaire: str, question: str, sujet: str, langue: str, prevenir: float | None,
+              nom: str = "", maintenant: float | None = None) -> str:
+        t = self._t
+        maintenant = maintenant or time.time()
+        with self._e.begin() as c:  # les questions de plus d'un mois s'effacent : leurs identifiants courts se libèrent
+            c.execute(delete(t).where(t.c.cree < maintenant - GARDE_QUESTION))
+        for _ in range(8):
+            ident = "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(3))
+            try:
+                with self._e.begin() as c:
+                    c.execute(insert(t).values(id=ident, visiteur=visiteur, gestionnaire=gestionnaire, nom=nom[:120], question=question[:600],
+                                               sujet=sujet[:160], langue=langue[:8], cree=maintenant, prevenir=prevenir))
+                return ident
+            except IntegrityError:
+                continue
+        raise RuntimeError("question non rangée")
+
+    def lire(self, ident: str) -> dict | None:
+        with self._e.connect() as c:
+            l = c.execute(select(self._t).where(self._t.c.id == str(ident).upper())).first()
+        return dict(l._mapping) if l else None
+
+    def repondre(self, ident: str, reponse: str | None, prise: bool = False) -> None:
+        """La réponse du gestionnaire (ajoutée à la précédente, pour un complément), ou sa prise en charge : plus de suivi."""
+        t = self._t
+        q = self.lire(ident)
+        if q is None:
+            return
+        valeurs: dict = {"prevenir": None}
+        if prise:
+            valeurs["prise"] = time.time()
+        if reponse:
+            valeurs["reponse"] = f"{q['reponse']}\n{reponse}" if q["reponse"] else reponse
+        with self._e.begin() as c:
+            c.execute(update(t).where(t.c.id == q["id"]).values(**valeurs))
+
+    def du_visiteur(self, visiteur: str, depuis: float) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.visiteur == visiteur, t.c.cree >= depuis).order_by(t.c.cree))]
+
+    def du_gestionnaire(self, gestionnaire: str, depuis: float) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.gestionnaire == gestionnaire, t.c.cree >= depuis).order_by(t.c.cree))]
+
+    def a_prevenir(self, maintenant: float) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.prevenir.is_not(None), t.c.prevenir <= maintenant))]
+
+    def prevenu(self, ident: str, quand: float | None) -> None:
+        """Le suivi est fait (`quand`), ou abandonné (None) : il ne se refait pas."""
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.id == ident).values(prevenir=None, prevenu=quand))
+
+    def prochain(self) -> float | None:
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(func.min(t.c.prevenir)).where(t.c.prevenir.is_not(None))).scalar()
+
+
+class Differes:
+    """Les messages que l'agent envoie de lui-même et qui n'ont pas pu partir hors des 24 heures de WhatsApp
+    (table megga_differes) : ils partent au prochain message de la personne, avant sa réponse.
+    `contenu` : une liste de messages, {"texte": …} ou {"document": identifiant chez Meta, "nom": …, "legende": …}."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_differes",
+            Column("id", String(32), primary_key=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("contenu", Text, nullable=False),
+            Column("quand", Float, nullable=False),
+        )
+
+    def garder(self, personne: str, contenu: list[dict], quand: float | None = None) -> str:
+        """`quand` : l'heure où il a été gardé la première fois (un message remis en file ne rajeunit pas)."""
+        ident = uuid.uuid4().hex
+        contenu = [{k: v for k, v in m.items() if k != "_quand"} for m in contenu]
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=ident, personne=personne, contenu=_json(contenu), quand=quand or time.time()))
+        return ident
+
+    def prendre(self, personne: str, maintenant: float | None = None) -> list[dict]:
+        """Les messages gardés pour cette personne, dans l'ordre, retirés de la table (chacun une fois), avec l'heure
+        où ils ont été gardés (« _quand »). Ceux de plus de GARDE_DIFFERE sont effacés sans partir : un document
+        déposé chez Meta n'y vit pas plus longtemps, et ce qui a tant attendu n'a plus de sens."""
+        t = self._t
+        limite = (maintenant or time.time()) - GARDE_DIFFERE
+        with self._e.begin() as c:
+            lignes = list(c.execute(select(t).where(t.c.personne == personne).order_by(t.c.quand)))
+            if lignes:
+                c.execute(delete(t).where(t.c.id.in_([l.id for l in lignes])))
+        return [{**m, "_quand": l.quand} for l in lignes if l.quand >= limite for m in (_de_json(l.contenu) or [])]
+
+    def effacer(self, personne: str) -> int:
+        """Ce qui attendait cette personne ne lui partira pas (un partenaire retiré, un numéro bloqué)."""
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount
 
 
 class Medias:

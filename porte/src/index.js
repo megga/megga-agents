@@ -7,6 +7,9 @@
 //                                  par le conteneur) : transmis tel quel, réponse rendue telle quelle.
 //                                  Adresse publique : https://api.megga.ai (API_HOTE), qui ne sert que
 //                                  cette route ; workers.dev la sert aussi, en secours
+//   POST /site/:client/(bien|demande)
+//                                  le site d'un client (lot 7.4) : un bien entré en ligne, une demande d'information
+//                                  d'une fiche ; transmis tel quel, la clé du site (SITE_CLE) vérifiée par le conteneur
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
 //                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
@@ -38,6 +41,8 @@ const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.hea
 const CLE_API = /^Bearer mga_[A-Za-z0-9_-]{43}$/;
 const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
+// Le site d'un client (lot 7.4) : une clé d'au moins 32 caractères, un corps de 16 Kio au plus.
+const CLE_SITE = /^Bearer [\x21-\x7e]{32,200}$/;
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
@@ -56,6 +61,8 @@ export async function recevoir(requete, env, ctx) {
   }
   if (url.pathname === "/meta" && requete.method === "POST") return webhook(requete, env, ctx);
   if (api) return messageApi(requete, env, api[1]);
+  const site = url.pathname.match(/^\/site\/([^/]+)\/(bien|demande)$/);
+  if (site) return messageSite(requete, env, site[1], site[2]);
   const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
   if (cles) return clesApi(requete, env, cles[1], cles[2] ?? "");
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
@@ -106,6 +113,34 @@ async function pilote(requete, env) {
  * Un message d'un logiciel pour l'agent d'un client. La porte ne garde rien et ne journalise aucun texte :
  * elle vérifie la forme (clé, taille), puis transmet au conteneur, qui vérifie la clé et répond.
  */
+/**
+ * Le site d'un client : un bien entré en ligne, une demande d'information. La porte ne connaît pas la clé du site :
+ * le conteneur la vérifie ; sans clé bien formée, rien ne réveille le conteneur.
+ */
+async function messageSite(requete, env, id, route) {
+  if (requete.method !== "POST") return json({ erreur: "méthode : POST" }, 405);
+  if (!CLE_SITE.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
+  const longueur = requete.headers.get("content-length") ?? "";
+  if (!/^[0-9]{1,9}$/.test(longueur)) return json({ erreur: "longueur attendue" }, 411);
+  if (Number(longueur) > TAILLE_API) return json({ erreur: "requête trop grosse" }, 413);
+  const client = idValide(id) ? await clientParId(env.ANNUAIRE, id) : null;
+  const agent = client && agentDe(env, client);
+  if (!agent) return json({ erreur: "agent inconnu" }, 404);
+  try {
+    const r = await agent.fetch(
+      new Request(`http://agent/site/${route}`, {
+        method: "POST",
+        body: await requete.arrayBuffer(),
+        headers: { authorization: requete.headers.get("authorization"), "content-type": "application/json" },
+      }),
+    );
+    return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+  } catch (e) {
+    console.error("message du site en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "agent injoignable" }, 503);
+  }
+}
+
 async function messageApi(requete, env, id) {
   if (requete.method !== "POST") return json({ erreur: "méthode : POST" }, 405);
   // Sans clé bien formée, rien ne réveille le conteneur.

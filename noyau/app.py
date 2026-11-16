@@ -14,6 +14,8 @@ Variables d'environnement (jamais dans le dépôt) :
                        licence exigée) ; sinon, derrière la porte de MEGGA
   META_VERIFY_TOKEN    chez le client : le jeton d'abonnement du webhook de Meta
   MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
+  GESTIONNAIRES, GESTION_CLE  les gens du client et la clé de la gestion de son site (lot 7.1)
+  SITE_CLE             facultatif : la clé du site du client pour /site/… (32 caractères au moins, lot 7.4)
 Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
   PILOTAGE             le réglage du pilotage chez le client (non, suivi, complet), le même que celui du pilote
@@ -28,6 +30,8 @@ Routes :
   GET  /whatsapp  l'abonnement du webhook de Meta (chez le client ; chez MEGGA, la porte s'en charge)
   POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature) ; sans numéro configuré, 404
   POST /api/messages  un logiciel parle à l'agent (clé du logiciel, noyau/api.py et docs/api.md)
+  POST /site/bien      le site signale un bien entré en ligne {reference} : rapprochement et réseau (clé SITE_CLE)
+  POST /site/demande   une demande d'information laissée sur une fiche du site (clé SITE_CLE)
   GET  /interne/cles             les clés des logiciels, sans empreinte (jeton INTERNE_TOKEN)
   POST /interne/cles             {id, logiciel, empreinte, par_minute} une clé créée par l'atelier
   DELETE /interne/cles/{id}      retire une clé
@@ -92,9 +96,10 @@ class Deja:
         return True
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None) -> list:
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None) -> list:
     """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle.
-    `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés."""
+    `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés ;
+    `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
     liste = outils_rappels(rappels, conf.fuseau) if "rappels" in groupes else []
     if "annonces" in groupes:
@@ -103,6 +108,10 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         from packs.immobilier.annonces import outils as outils_annonces
 
         liste += outils_annonces(services)
+    if set(groupes) & {"partenaires", "visiteurs", "vitrine", "accueil"}:
+        if relations is None:
+            raise RuntimeError("outils de partenaires et de visiteurs sans gestion du site (Config.gestion et GESTION_CLE)")
+        liste += relations.outils(groupes)
     if "immobilier" in groupes:
         from packs.immobilier import Catalogue, outils as outils_immobilier
 
@@ -131,7 +140,7 @@ def _reecriture(conf, cles):
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
-          quitter=None, cles_api=None, agents=None, personnes=None, medias=None) -> FastAPI:
+          quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -171,6 +180,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         cles_api = cles_api or stockage.ClesApi(env["DATABASE_URL"])
         medias = medias or stockage.Medias(env["DATABASE_URL"])
+        differes = differes or stockage.Differes(env["DATABASE_URL"])
         if personnes is None:
             try:
                 gestionnaires = lire_gestionnaires(env.get("GESTIONNAIRES"))
@@ -196,21 +206,43 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             from packs.immobilier.redaction import Choisisseuse, Redactrice
 
             cle = cles.get("ANTHROPIC_API_KEY")
-            services = Services(gestion, personnes, medias, stockage.Etats(env["DATABASE_URL"]), expediteur,
+            from packs.immobilier.redaction import Assistante
+
+            url = env["DATABASE_URL"]
+
+            async def memoires(personne: str) -> list[str]:
+                """Ce que l'agent a retenu d'un gestionnaire (sa mémoire d'Agno) : les clients qu'il cherche à loger."""
+                souvenirs = await asyncio.to_thread(base.get_user_memories, user_id=personne) or []
+                return [str(getattr(m, "memory", "") or "") for m in souvenirs]
+
+            services = Services(gestion, personnes, medias, stockage.Etats(url), expediteur,
                                 Redactrice(cle, conf.entreprise) if cle else None, conf.gestion.noms_interdits,
                                 conf.gestion.formulaire_annonce, Choisisseuse(cle, conf.entreprise) if cle else None,
-                                conf.gestion.fiche, conf.entreprise)
+                                conf.gestion.fiche, conf.entreprise, personnes.partenaires or stockage.Partenaires(url),
+                                stockage.Reseau(url), personnes.bloques or stockage.Bloques(url), stockage.Questions(url),
+                                fuseau=conf.fuseau, memoires=memoires, assistante=Assistante(cle, conf.entreprise) if cle else None,
+                                a_whatsapp=conf.whatsapp is not None)
+            if relations is None and any(set(r.outils) & {"partenaires", "visiteurs", "vitrine", "accueil"} for r in conf.les_roles().values()):
+                from packs.immobilier.relations import Relations
+
+                relations = Relations(services)
         agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
-        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous.
-        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services),
-                                            role=role, nom_role=nom) for nom, role in conf.les_roles().items()}
+        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
+        # chaque tour pour les partenaires et les visiteurs.
+        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations),
+                                            role=role, nom_role=nom, contexte=relations.contexte(role.outils) if relations else None)
+                            for nom, role in conf.les_roles().items()}
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
-                                  journal=journal, fil=fil, agents=agents, medias=medias)
+                                  journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
+                                  choix=relations.choix if relations else None, echeances=relations.echeances if relations else None)
+    if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
+        relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
+    cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
     debit_cles = entree_api.DebitCles()
@@ -390,6 +422,54 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse
             return erreur(503, "l'agent n'a pas pu répondre", reponse=reponse)
         return {"reponse": reponse}
+
+    async def site(requete: Request):
+        """Une requête du site du client (lot 7.4) : sa clé, puis son corps JSON borné ; sinon la réponse de refus."""
+        if relations is None or len(cle_site) < 32:
+            return None, erreur(404, "introuvable")
+        jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(jeton.encode(), cle_site.encode()):
+            return None, erreur(401, "clé refusée")
+        corps = bytearray()
+        async for morceau in requete.stream():
+            corps += morceau
+            if len(corps) > entree_api.CORPS_MAX:
+                return None, erreur(413, "requête trop grosse")
+        try:
+            donnees = json.loads(bytes(corps))
+        except ValueError:
+            return None, erreur(400, "corps : du JSON")
+        return (donnees, None) if isinstance(donnees, dict) else (None, erreur(400, "corps : un objet JSON"))
+
+    @app.post("/site/bien")
+    async def site_bien(requete: Request):
+        """Un bien entre en ligne : rapproché des clients en mémoire et des recherches gardées des partenaires, juste après."""
+        donnees, refus = await site(requete)
+        if refus is not None:
+            return refus
+        reference = str(donnees.get("reference") or "").strip()[:40]
+        if not reference:
+            return erreur(400, "reference")
+        conversations._lancer(conversations._sans_echec(relations.reseau.bien_en_ligne(reference)))
+        return JSONResponse({"signale": reference}, status_code=202)
+
+    @app.post("/site/demande")
+    async def site_demande(requete: Request):
+        """Une demande d'information d'une fiche : au courtier du bien, avec une réponse prête."""
+        donnees, refus = await site(requete)
+        if refus is not None:
+            return refus
+        from packs.immobilier.gestion import GestionErreur
+
+        try:
+            n = await relations.visiteurs.demande_du_site(donnees)
+        except ValueError as e:
+            return erreur(400, str(e)[:200])
+        except LookupError as e:
+            return erreur(503, str(e)[:200])
+        except GestionErreur:
+            return erreur(502, "gestion du site injoignable")
+        return JSONResponse({"transmise": n}, status_code=202)
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")

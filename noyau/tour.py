@@ -8,6 +8,9 @@
   retiré à la réponse.
 - Hors des 24 heures de WhatsApp, un message de l'agent ne part que par un modèle Meta.
 - Une erreur technique n'est jamais envoyée telle quelle.
+- L'accueil d'un rôle (Role.accueil) part tel quel au premier message d'une conversation (noyau/accueil.py).
+- Un choix touché dans une liste ou sur un bouton qu'un pack sait traiter (`choix`, par préfixe) l'est sans le
+  modèle ; un message que l'agent envoie de lui-même hors des 24 heures attend le prochain message de la personne.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from . import accueil as accueils
 from .api import DELAI_TOUR
 from .config import Config
 from .garde import TROP, Debit, masquer_secrets
@@ -54,7 +58,8 @@ class Conversations:
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
-                 journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None):
+                 journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None,
+                 differes=None, choix: dict | None = None, echeances: list | None = None):
         self.conf = conf
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
@@ -76,6 +81,12 @@ class Conversations:
         # Le fil (stockage.Fil) : les messages tels que la personne les a vécus.
         self.journal = journal
         self.fil = fil
+        # Ce que l'agent envoie de lui-même hors des 24 heures, gardé pour le prochain message (stockage.Differes).
+        self.differes = differes
+        # Les choix touchés que les packs traitent eux-mêmes : {préfixe: async f(personne, rôle, charge) -> réponse}.
+        self.choix = dict(choix or {})
+        # Ce que les packs ont à faire à l'heure dite (un visiteur à prévenir) : async f(maintenant) -> prochaine heure.
+        self.echeances = list(echeances or [])
         self._boites: dict[str, _Boite] = {}
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
@@ -100,6 +111,21 @@ class Conversations:
         b = self._boites.pop(personne)
         await self._tour(personne, b.messages, b.role)
 
+    def entre_les_tours(self, personne: str):
+        """Attend que le tour en cours de cette personne soit fini, et la garde le temps du bloc : ce que l'agent lui
+        envoie de lui-même ne s'intercale pas dans une réponse en route."""
+        return self._a_son_tour(personne)
+
+    def apres_le_tour(self, personne: str, coro_fn) -> None:
+        """Lance `coro_fn()` une fois fini le tour en cours de cette personne (sa réponse partie) : un outil qui
+        prévient quelqu'un d'autre ne passe pas devant la réponse qu'il prépare."""
+        async def ensuite():
+            async with self._a_son_tour(personne):
+                pass
+            await self._sans_echec(coro_fn())
+
+        self._lancer(ensuite())
+
     def agent_du_role(self, role: str):
         return self.agents.get(role, self.agent)
 
@@ -120,6 +146,7 @@ class Conversations:
     async def _tour(self, personne: str, messages: list[Entrant], role: str = "public") -> None:
         async with self._a_son_tour(personne):
             dernier = messages[-1]
+            premier = await self._premier(personne, role)
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
             await self._sans_echec(self.exp.lu(dernier.id))
             await self._sans_echec(self._rappels_differes(personne))
@@ -132,7 +159,7 @@ class Conversations:
             etat = {"pose": False}
             regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
             try:
-                await self._repondre(personne, messages, role)
+                await self._repondre(personne, messages, role, premier)
             finally:
                 if regard:
                     regard.cancel()
@@ -144,10 +171,49 @@ class Conversations:
         await self._sans_echec(self.exp.reaction(personne, message_id, REGARD))
         etat["pose"] = True
 
-    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public") -> None:
-        parties, vocal, sourd, images, rang = [], False, False, [], 0
+    def _accueil(self, role: str) -> dict[str, str]:
+        r = self.conf.les_roles().get(role)
+        return r.accueil if r is not None else {}
+
+    async def _premier(self, personne: str, role: str) -> bool:
+        """Le premier message d'une conversation (rien de la personne depuis douze heures), pour un rôle qui a un accueil."""
+        if not self._accueil(role) or self.contacts is None:
+            return False
+        try:
+            dernier = await asyncio.to_thread(self.contacts.dernier, personne)
+        except Exception as e:
+            log.warning("contact illisible : %s", str(e)[:200])
+            return False
+        return dernier is None or time.time() - dernier > accueils.INACTIVITE
+
+    def _bienvenue(self, role: str, entendu: str, profil: str = "") -> str:
+        """L'accueil à envoyer, si la langue est sûre ; sinon « » (le modèle le traduit, sa consigne le dit)."""
+        accueil = self._accueil(role)
+        langue = accueils.langue_sure(entendu, accueil)
+        return accueils.texte_accueil(accueil, langue, accueils.prenom_du_profil(profil)) if langue else ""
+
+    async def _choisi(self, personne: str, role: str, charge: str) -> bool:
+        """Un choix touché qu'un pack traite lui-même : sa réponse part, sans le modèle. Faux si aucun ne le connaît."""
+        traiter = next((f for p, f in self.choix.items() if charge.startswith(p)), None)
+        if traiter is None:
+            return False
+        self._noter_fil(personne, "recu", "choix", charge)
+        try:
+            reponse = await traiter(personne, role, charge)
+        except Exception as e:
+            log.error("choix en échec (%s) : %s", self.conf.id, str(e)[:200])
+            self.noter_journal("choix_echec", detail=type(e).__name__)
+            reponse = EXCUSE
+        if reponse:
+            await self._ecrire(personne, reponse)
+        return True
+
+    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False) -> None:
+        parties, vocal, sourd, images, rang, choisis = [], False, False, [], 0, 0
         for m in messages:
-            if m.vocal:
+            if m.choix and await self._choisi(personne, role, m.choix):
+                choisis += 1
+            elif m.vocal:
                 vocal = True
                 texte = await self._ecouter(m.vocal)
                 self._noter_fil(personne, "recu", "vocal", texte)
@@ -170,9 +236,17 @@ class Conversations:
                 parties.append(m.texte)
         entendu = "\n".join(parties).strip()
         if not entendu:
-            await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
+            if not choisis:
+                await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
             return
-        reponse, _ = await self._executer(personne, entendu, role, images)
+        bienvenue = self._bienvenue(role, entendu, messages[-1].profil) if premier else ""
+        if bienvenue:
+            await self._ecrire(personne, bienvenue)
+            if accueils.est_salutation(entendu):  # à une simple salutation, l'accueil seul
+                return
+        reponse, _ = await self._executer(personne, f"{entendu}\n{accueils.APRES_ACCUEIL}" if bienvenue else entendu, role, images)
+        if bienvenue and reponse != EXCUSE:
+            reponse = accueils.apres_accueil(reponse, bienvenue)
         if not reponse.strip():
             return
         if vocal and self.voie is not None and self.voie.parle and se_prete(reponse) and reponse != EXCUSE:
@@ -231,14 +305,22 @@ class Conversations:
             async with self._a_son_tour(personne):
                 if not self.debit.permis(personne):
                     return None
+                premier = await self._premier(personne, role)
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
-                try:
-                    brute, echec = await asyncio.wait_for(self._executer(personne, texte, role), self.delai_api)
-                except asyncio.TimeoutError:
-                    log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
-                    self.noter_journal("tour_echec", detail="delai")
-                    brute, echec = EXCUSE, True
+                bienvenue = self._bienvenue(role, texte) if premier else ""
+                if bienvenue and accueils.est_salutation(texte):
+                    brute, echec = bienvenue, False
+                else:
+                    try:
+                        brute, echec = await asyncio.wait_for(
+                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role), self.delai_api)
+                    except asyncio.TimeoutError:
+                        log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
+                        self.noter_journal("tour_echec", detail="delai")
+                        brute, echec = EXCUSE, True
+                    if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
+                        brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
                 reponse = nettoyer(masquer_secrets(brute))
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
@@ -316,8 +398,67 @@ class Conversations:
             return "modele"
         return "attente"
 
+    async def envoyer_de_soi_meme(self, personne: str, messages: list[dict], usage: str, variables: list[str] | None = None,
+                                  langue: str = "", garder: bool = True) -> str:
+        """Des messages que l'agent envoie de lui-même à une personne (une demande pour un gestionnaire, une fiche
+        pour un partenaire, une réponse pour un visiteur). `messages` : {"texte"}, {"document", "nom", "legende"}
+        (un identifiant chez Meta) ou {"liste": {corps, bouton, section, lignes}}.
+
+        Dans les 24 heures, ils partent. Au-delà, ils sont gardés pour son prochain message (stockage.Differes, sauf `garder` faux),
+        et le modèle Meta de cet usage (« <usage>_<langue> » d'abord) l'annonce s'il est réglé, avec `variables`.
+        Rend « libre », « modele », « attente », ou « aucune » (pas de WhatsApp, ou une personne venue par API).
+        """
+        if self.conf.whatsapp is None or personne.startswith("api:"):
+            return "aucune"
+        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
+        if fenetre_ouverte(dernier):
+            await self._envoyer_messages(personne, messages, usage)
+            return "libre"
+        if garder and self.differes is not None:
+            await asyncio.to_thread(self.differes.garder, personne, messages)
+        modele = self.conf.modeles_meta.get(f"{usage}_{langue}") or self.conf.modeles_meta.get(usage)
+        if modele:
+            try:
+                await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(v)[:1000] for v in (variables or [])])
+                self._noter_fil(personne, "envoye", "modele", " | ".join(variables or []))
+                return "modele"
+            except Exception as e:
+                log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
+                self.noter_journal("envoi_echec", detail="modele")
+        return "attente"
+
+    async def peut_ecrire(self, personne: str, usage: str, langue: str = "") -> bool:
+        """Un message libre (dans les 24 heures) ou le modèle Meta de cet usage peut-il partir à cette personne ?"""
+        if self.conf.whatsapp is None or personne.startswith("api:"):
+            return False
+        if self.conf.modeles_meta.get(f"{usage}_{langue}") or self.conf.modeles_meta.get(usage):
+            return True
+        return fenetre_ouverte(await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None)
+
+    async def _envoyer_messages(self, personne: str, messages: list[dict], usage: str) -> None:
+        for m in messages:
+            if m.get("document"):
+                await self.exp.document(personne, m.get("nom") or "document.pdf", media_id=m["document"], legende=m.get("legende", ""))
+                self._noter_fil(personne, "envoye", "document", m.get("legende") or m.get("nom") or "")
+            elif m.get("liste"):
+                l = m["liste"]
+                await self.exp.liste(personne, nettoyer(l["corps"]), l["bouton"], l["section"], l["lignes"])
+                self._noter_fil(personne, "envoye", "liste", nettoyer(l["corps"]))
+            elif m.get("texte"):
+                await self.exp.texte(personne, nettoyer(m["texte"]))
+                self._noter_fil(personne, "envoye", usage, nettoyer(m["texte"]))
+
     async def _rappels_differes(self, personne: str) -> None:
-        """Les rappels échus hors des 24 heures, sans modèle Meta : ils partent maintenant."""
+        """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant."""
+        if self.differes is not None:
+            for m in await asyncio.to_thread(self.differes.prendre, personne):
+                try:
+                    await self._envoyer_messages(personne, [m], "differe")
+                except Exception as e:
+                    # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
+                    log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
+                    self.noter_journal("envoi_echec", detail="differe")
+                    await asyncio.to_thread(self.differes.garder, personne, [m], m.get("_quand"))
         if self.rappels is None:
             return
         for r in await asyncio.to_thread(self.rappels.differes, personne):
@@ -328,8 +469,9 @@ class Conversations:
     async def envoyer_rappels_echus(self, maintenant: float) -> dict:
         """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
         bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
+        suivant = await self._echeances(maintenant)
         if self.rappels is None:
-            return {"prochain": None, **bilan}
+            return {"prochain": suivant, **bilan}
         for r in await asyncio.to_thread(self.rappels.echus, maintenant):
             if self.conf.whatsapp is None:
                 # Un agent sans WhatsApp (seulement par API) ne peut rien envoyer : un rappel d'avant est
@@ -350,7 +492,24 @@ class Conversations:
         if bilan["echec"] and prochain is not None:
             # Un rappel en échec reste à envoyer : il est retenté dans 5 minutes, pas en boucle.
             prochain = max(prochain, maintenant + REESSAI_RAPPEL)
+        if suivant is not None:
+            prochain = suivant if prochain is None else min(prochain, suivant)
         return {"prochain": prochain, **bilan}
+
+    async def _echeances(self, maintenant: float) -> float | None:
+        """Ce que les packs ont à faire à l'heure dite ; rend la plus proche des prochaines heures. Une échéance en
+        échec est retentée dans 5 minutes."""
+        prochaines = []
+        for f in self.echeances:
+            try:
+                p = await f(maintenant)
+            except Exception as e:
+                log.error("échéance en échec (%s) : %s", self.conf.id, str(e)[:200])
+                self.noter_journal("echeance_echec", detail=type(e).__name__)
+                p = maintenant + REESSAI_RAPPEL
+            if p is not None:
+                prochaines.append(p)
+        return min(prochaines) if prochaines else None
 
     @staticmethod
     async def _sans_echec(coro) -> None:

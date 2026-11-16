@@ -141,7 +141,7 @@ def test_chacun_parle_a_l_agent_de_son_role(tmp_path):
     _, agents, exp, app, url = agent_fsp(tmp_path)
     stockage.Partenaires(url).inscrire("+41790000003", "Agence du Lac")
     stockage.Bloques(url).bloquer("+41790000004")
-    c = webhook([texte(GREG, "mes annonces", "w1"), texte("+41790000002", "bonjour", "w2"),
+    c = webhook([texte(GREG, "mes annonces", "w1"), texte("+41790000002", "je cherche une villa à Genève", "w2"),
                  texte("+41790000003", "un client cherche", "w3"), texte("+41790000004", "spam", "w4")])
     with TestClient(app) as t:
         assert t.post("/whatsapp", content=c, headers=signe(c)).text == "reçu 3"
@@ -150,7 +150,9 @@ def test_chacun_parle_a_l_agent_de_son_role(tmp_path):
     assert all(len(a.appels) == 1 for a in agents.values())
     # Le numéro bloqué n'est ni lu ni répondu
     assert "+41790000004" not in [v for v, _ in exp.envois] and ("lu", "w4") not in exp.autres
-    assert sorted(v for v, _ in exp.envois) == sorted([GREG, "+41790000002", "+41790000003"])
+    # Le visiteur reçoit d'abord l'accueil de Greg (lot 7.4), puis la réponse
+    assert sorted(v for v, _ in exp.envois) == sorted([GREG, "+41790000002", "+41790000002", "+41790000003"])
+    assert [t for v, t in exp.envois if v == "+41790000002"][0].startswith("Bonjour, je suis Alix, l'assistante de Greg.")
 
 
 def test_sans_visiteurs_l_inconnu_recoit_le_refus(tmp_path):
@@ -169,8 +171,9 @@ def test_par_api_un_visiteur(tmp_path):
     t, agents, _, _, url = agent_fsp(tmp_path)
     ident, cle, empreinte = api.nouvelle_cle()
     stockage.ClesApi(url).ajouter(ident, "site", empreinte, 30)
-    r = t.post("/api/messages", headers={"authorization": f"Bearer {cle}"}, json={"personne": "p1", "texte": "bonjour"})
-    assert r.json() == {"reponse": "réponse de visiteur"}
+    r = t.post("/api/messages", headers={"authorization": f"Bearer {cle}"}, json={"personne": "p1", "texte": "je cherche une villa"})
+    accueil, reponse = r.json()["reponse"].rsplit("\n\n", 1)
+    assert accueil.startswith("Bonjour, je suis Alix") and reponse == "réponse de visiteur"
     # Des rôles sans visiteurs : l'entrée par API est fermée
     (tmp_path / "b").mkdir()
     t2, *_ = agent_fsp(tmp_path / "b", {**FSP_WA, "roles": {"gestionnaire": {}}})

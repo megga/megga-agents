@@ -67,6 +67,45 @@ class Services:
     choisisseuse: object | None = None  # redaction.Choisisseuse : les photos d'une fiche
     modele_fiche: str | None = None  # Config.gestion.fiche
     marque: str = ""  # le nom de l'agence, sur une fiche de marque
+    # Lot 7.4 (reseau.py, visiteurs.py) : les partenaires, leurs demandes, les numéros bloqués, les questions
+    # des visiteurs ; les conversations (envoyer de soi-même, après un tour), le fuseau, la mémoire des
+    # gestionnaires (le rapprochement) et l'assistante (trier des clients, rédiger une réponse).
+    partenaires: object | None = None  # stockage.Partenaires
+    reseau: object | None = None  # stockage.Reseau
+    bloques: object | None = None  # stockage.Bloques
+    questions: object | None = None  # stockage.Questions
+    conversations: object | None = None  # noyau.tour.Conversations, posé une fois construites
+    fuseau: str = "Europe/Zurich"
+    memoires: object | None = None  # async f(personne) -> [souvenirs]
+    assistante: object | None = None  # redaction.Assistante
+    a_whatsapp: bool = True
+
+
+async def fiche_du_site(s: Services, compte: str, slug: str, version: str, langue: str, sans_prix: bool, maximum: int = 11,
+                        choisir: bool = True) -> tuple[bytes, str, dict]:
+    """La fiche PDF d'une annonce du site : (octets, nom du fichier, fiche). Claude choisit les photos, sauf `choisir` faux."""
+    if not s.modele_fiche:
+        raise ValueError("aucun modèle de fiche n'est réglé pour cette agence (réglage de MEGGA)")
+    choisir = choisir and s.choisisseuse is not None
+    try:
+        fiche = (await s.gestion.appel(compte, "GET", f"/annonces/{slug}/fiche", params={"langue": langue})).get("fiche") or {}
+    except GestionErreur as e:
+        raise ValueError(f"la gestion du site refuse : {e.message}") from e
+    if fiche.get("contact"):
+        fiche["contact"]["site"] = s.gestion.site_du_bien(slug).removeprefix("https://")
+    photos = []
+    for chemin in (fiche.get("photos") or [])[:max(maximum, 20) if choisir else maximum]:
+        try:
+            photos.append(await s.gestion.octets(compte, chemin, PHOTO_MAX))
+        except Exception:
+            continue
+    if choisir:
+        photos = await s.choisisseuse.choisir(photos, maximum)
+    photos = photos[:maximum]
+    if version == "anonyme":
+        fiche = fiches.anonymiser(fiche, s.marque)
+    pdf = await fiches.composer(fiche, photos, s.modele_fiche, version, sans_prix, s.marque)
+    return pdf, fiches.nom_de_fichier(fiche.get("titre"), langue), {**fiche, "nb_photos": len(photos)}
 
 
 def normaliser(t) -> str:
@@ -1135,15 +1174,8 @@ def outils(s: Services) -> list:
             slug = trouve["slug"]
         if slug:
             await lire(compte, slug)
-            fiche = (await g(compte, "GET", f"/annonces/{slug}/fiche", params={"langue": langue})).get("fiche") or {}
-            if fiche.get("contact"):
-                fiche["contact"]["site"] = s.gestion.site_du_bien(slug).removeprefix("https://")
-            photos = []
-            for chemin in (fiche.get("photos") or [])[:max(maximum, 20) if choisir else maximum]:
-                try:
-                    photos.append(await s.gestion.octets(compte, chemin, PHOTO_MAX))
-                except Exception:
-                    continue
+            pdf, nom, fiche = await fiche_du_site(s, compte, slug, version, langue, sans_prix, maximum, choisir)
+            n_photos = fiche["nb_photos"]
         else:
             choisies = await photos_des_medias(personne, medias or [])
             if not choisies:
@@ -1168,18 +1200,19 @@ def outils(s: Services) -> list:
                                         "accroche": textes["accroche"], "chiffres": chiffres or {}, "details": details or [],
                                         "equipements": equipements or []}, garde.blocs(textes["description"]), contact,
                                        s.gestion.reglage.url.removeprefix("https://"))
-        if choisir:
-            photos = await s.choisisseuse.choisir(photos, maximum)
-        photos = photos[:maximum]
-        if version == "anonyme":
-            fiche = fiches.anonymiser(fiche, s.marque)
-        pdf = await fiches.composer(fiche, photos, s.modele_fiche, version, sans_prix, s.marque)
-        nom = fiches.nom_de_fichier(fiche.get("titre"), langue)
+            if choisir:
+                photos = await s.choisisseuse.choisir(photos, maximum)
+            photos = photos[:maximum]
+            n_photos = len(photos)
+            if version == "anonyme":
+                fiche = fiches.anonymiser(fiche, s.marque)
+            pdf = await fiches.composer(fiche, photos, s.modele_fiche, version, sans_prix, s.marque)
+            nom = fiches.nom_de_fichier(fiche.get("titre"), langue)
         media = await s.exp.televerser(pdf, "application/pdf", nom)
         await s.exp.document(personne, nom, media_id=media, legende=court(fiche.get("titre"), 1024))
         quoi = "anonyme" if version == "anonyme" else "avec logo et coordonnées"
         return (f"Fiche PDF envoyée dans la conversation ({nom}, {quoi}{', sans prix' if sans_prix else ''}, "
-                f"{'anglais' if langue == 'en' else 'français'}, {len(photos)} photo(s)). Dis-le en une phrase, sans répéter son contenu.")
+                f"{'anglais' if langue == 'en' else 'français'}, {n_photos} photo(s)). Dis-le en une phrase, sans répéter son contenu.")
 
     async def photos_du_pdf(media: int, run_context: RunContext, max_photos: int = 20) -> str:
         """Sort les photos d'une plaquette PDF reçue : elles deviennent des médias, comme des photos reçues.
