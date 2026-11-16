@@ -59,6 +59,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import api as entree_api
+from . import approbations
 from . import config as configuration
 from . import licence as licences
 from . import pilotage as pilotages
@@ -72,9 +73,22 @@ from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
-from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, lire_echecs, lire_entrants, signature_valide
+from .approbations import Gardien
+from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, chiffres, lire_echecs, lire_entrants, signature_valide
 
 log = logging.getLogger("megga")
+
+# Ce que la personne apprend quand l'équipe a décidé d'une action qu'elle avait demandée (noyau/approbations.py) ;
+# son agent en connaît le détail au tour suivant.
+REPONSES_APPROBATION = {
+    "fr": {"faite": "Bonne nouvelle : l'équipe a validé votre demande, c'est fait.",
+           "echec": "L'équipe a validé votre demande, mais elle n'a pas pu se faire. Nous revenons vers vous.",
+           "refusee": "L'équipe n'a pas validé votre demande."},
+    "en": {"faite": "Good news: the team approved your request, it is done.",
+           "echec": "The team approved your request, but it could not be completed. We will get back to you.",
+           "refusee": "The team did not approve your request."},
+}
+ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
 
 
@@ -220,6 +234,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if expediteur is None:
         expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
                       if conf.whatsapp else SansWhatsApp())
+    # Les approbations et le journal d'audit des outils (noyau/approbations.py) ; sans base, les règles tiennent quand
+    # même (interdit : pas proposé ; à approuver : refusé), sans journal.
+    gardien = (Gardien(stockage.Audit(env["DATABASE_URL"]), stockage.Approbations(env["DATABASE_URL"]))
+               if env.get("DATABASE_URL") else Gardien())
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
@@ -266,12 +284,14 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
             fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels), contexte=du_fil)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels), contexte=ensemble(du_fil, gardien.contexte),
+                           gardien=gardien)
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
-        # chaque tour (le fil ; les demandes, les questions, les règles des packs).
+        # chaque tour (le fil ; les demandes, les questions, les règles des packs ; l'issue de ses demandes d'accord).
         agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations),
-                                            role=role, nom_role=nom,
-                                            contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None))
+                                            role=role, nom_role=nom, gardien=gardien,
+                                            contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None,
+                                                              gardien.contexte))
                             for nom, role in conf.les_roles().items()}
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
@@ -279,10 +299,33 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
-                                  choix=relations.choix if relations else None, echeances=relations.echeances if relations else None,
-                                  fil_tenu=fil_tenu)
+                                  choix={**(relations.choix if relations else {}), approbations.PREFIXE: gardien.choix},
+                                  echeances=relations.echeances if relations else None, fil_tenu=fil_tenu)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
+
+    async def prevenir_equipe(demande: dict) -> None:
+        """Une action attend un accord : chaque gestionnaire reçoit la demande, avec Accepter et Refuser, une fois
+        fini le tour de la personne qui l'a faite (sa réponse part d'abord)."""
+        numeros = [chiffres(n) for n in (personnes.gestionnaires or {})]
+        qui = demande["personne"]
+        corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui if qui.startswith('api:') else '+' + qui} : "
+                 f"{demande['outil']}.\n{approbations.apercu(demande['arguments'])}")
+        message = {"liste": {"corps": corps, "bouton": "Répondre", "section": f"Demande {demande['id']}", "lignes": [
+            {"id": f"{approbations.PREFIXE}{demande['id']}:oui", "titre": "Accepter", "description": demande["outil"]},
+            {"id": f"{approbations.PREFIXE}{demande['id']}:non", "titre": "Refuser"}]}}
+        for n in numeros:
+            conversations.apres_le_tour(qui, lambda n=n: conversations.envoyer_de_soi_meme(
+                n, [message], "approbation", variables=[conf.nom_agent, demande["outil"]]))
+
+    async def prevenir_personne(demande: dict, etat: str) -> None:
+        """La personne qui a demandé l'action apprend l'issue ; son agent en connaîtra le détail au tour suivant."""
+        textes = REPONSES_APPROBATION.get(conf.langue, REPONSES_APPROBATION["fr"])
+        if etat in textes:
+            await conversations.envoyer_de_soi_meme(demande["personne"], [{"texte": textes[etat]}], "approbation_reponse",
+                                                    variables=[conf.nom_agent])
+
+    gardien.notifier, gardien.prevenir = prevenir_equipe, prevenir_personne
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
@@ -590,6 +633,49 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if (refus := lisible(requete)) is not None:
             return refus
         return {"alertes": await asyncio.to_thread(journal.alertes, date(requete.query_params.get("depuis")))}
+
+    @app.get("/interne/suivi/audit")
+    async def interne_audit(requete: Request):
+        """Le journal d'audit des outils (noyau/approbations.py) : les appels les plus récents d'abord."""
+        if (refus := lisible(requete)) is not None:
+            return refus
+        if gardien.audit is None:
+            return Response("base absente", status_code=503)
+        limite = borne(requete.query_params.get("limite"), 200, 1000)
+        return {"appels": await asyncio.to_thread(gardien.audit.lire, date(requete.query_params.get("depuis")), limite)}
+
+    @app.get("/interne/suivi/approbations")
+    async def interne_approbations(requete: Request):
+        """Les demandes d'accord, les plus récentes d'abord, leurs arguments masqués ; `etat=attente` pour celles à décider."""
+        if (refus := lisible(requete)) is not None:
+            return refus
+        if gardien.demandes is None:
+            return Response("base absente", status_code=503)
+        etat = requete.query_params.get("etat")
+        if etat and etat not in ETATS_APPROBATION:
+            return erreur(400, "etat : " + ", ".join(ETATS_APPROBATION))
+        demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
+        return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
+                              "apercu": approbations.apercu(d["arguments"])} for d in demandes]}
+
+    @app.post("/interne/approbations/{ident}")
+    async def interne_decider(ident: str, requete: Request):
+        """Une décision de la console : {accord: true|false} ; l'action accordée est faite tout de suite."""
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if gardien.demandes is None:
+            return Response("base absente", status_code=503)
+        try:
+            d = await requete.json()
+            accord = d["accord"]
+        except (ValueError, KeyError, TypeError):
+            return erreur(400, "{accord: true|false}")
+        if not isinstance(accord, bool) or not ident.isdigit() or len(ident) > 10:
+            return erreur(400, "{accord: true|false}")
+        try:
+            return await gardien.decider(int(ident), accord, "console")
+        except ValueError as e:
+            return erreur(409, str(e))
 
     def cles_lisibles(requete: Request) -> Response | None:
         if not interne(requete):

@@ -69,6 +69,9 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `GET /clients/{id}/cles` | tous | les clés des logiciels du client (entrée par API), sans empreinte |
 | `POST /clients/{id}/cles` | tous | `{logiciel, par_minute?}` : une clé, montrée une fois ; le client : 5 clés en service et 30 par minute au plus, MEGGA jusqu'à 600 ; une fois l'agent en service |
 | `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
+| `GET /clients/{id}/audit` | tous | `?jours=7` : chaque appel d'outil, sa règle et son issue (lot 9.1, `docs/lot9.md`) |
+| `GET /clients/{id}/approbations` | tous | `?etat=attente` : les actions qui attendent l'accord d'un gestionnaire |
+| `POST /clients/{id}/approbations/{n}` | tous | `{accord}` : accorde (et fait) ou refuse une action |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
 

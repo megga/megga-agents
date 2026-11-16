@@ -1066,6 +1066,141 @@ class Regles:
         return dict(l._mapping)
 
 
+AUDIT_JOURS = 90  # le journal d'audit garde trois mois
+APPROBATION_DELAI = 48 * 3600  # une demande sans réponse en 48 heures expire
+APPROBATIONS_EN_ATTENTE_MAX = 20  # par personne
+
+
+class Audit:
+    """Le journal d'audit des outils (table megga_audit, noyau/approbations.py) : chaque appel, son outil, la personne,
+    la règle qui s'appliquait, son issue et sa durée. Jamais ses arguments ni son résultat : ce qu'une action a fait se
+    lit dans la conversation, ou dans sa demande d'accord (Approbations)."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_audit",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("outil", String(60), nullable=False),
+            Column("regle", String(12), nullable=False),
+            Column("issue", String(12), nullable=False),
+            Column("duree", Float, nullable=False),
+            Column("detail", String(120), nullable=True),
+        )
+        self._ecrits = 0
+
+    def noter(self, personne: str, outil: str, regle: str, issue: str, duree: float, detail: str = "") -> None:
+        t = self._t
+        with self._e.begin() as c:
+            c.execute(insert(t).values(quand=time.time(), personne=str(personne)[:PERSONNE], outil=str(outil)[:60], regle=regle[:12],
+                                       issue=issue[:12], duree=round(float(duree), 3), detail=(detail or None) and str(detail)[:120]))
+            self._ecrits += 1
+            if self._ecrits % 500 == 1:  # de temps en temps, oublie ce qui a plus de trois mois
+                c.execute(delete(t).where(t.c.quand < time.time() - AUDIT_JOURS * 86400))
+
+    def lire(self, depuis: float = 0, limite: int = 200, personne: str | None = None) -> list[dict]:
+        """Les appels les plus récents d'abord."""
+        t = self._t
+        q = select(t).where(t.c.quand >= depuis)
+        if personne:
+            q = q.where(t.c.personne == personne)
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(q.order_by(t.c.quand.desc(), t.c.id.desc()).limit(int(limite)))]
+
+
+class Approbations:
+    """Les actions qui attendent l'accord d'un gestionnaire (table megga_approbations, noyau/approbations.py).
+
+    Une demande garde l'outil et ses arguments, pour être faite telle quelle une fois accordée, au nom de la personne
+    qui l'a demandée. Ses états : attente, puis accordee (en cours), faite ou echec ; refusee ; expiree (48 heures sans
+    réponse). Une décision ne se prend qu'une fois (écriture conditionnelle) : deux gestionnaires qui touchent en même
+    temps ne la font pas deux fois. `relu` : la personne a été prévenue de l'issue (le Contexte de son tour suivant)."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_approbations",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("role", String(20), nullable=False),
+            Column("outil", String(60), nullable=False),
+            Column("arguments", Text, nullable=False),
+            Column("etat", String(12), nullable=False, index=True),
+            Column("cree", Float, nullable=False),
+            Column("decide", Float, nullable=True),
+            Column("par", String(PERSONNE), nullable=True),
+            Column("resultat", Text, nullable=True),
+            Column("relu", Integer, nullable=False, default=0),
+        )
+
+    @staticmethod
+    def _ligne(l) -> dict:
+        d = dict(l._mapping)
+        d["arguments"] = json.loads(d["arguments"] or "{}")
+        return d
+
+    def demander(self, personne: str, role: str, outil: str, arguments: dict) -> int:
+        """Une nouvelle demande ; une ValueError si la personne en a déjà trop qui attendent."""
+        t = self._t
+        with self._e.begin() as c:
+            attente = c.execute(select(func.count()).where(t.c.personne == personne, t.c.etat == "attente")).scalar() or 0
+            if attente >= APPROBATIONS_EN_ATTENTE_MAX:
+                raise ValueError("trop de demandes attendent déjà un accord")
+            return int(c.execute(insert(t).values(personne=personne, role=role[:20], outil=outil[:60],
+                                                  arguments=json.dumps(arguments, ensure_ascii=False, default=str),
+                                                  etat="attente", cree=time.time(), relu=0)).inserted_primary_key[0])
+
+    def une(self, ident: int) -> dict | None:
+        with self._e.connect() as c:
+            l = c.execute(select(self._t).where(self._t.c.id == int(ident))).first()
+        return self._ligne(l) if l else None
+
+    def decider(self, ident: int, accord: bool, par: str) -> dict | None:
+        """Accorde ou refuse une demande qui attend encore ; None si elle n'attend plus (déjà décidée, expirée)."""
+        t = self._t
+        self.expirer()
+        with self._e.begin() as c:
+            fait = c.execute(update(t).where(t.c.id == int(ident), t.c.etat == "attente")
+                             .values(etat="accordee" if accord else "refusee", decide=time.time(), par=str(par)[:PERSONNE])).rowcount
+            if not fait:
+                return None
+            return self._ligne(c.execute(select(t).where(t.c.id == int(ident))).first())
+
+    def finir(self, ident: int, etat: str, resultat: str) -> None:
+        """L'issue d'une demande accordée : faite ou echec, avec ce que l'outil a rendu."""
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, resultat=str(resultat)[:2000]))
+
+    def expirer(self, maintenant: float | None = None) -> int:
+        t = self._t
+        avant = (maintenant or time.time()) - APPROBATION_DELAI
+        with self._e.begin() as c:
+            return c.execute(update(t).where(t.c.etat == "attente", t.c.cree < avant).values(etat="expiree", decide=time.time())).rowcount
+
+    def lister(self, etat: str | None = None, limite: int = 100) -> list[dict]:
+        """Les demandes, les plus récentes d'abord ; `etat` : seulement celles-là."""
+        self.expirer()
+        t = self._t
+        q = select(t)
+        if etat:
+            q = q.where(t.c.etat == etat)
+        with self._e.connect() as c:
+            return [self._ligne(l) for l in c.execute(q.order_by(t.c.id.desc()).limit(int(limite)))]
+
+    def a_relire(self, personne: str) -> list[dict]:
+        """Les demandes de cette personne dont l'issue ne lui a pas encore été dite ; marquées dites."""
+        t = self._t
+        fin = ("faite", "echec", "refusee", "expiree")
+        with self._e.begin() as c:
+            lignes = [self._ligne(l) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relu == 0, t.c.etat.in_(fin))
+                                                       .order_by(t.c.id))]
+            if lignes:
+                c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relu=1))
+        return lignes
+
+
 class Medias:
     """Les médias reçus de chaque personne (table megga_medias), numérotés dans l'ordre d'arrivée : « média 3 »
     dans la conversation désigne le même fichier pour l'agent et ses outils. Seul l'identifiant chez Meta est

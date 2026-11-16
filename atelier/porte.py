@@ -66,6 +66,10 @@ class Porte:
         d = await self._appel("GET", "/admin/clients", params=params)
         return {e["id"]: e for e in d.get("clients", [])}
 
+    async def decider(self, ident: str, numero: int, accord: bool) -> dict:
+        """Une demande d'accord d'un client (noyau/approbations.py), accordée (et faite) ou refusée."""
+        return await self._appel("POST", f"/admin/clients/{ident}/approbations/{int(numero)}", json={"accord": accord})
+
     async def cles(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
         """Les clés des logiciels d'un client, gardées dans sa base : lister, ajouter (une empreinte), retirer."""
         return await self._appel(methode, f"/admin/clients/{ident}/cles{chemin}", json=corps)

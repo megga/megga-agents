@@ -85,6 +85,8 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
+ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
+
 from . import gabarits, regles
 from .couts import Tarifs, couts
 from .essai import essayer
@@ -624,6 +626,40 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         except Refus as e:
             liste.append({"quand": maintenant, "genre": "conteneur_injoignable", "detail": e.message})
         return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"], reverse=True)}
+
+    # Les approbations et le journal d'audit des outils (lot 9.1, noyau/approbations.py). Comme les conversations,
+    # ils ne quittent jamais une installation hors Cloudflare : elle décide sur WhatsApp, par ses gestionnaires.
+
+    @r.get("/clients/{ident}/audit")
+    async def audit(ident: str, requete: Request, qui: Identite = Depends(identite)):
+        """Chaque appel d'outil de la période : l'outil, la personne, la règle, l'issue, la durée."""
+        jours = jours_de(requete.query_params.get("jours"))
+        await bd(suivable, qui, ident, True)
+        lu = await lire_suivi(ident, "/audit", depuis=debut(jours), limite=limite_de(requete.query_params.get("limite")))
+        return {"periode_jours": jours, **lu}
+
+    @r.get("/clients/{ident}/approbations")
+    async def approbations(ident: str, requete: Request, qui: Identite = Depends(identite)):
+        """Les demandes d'accord, les plus récentes d'abord ; `etat=attente` : celles à décider."""
+        etat = requete.query_params.get("etat")
+        if etat is not None and etat not in ETATS_APPROBATION:
+            raise Refus(400, "etat : " + ", ".join(ETATS_APPROBATION))
+        await bd(suivable, qui, ident, True)
+        return await lire_suivi(ident, "/approbations", etat=etat, limite=limite_de(requete.query_params.get("limite")))
+
+    @r.post("/clients/{ident}/approbations/{numero}")
+    async def decider(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """{accord: true|false} : l'action accordée est faite tout de suite, au nom de la personne qui l'a demandée."""
+        accord = corps.get("accord")
+        if not isinstance(accord, bool):
+            raise Refus(400, "accord : true ou false")
+        await bd(suivable, qui, ident, True)
+        try:
+            return await porte.decider(ident, numero, accord)
+        except PorteErreur as e:
+            if e.statut in (400, 404, 409):
+                raise Refus(e.statut, "décision refusée", {"texte": e.texte}) from e
+            raise Refus(502 if e.statut else 504, f"décision non transmise : {raison(e)}", {"statut": e.statut}) from e
 
     # Les installations hors Cloudflare
 

@@ -1,0 +1,371 @@
+"""Lot 9.1 : les approbations et le journal d'audit des outils (noyau/approbations.py)."""
+
+import asyncio
+import json
+import time
+from dataclasses import dataclass, field
+
+import pytest
+from agno.agent import Agent
+from agno.models.base import Model
+from agno.models.response import ModelResponse
+from fastapi.testclient import TestClient
+
+from noyau import approbations, config as configuration, stockage
+from noyau.agent import construire
+from noyau.app import creer
+
+CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
+
+
+@pytest.fixture
+def url(tmp_path):
+    return f"sqlite:///{tmp_path}/client.db"
+
+
+class Contexte:
+    def __init__(self, user_id):
+        self.user_id = user_id
+
+
+class Outils:
+    """Deux outils d'essai : ce qu'ils ont fait, et pour qui."""
+
+    def __init__(self):
+        self.faits = []
+
+    def outils(self):
+        def envoyer_fiche(contact: str, run_context=None) -> str:
+            """Envoie une fiche à un contact."""
+            self.faits.append(("envoyer_fiche", contact, getattr(run_context, "user_id", None)))
+            return f"fiche envoyée à {contact}"
+
+        async def lire_annonce(reference: str) -> str:
+            """Lit une annonce."""
+            self.faits.append(("lire_annonce", reference))
+            return f"annonce {reference}"
+
+        return [envoyer_fiche, lire_annonce]
+
+
+def gardien(url, **kw):
+    g = approbations.Gardien(stockage.Audit(url), stockage.Approbations(url), **kw)
+    return g
+
+
+async def appeler(g, regles, fonction, arguments, personne="41790000001", role="public"):
+    async def appel(**a):
+        r = fonction(**a)
+        return await r if asyncio.iscoroutine(r) else r
+
+    return await g.crochet(regles, role)(fonction.__name__, appel, arguments, Contexte(personne))
+
+
+async def journal_ecrit(g):
+    while g._taches:
+        await asyncio.gather(*list(g._taches))
+
+
+# La configuration
+
+
+def test_les_regles_se_reglent_par_outil_et_par_role():
+    c = configuration.lire({**CONF, "approbations": {"envoyer_fiche": "approbation", "supprimer_annonce": "interdit"},
+                            "roles": {"visiteur": {"approbations": {"envoyer_fiche": "interdit"}}}})
+    assert approbations.regles_pour(c) == {"envoyer_fiche": "approbation", "supprimer_annonce": "interdit"}
+    # le rôle par-dessus la configuration
+    assert approbations.regles_pour(c, c.les_roles()["visiteur"])["envoyer_fiche"] == "interdit"
+    for mauvais in ({"Envoyer": "approbation"}, {"envoyer_fiche": "toujours"}, {f"o{i:02d}": "interdit" for i in range(61)}):
+        with pytest.raises(Exception):
+            configuration.lire({**CONF, "approbations": mauvais})
+
+
+def test_le_client_regle_ses_approbations():
+    from atelier import regles
+
+    assert "approbations" in regles.CHAMPS_CLIENT
+
+
+# Le crochet
+
+
+def test_un_outil_sans_regle_se_fait_et_s_inscrit_au_journal(url):
+    o, g = Outils(), gardien(url)
+
+    async def essai():
+        r = await appeler(g, {}, o.outils()[1], {"reference": "A12"})
+        await journal_ecrit(g)
+        return r
+
+    assert asyncio.run(essai()) == "annonce A12"
+    assert o.faits == [("lire_annonce", "A12")]
+    [l] = stockage.Audit(url).lire()
+    assert (l["outil"], l["personne"], l["regle"], l["issue"]) == ("lire_annonce", "41790000001", "auto", "fait")
+    assert l["detail"] is None and "A12" not in json.dumps(l)  # jamais les arguments au journal
+
+
+def test_un_outil_interdit_n_est_ni_propose_ni_fait(url):
+    o, g = Outils(), gardien(url)
+    envoyer, lire = o.outils()
+    assert approbations.filtrer([envoyer, lire], {"envoyer_fiche": "interdit"}) == [lire]
+
+    async def essai():
+        r = await appeler(g, {"envoyer_fiche": "interdit"}, envoyer, {"contact": "x"})
+        await journal_ecrit(g)
+        return r
+
+    assert "pas permis" in asyncio.run(essai())
+    assert o.faits == []
+    assert stockage.Audit(url).lire()[0]["issue"] == "refuse"
+
+
+def test_une_action_a_approuver_attend_l_equipe(url):
+    o, prevenues = Outils(), []
+
+    async def notifier(d):
+        prevenues.append(d)
+
+    g = gardien(url, notifier=notifier)
+
+    async def essai():
+        r = await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "Mme Dupont, sk-abcdefghijklmnopqrstuvwxyz"})
+        await journal_ecrit(g)
+        return r
+
+    reponse = asyncio.run(essai())
+    assert "Demande 1" in reponse and "pas encore faite" in reponse
+    assert o.faits == []  # rien n'est fait avant l'accord
+    [d] = stockage.Approbations(url).lister("attente")
+    assert (d["personne"], d["outil"], d["arguments"]["contact"]) == ("41790000001", "envoyer_fiche", "Mme Dupont, sk-abcdefghijklmnopqrstuvwxyz")
+    assert prevenues == [{"id": 1, "personne": "41790000001", "role": "public", "outil": "envoyer_fiche",
+                          "arguments": {"contact": "Mme Dupont, sk-abcdefghijklmnopqrstuvwxyz"}}]
+    # ce que l'équipe lit : les arguments, sans le secret
+    assert approbations.apercu(d["arguments"]) == "contact : Mme Dupont, [masqué]"
+    assert stockage.Audit(url).lire()[0]["issue"] == "attente"
+
+
+def test_accordee_elle_est_faite_au_nom_de_la_personne_une_seule_fois(url):
+    o, issues = Outils(), []
+
+    async def prevenir(d, etat):
+        issues.append((d["personne"], etat))
+
+    g = gardien(url, prevenir=prevenir)
+    g.connaitre(o.outils())
+
+    async def essai():
+        await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "Mme Dupont"})
+        issue = await g.decider(1, True, "41790000099")
+        with pytest.raises(ValueError, match="n'attend plus"):
+            await g.decider(1, True, "41790000098")  # deux gestionnaires : une seule fois
+        contexte = await g.contexte("41790000001")
+        encore = await g.contexte("41790000001")
+        await journal_ecrit(g)
+        return issue, contexte, encore
+
+    issue, contexte, encore = asyncio.run(essai())
+    assert issue == {"id": 1, "etat": "faite", "resultat": "fiche envoyée à Mme Dupont"}
+    assert o.faits == [("envoyer_fiche", "Mme Dupont", "41790000001")]  # au nom de celle qui l'a demandée
+    assert issues == [("41790000001", "faite")]
+    assert "accordée par l'équipe et faite" in contexte and encore == ""  # dit une fois à l'agent
+    d = stockage.Approbations(url).une(1)
+    assert (d["etat"], d["par"]) == ("faite", "41790000099")
+
+
+def test_refusee_ou_sans_reponse_elle_ne_se_fait_pas(url):
+    o, g = Outils(), gardien(url)
+    g.connaitre(o.outils())
+
+    async def essai():
+        await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "A"})
+        await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "B"})
+        refus = await g.decider(1, False, "console")
+        return refus
+
+    assert asyncio.run(essai()) == {"id": 1, "etat": "refusee"}
+    demandes = stockage.Approbations(url)
+    assert demandes.expirer(time.time() + 49 * 3600) == 1  # la seconde, 48 heures sans réponse
+    assert [d["etat"] for d in demandes.lister()] == ["expiree", "refusee"]
+    assert o.faits == []
+    contexte = asyncio.run(g.contexte("41790000001"))
+    assert "refusée par l'équipe" in contexte and "pas eu de réponse à temps" in contexte
+
+
+def test_trop_de_demandes_en_attente(url):
+    o, g = Outils(), gardien(url)
+
+    async def essai():
+        for i in range(stockage.APPROBATIONS_EN_ATTENTE_MAX):
+            await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": str(i)})
+        return await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "de trop"})
+
+    assert "trop de demandes" in asyncio.run(essai())
+
+
+def test_seul_un_gestionnaire_decide_sur_whatsapp(url):
+    o, g = Outils(), gardien(url)
+    g.connaitre(o.outils())
+
+    async def essai():
+        await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "A"})
+        return (await g.choix("41790000001", "visiteur", "ap:1:oui"), await g.choix("41790000099", "gestionnaire", "ap:1:oui"),
+                await g.choix("41790000099", "gestionnaire", "ap:1:non"))
+
+    visiteur, gestionnaire, encore = asyncio.run(essai())
+    assert visiteur == "Seule l'équipe peut répondre à cette demande."
+    assert gestionnaire.startswith("Demande 1 accordée, c'est fait.")
+    assert encore.startswith("C'est déjà réglé")
+
+
+def test_une_action_accordee_qui_echoue(url):
+    g = gardien(url)
+
+    def casser(quoi: str) -> str:
+        """Casse."""
+        raise RuntimeError("panne, clé sk-abcdefghijklmnopqrstuvwxyz")
+
+    g.connaitre([casser])
+
+    async def essai():
+        await appeler(g, {"casser": "approbation"}, casser, {"quoi": "x"})
+        return await g.decider(1, True, "console")
+
+    issue = asyncio.run(essai())
+    assert issue["etat"] == "echec" and "sk-" not in issue["resultat"]
+
+
+# Avec le vrai Agno : un modèle qui appelle vraiment un outil
+
+
+@dataclass
+class ModeleOutil(Model):
+    """Au premier appel, demande l'outil `outil` ; ensuite, répond avec ce que l'outil a rendu."""
+
+    id: str = "faux-outil"
+    name: str = "FauxOutil"
+    provider: str = "essai"
+    outil: str = "envoyer_fiche"
+    vus: list = field(default_factory=list)
+
+    def _repondre(self, messages):
+        resultats = [m.content for m in messages or [] if getattr(m, "role", "") == "tool"]
+        if resultats:
+            self.vus.append(str(resultats[-1]))
+            return ModelResponse(role="assistant", content=f"Voilà : {resultats[-1]}")
+        return ModelResponse(role="assistant", content="", tool_calls=[{
+            "id": "appel-1", "type": "function", "function": {"name": self.outil, "arguments": json.dumps({"contact": "Mme Dupont"})}}])
+
+    def invoke(self, messages=None, **kw):
+        return self._repondre(messages)
+
+    async def ainvoke(self, messages=None, **kw):
+        return self._repondre(messages)
+
+    def invoke_stream(self, messages=None, **kw):
+        yield self._repondre(messages)
+
+    async def ainvoke_stream(self, messages=None, **kw):
+        yield self._repondre(messages)
+
+    def _parse_provider_response(self, response, **kw):
+        return response
+
+    def _parse_provider_response_delta(self, response):
+        return response
+
+
+@pytest.mark.parametrize("regle", ["approbation", "auto"])
+def test_avec_un_vrai_agent_agno(url, regle):
+    o, g = Outils(), gardien(url)
+    conf = configuration.lire({**CONF, "approbations": {"envoyer_fiche": regle} if regle != "auto" else {}})
+    modele = ModeleOutil()
+    agent = construire(conf, None, {}, principal=modele, outils=o.outils(), gardien=g)
+    sortie = asyncio.run(agent.arun("Envoie la fiche à Mme Dupont", user_id="41790000001", session_id="41790000001"))
+    asyncio.run(journal_ecrit(g))
+    if regle == "approbation":
+        assert o.faits == [] and "attend l'accord" in modele.vus[0]
+        assert stockage.Approbations(url).lister("attente")[0]["arguments"] == {"contact": "Mme Dupont"}
+    else:
+        assert o.faits == [("envoyer_fiche", "Mme Dupont", "41790000001")]
+        assert "fiche envoyée" in sortie.content
+    assert [l["outil"] for l in stockage.Audit(url).lire()] == ["envoyer_fiche"]
+
+
+def test_un_outil_interdit_n_est_pas_donne_a_agno(url):
+    o = Outils()
+    conf = configuration.lire({**CONF, "approbations": {"envoyer_fiche": "interdit"}})
+    agent = construire(conf, None, {}, principal=ModeleOutil(), outils=o.outils())
+    assert [getattr(t, "__name__", None) for t in agent.tools] == ["lire_annonce"]
+
+
+# Les routes internes (la console, à travers la porte)
+
+
+def test_les_routes_internes(url):
+    from test_app import FauxAgent, FauxExpediteur
+
+    app = creer({"CLIENT_CONFIG": json.dumps(CONF), "DATABASE_URL": url, "INTERNE_TOKEN": "interne"},
+                agent=FauxAgent(), expediteur=FauxExpediteur(), attente=0.01)
+    t = TestClient(app)
+    demandes, audit = stockage.Approbations(url), stockage.Audit(url)
+    demandes.demander("41790000001", "public", "envoyer_fiche", {"contact": "Mme Dupont, sk-abcdefghijklmnopqrstuvwxyz"})
+    audit.noter("41790000001", "envoyer_fiche", "approbation", "attente", 0.01, "demande 1")
+    interne = {"x-megga-interne": "interne"}
+    assert t.get("/interne/suivi/approbations").status_code == 401
+    lu = t.get("/interne/suivi/approbations", params={"etat": "attente"}, headers=interne).json()["demandes"]
+    assert [(d["id"], d["outil"], d["apercu"]) for d in lu] == [(1, "envoyer_fiche", "contact : Mme Dupont, [masqué]")]
+    assert "arguments" not in lu[0]
+    assert t.get("/interne/suivi/approbations", params={"etat": "nimporte"}, headers=interne).status_code == 400
+    assert t.get("/interne/suivi/audit", headers=interne).json()["appels"][0]["issue"] == "attente"
+    # la console décide ; l'outil n'existe pas dans cet agent d'essai : accordée, mais en échec, sans planter
+    assert t.post("/interne/approbations/1", json={"accord": "oui"}, headers=interne).status_code == 400
+    r = t.post("/interne/approbations/1", json={"accord": True}, headers=interne)
+    assert r.status_code == 200 and r.json()["etat"] == "echec"
+    assert t.post("/interne/approbations/1", json={"accord": False}, headers=interne).status_code == 409
+    assert t.post("/interne/approbations/1", json={"accord": True}).status_code == 401
+
+
+# L'atelier : la console lit et décide, à travers la porte
+
+
+def test_l_atelier_lit_et_decide(tmp_path):
+    from atelier.app import creer as creer_atelier
+    from atelier.porte import PorteErreur
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, MEGGA, FaussePorte, FauxModele, jeton_client, nouveau_client
+
+    class Porte(FaussePorte):
+        def __init__(self):
+            super().__init__()
+            self.lus, self.decisions = [], []
+
+        async def suivi(self, ident, chemin="", **params):
+            self.lus.append((ident, chemin, {k: v for k, v in params.items() if v is not None}))
+            return {"demandes": [{"id": 4}]} if chemin == "/approbations" else {"appels": [{"outil": "rappeler"}]}
+
+        async def decider(self, ident, numero, accord):
+            self.decisions.append((ident, numero, accord))
+            if numero == 9:
+                raise PorteErreur(409, '{"erreur": "la demande 9 n\'attend plus de réponse (faite)"}')
+            return {"id": numero, "etat": "faite" if accord else "refusee"}
+
+    porte = Porte()
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db",
+                                  "ESSAIS_DIR": str(tmp_path / "essais"), "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE},
+                                 porte=porte, principal_essai=FauxModele()))
+    nouveau_client(t)
+    client = jeton_client(t)
+    assert t.get("/atelier/clients/exemple/approbations", params={"etat": "attente"}, headers=client).json() == {"demandes": [{"id": 4}]}
+    assert t.get("/atelier/clients/exemple/approbations", params={"etat": "x"}, headers=client).status_code == 400
+    audit = t.get("/atelier/clients/exemple/audit", params={"jours": 30}, headers=client).json()
+    assert audit["periode_jours"] == 30 and audit["appels"] == [{"outil": "rappeler"}]
+    assert [(c, p.get("etat")) for _, c, p in porte.lus] == [("/approbations", "attente"), ("/audit", None)]
+    # le client décide pour son agent ; MEGGA aussi
+    assert t.post("/atelier/clients/exemple/approbations/4", json={"accord": True}, headers=client).json() == {"id": 4, "etat": "faite"}
+    assert t.post("/atelier/clients/exemple/approbations/5", json={"accord": False}, headers=MEGGA).json()["etat"] == "refusee"
+    assert t.post("/atelier/clients/exemple/approbations/4", json={"accord": "oui"}, headers=client).status_code == 400
+    assert t.post("/atelier/clients/exemple/approbations/9", json={"accord": True}, headers=client).status_code == 409
+    assert porte.decisions == [("exemple", 4, True), ("exemple", 5, False), ("exemple", 9, True)]
+    # le client règle lui-même ses approbations
+    r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {"approbations": {"rappeler": "approbation"}}})
+    assert r.status_code == 201, r.text
+    assert r.json()["config"]["approbations"] == {"rappeler": "approbation"}
