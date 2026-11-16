@@ -4,6 +4,8 @@
   est masqué avant l'envoi, même si le modèle l'a écrit.
 - Un débit limité par personne : au-delà, une phrase polie au lieu d'un tour de
   modèle (protège la facture d'un client contre une boucle ou un abus).
+- Un plafond par jour pour les personnes qui ne sont pas les gens du client (visiteurs,
+  partenaires, logiciels) : par personne, et pour tout le client.
 """
 
 from __future__ import annotations
@@ -109,3 +111,66 @@ class Debit:
             return False
         self._prevenu[personne] = maintenant
         return True
+
+
+TROP_JOUR = "J'ai beaucoup échangé aujourd'hui et je dois m'arrêter là. Je reprends demain."
+PAR_PERSONNE_JOUR = 100  # tours par jour pour un visiteur, un partenaire, une personne venue par API
+CLIENT_JOUR = 2000  # tours par jour pour tous ceux-là ensemble
+SANS_PLAFOND = ("gestionnaire",)  # les gens du client ne sont jamais arrêtés
+
+
+class Plafond:
+    """Au plus PAR_PERSONNE_JOUR tours par personne et CLIENT_JOUR pour tout le client, par jour (UTC), hors des gens du
+    client. Le débit (Debit) arrête une rafale ; le plafond arrête un abus lent, qui ferait sinon 2 880 tours de modèle par
+    jour et par numéro (relecture du 16.11.2026, I7). En mémoire : un conteneur endormi repart à zéro, mais une personne
+    qui écrit sans cesse le garde éveillé."""
+
+    def __init__(self, par_personne: int = PAR_PERSONNE_JOUR, client: int = CLIENT_JOUR):
+        self.par_personne, self.client = par_personne, client
+        self._jour = ""
+        self._personnes: dict[str, int] = {}
+        self._total = 0
+        self._prevenus: set[str] = set()
+        self._signales: set[str] = set()
+
+    def _aujourdhui(self, maintenant: float | None) -> None:
+        jour = time.strftime("%Y-%m-%d", time.gmtime(time.time() if maintenant is None else maintenant))
+        if jour != self._jour:
+            self._jour, self._personnes, self._total, self._prevenus, self._signales = jour, {}, 0, set(), set()
+
+    def libre(self, personne: str, role: str, maintenant: float | None = None) -> str | None:
+        """None si un tour est permis ; sinon « personne » ou « client », le plafond atteint. Ne compte rien."""
+        if role in SANS_PLAFOND:
+            return None
+        self._aujourdhui(maintenant)
+        if self._personnes.get(personne, 0) >= self.par_personne:
+            return "personne"
+        if self._total >= self.client:
+            return "client"
+        return None
+
+    def compter(self, personne: str, role: str, maintenant: float | None = None) -> None:
+        if role in SANS_PLAFOND:
+            return
+        self._aujourdhui(maintenant)
+        self._personnes[personne] = self._personnes.get(personne, 0) + 1
+        self._total += 1
+
+    def prevenir(self, personne: str) -> bool:
+        """Faut-il le dire à cette personne ? Une fois par jour."""
+        if personne in self._prevenus:
+            return False
+        self._prevenus.add(personne)
+        return True
+
+    def signaler(self, quoi: str) -> bool:
+        """Faut-il le noter au journal ? Une fois par jour et par plafond (« client », ou « personne »)."""
+        if quoi in self._signales:
+            return False
+        self._signales.add(quoi)
+        return True
+
+    def attente(self, maintenant: float | None = None) -> int:
+        """Les secondes jusqu'à minuit (UTC), pour Retry-After."""
+        t = time.time() if maintenant is None else maintenant
+        return max(1, 86400 - int(t) % 86400)

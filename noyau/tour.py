@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from . import accueil as accueils
 from .api import DELAI_TOUR
 from .config import Config
-from .garde import TROP, Debit, masquer_secrets
+from .garde import TROP, TROP_JOUR, Debit, Plafond, masquer_secrets
 from .oral import pour_la_voix
 from .typographie import nettoyer
 from .voix import a_ecrire, se_prete
@@ -76,6 +76,7 @@ class Conversations:
         self.seuil_regard = seuil_regard
         self.rappels = rappels
         self.debit = debit or Debit()
+        self.plafond = Plafond()
         # Un tour par API ne retient pas la personne plus longtemps que le logiciel n'attend.
         self.delai_api = delai_api
         # Le suivi, écrit en arrière-plan : il ne retarde ni ne fait échouer un tour.
@@ -173,6 +174,14 @@ class Conversations:
                 if self.debit.prevenir(personne):
                     await self._ecrire(personne, TROP)
                 return
+            if (atteint := self.plafond.libre(personne, role)) is not None:
+                for m in messages:
+                    self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
+                self.noter_plafond(atteint)
+                if self.plafond.prevenir(personne):
+                    await self._ecrire(personne, TROP_JOUR)
+                return
+            self.plafond.compter(personne, role)
             etat = {"pose": False}
             regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
             try:
@@ -314,6 +323,12 @@ class Conversations:
             self.noter_journal("tour_echec", detail=type(e).__name__)
             return EXCUSE, True
 
+    def noter_plafond(self, atteint: str) -> None:
+        """Le plafond du jour atteint (« personne » ou « client ») : au journal, une fois par jour, sans numéro."""
+        if self.plafond.signaler(atteint):
+            log.warning("plafond du jour atteint (%s, %s)", atteint, self.conf.id)
+            self.noter_journal("plafond", detail=atteint)
+
     def entendu(self, personne: str) -> str:
         """Le dernier message de cette personne, tel que le modèle l'a lu dans son tour."""
         return self._entendus.get(personne, "")
@@ -332,6 +347,7 @@ class Conversations:
             async with self._a_son_tour(personne):
                 if not self.debit.permis(personne):
                     return None
+                self.plafond.compter(personne, role)
                 premier = await self._premier(personne, role)
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)

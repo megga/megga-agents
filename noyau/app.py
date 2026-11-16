@@ -461,6 +461,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return trop("clé", debit_cles.attente(cle))
         if not conversations.debit.libre(qui):
             return trop("personne", conversations.debit.attente(qui))
+        if (atteint := conversations.plafond.libre(qui, role)) is not None:  # le plafond du jour (relecture, I7)
+            conversations.noter_plafond(atteint)
+            attente = conversations.plafond.attente()
+            return erreur(429, "plafond du jour atteint", attente=attente, entetes={"retry-after": str(attente)})
         debit_cles.permis(cle)
         tour = await conversations.repondre_api(qui, texte.strip(), role)
         if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue

@@ -269,3 +269,51 @@ def test_l_annonce_survit_au_sommeil_du_conteneur(tmp_path):
     c2, exp2 = conversations()  # le conteneur s'est endormi, puis réveillé
     assert asyncio.run(c2.envoyer_de_soi_meme(MOI, [{"texte": "Demande 2"}], "demande")) == "modele"
     assert exp1.journal == [("modele", MOI, "attente_client")] and exp2.journal == []
+
+
+def test_le_plafond_du_jour():
+    """Relecture du 16.11.2026 (I7) : au-delà de son plafond du jour, un visiteur reçoit une phrase, une fois, et plus de
+    tour de modèle ; un gestionnaire n'est jamais arrêté ; le journal le note une fois."""
+    from noyau.garde import TROP_JOUR, Plafond
+
+    p = Plafond(par_personne=2, client=3)
+    for _ in range(2):
+        assert p.libre("a", "visiteur") is None
+        p.compter("a", "visiteur")
+    assert p.libre("a", "visiteur") == "personne" and p.libre("b", "visiteur") is None
+    p.compter("b", "visiteur")
+    assert p.libre("c", "partenaire") == "client" and p.libre("g", "gestionnaire") is None
+    assert p.libre("a", "visiteur", maintenant=time.time() + 86400) is None  # le lendemain
+
+    journal = []
+
+    class Journal:
+        def noter(self, genre, quantite=1, detail="", quand=None):
+            journal.append((genre, detail))
+
+    agent, exp = Agent(), Exp()
+    c = Conversations(conf(), agent, exp, contacts=Contacts(time.time()), journal=Journal(), attente=0.01)
+    c.plafond = Plafond(par_personne=1, client=100)
+    asyncio.run(tourner(c, entrant("Bonjour", "w1")))
+    asyncio.run(tourner(c, entrant("Encore", "w2")))
+    asyncio.run(tourner(c, entrant("Et encore", "w3")))
+    assert agent.appels == ["Bonjour"]
+    assert [e[2] for e in exp.journal if e[0] == "texte"].count(TROP_JOUR) == 1
+    assert journal.count(("plafond", "personne")) == 1
+
+
+def test_une_plaquette_piegee_est_refusee():
+    """Relecture du 16.11.2026 (I6) : une image de PDF qui se décompresse en centaines de Mo est refusée sans remplir la
+    mémoire."""
+    import zlib
+
+    from packs.immobilier import fiche as fiches
+
+    bombe = zlib.compress(b"\0" * 60_000_000, 9)
+    pdf = b"%PDF" + bombe
+    with pytest.raises(ValueError, match="trop lourde"):
+        fiches.octets_image(pdf, {"mode": "flate-jpeg", "debut": 4, "fin": 4 + len(bombe)})
+    with pytest.raises(ValueError, match="trop lourde"):
+        fiches.octets_image(pdf, {"mode": "flate", "debut": 4, "fin": 4 + len(bombe), "largeur": 100, "hauteur": 100, "predicteur": 1})
+    petite = zlib.compress(b"\xff\xd8" + b"x" * 1000)
+    assert fiches.octets_image(b"%PDF" + petite, {"mode": "flate-jpeg", "debut": 4, "fin": 4 + len(petite)}).startswith(b"\xff\xd8")
