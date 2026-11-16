@@ -149,9 +149,11 @@ class ServeurMcp(Strict):
 
 class Leads(Strict):
     """Où part la fiche d'un lead (noyau/connecteurs.py) : un webhook https du client (son CRM, un tableur, Zapier),
-    signé par le secret LEADS_SECRET s'il est posé. Sans webhook, les leads restent dans la base et la console."""
+    signé par le secret LEADS_SECRET s'il est posé. Sans webhook, les leads restent dans la base et la console.
+    `alerte` : chaque gestionnaire est aussi prévenu sur WhatsApp quand l'agent note une demande (vrai par défaut)."""
 
     webhook: str | None = Field(default=None, pattern=r"^https://\S{4,500}$")
+    alerte: bool = True
 
 
 class Role(Strict):

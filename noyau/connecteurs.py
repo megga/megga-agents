@@ -21,15 +21,20 @@ import hashlib
 import hmac
 import json
 import logging
+from collections.abc import Sequence
 
 import httpx
 from agno.run import RunContext
+
+from .garde import masquer_secrets
+from .reprises import _qui
 
 log = logging.getLogger("megga")
 
 CONSIGNE_LEADS = ("Quand une personne a un vrai besoin (achat, vente, location, devis, rendez-vous), enregistre-le "
                   "(enregistrer_lead) dès que tu le connais, avec un score de 1 (curieux) à 5 (prêt à décider) ; "
-                  "complète-le plus tard s'il le faut. Ne le présente pas comme une formalité.")
+                  "complète-le plus tard s'il le faut. Ne le présente pas comme une formalité. Dis ensuite à la personne, avec tes mots, "
+                  "ce que l'outil a rendu, sans numéro technique et sans promettre de rappel ni de délai.")
 ESSAIS_ENVOI = 2
 PAUSE_ENVOI = 2.0  # secondes entre deux essais
 
@@ -43,11 +48,15 @@ def _court(v, n: int) -> str:
 
 
 class Leads:
-    """Les leads d'un client : `magasin` (stockage.Leads), `webhook` (son adresse ou None), `secret` (LEADS_SECRET)."""
+    """Les leads d'un client : `magasin` (stockage.Leads), `webhook` (son adresse ou None), `secret` (LEADS_SECRET).
+    `gestionnaires` : les numéros (« +41… ») prévenus sur WhatsApp d'une demande, si `alerte` ; `conversations`
+    (noyau/tour.py) est posé une fois créé, comme pour le transfert."""
 
     def __init__(self, magasin, webhook: str | None = None, secret: str = "", client: str = "", agent: str = "",
-                 transport: httpx.AsyncBaseTransport | None = None):
+                 transport: httpx.AsyncBaseTransport | None = None, gestionnaires: Sequence[str] = (), alerte: bool = True):
         self.magasin, self.webhook, self.secret = magasin, webhook, secret
+        self.gestionnaires, self.alerte = list(gestionnaires), alerte
+        self.conversations = None
         self.client, self.agent, self._transport = client, agent, transport
         self._taches: set[asyncio.Task] = set()
 
@@ -82,10 +91,34 @@ class Leads:
                 t = asyncio.get_running_loop().create_task(leads.envoyer(ident, personne, fiche))
                 leads._taches.add(t)
                 t.add_done_callback(leads._taches.discard)
-                return f"Lead {ident} enregistré et transmis à l'équipe commerciale."
-            return f"Lead {ident} enregistré pour l'équipe."
+            if leads._prevenir_equipe(ident, personne, fiche):
+                return f"Demande {ident} enregistrée ; l'équipe est prévenue."
+            if leads.webhook:
+                return f"Demande {ident} enregistrée et transmise au logiciel de l'équipe."
+            return f"Demande {ident} enregistrée pour l'équipe."
 
         return [enregistrer_lead]
+
+    def _prevenir_equipe(self, ident: int, personne: str, fiche: dict) -> bool:
+        """Chaque gestionnaire (sauf la personne, s'il note lui-même) reçoit la demande sur WhatsApp, une fois fini le tour
+        de la personne. Rend vrai si une alerte est programmée."""
+        if not self.alerte or self.conversations is None:
+            return False
+        destinataires = [n for n in self.gestionnaires if n != _qui(personne)]
+        if not destinataires:
+            return False
+        agent = self.agent or "L'agent"
+        lignes = [f"{agent} a noté une demande (n° {ident}) de {_qui(personne)} : {fiche['besoin']}."]
+        lignes += [f"{nom} : {fiche[cle]}" for cle, nom in (("delai", "Délai"), ("nom", "Nom"), ("lieu", "Lieu"), ("budget", "Budget"))
+                   if fiche.get(cle)]
+        lignes.append(f"Score : {fiche['score']}/5")
+        corps = masquer_secrets("\n".join(lignes))
+        besoin = masquer_secrets(fiche["besoin"])
+        conversations = self.conversations
+        for n in destinataires:
+            conversations.apres_le_tour(personne, lambda n=n: conversations.envoyer_de_soi_meme(
+                n, [{"texte": corps}], "lead", variables=[agent, besoin]))
+        return True
 
     async def envoyer(self, ident: int, personne: str, fiche: dict) -> bool:
         """La fiche au webhook du client, signée ; retentée une fois. Rend vrai si elle est partie."""

@@ -70,7 +70,7 @@ def test_un_lead_part_au_webhook_signe(url):
         await fini(l)
         return r
 
-    assert asyncio.run(essai()) == "Lead 1 enregistré et transmis à l'équipe commerciale."
+    assert asyncio.run(essai()) == "Demande 1 enregistrée et transmise au logiciel de l'équipe."
     [requete] = recus
     corps = requete.content
     assert requete.headers["x-megga-signature"] == connecteurs.signature("secret-du-client", corps)
@@ -99,7 +99,7 @@ def test_un_webhook_en_panne_est_retente_puis_note(url, monkeypatch):
 def test_sans_webhook_et_les_refus(url):
     l = connecteurs.Leads(stockage.Leads(url))
     outil = l.outils()[0]
-    assert asyncio.run(outil("Une villa", 5, Contexte("+41790000001"))) == "Lead 1 enregistré pour l'équipe."
+    assert asyncio.run(outil("Une villa", 5, Contexte("+41790000001"))) == "Demande 1 enregistrée pour l'équipe."
     assert "score" in asyncio.run(outil("Une villa", 9, Contexte("+41790000001")))
     assert "besoin" in asyncio.run(outil("  ", 3, Contexte("+41790000001")))
     assert stockage.Leads(url).lister()[0]["etat"] == "garde"
