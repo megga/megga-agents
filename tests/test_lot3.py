@@ -89,6 +89,21 @@ def test_secrets_masques():
     assert MASQUE in masquer_secrets("a1" * 25)
 
 
+def test_un_lien_d_annonce_n_est_pas_un_secret():
+    """Relecture du 16.11.2026 (C1) : un identifiant d'annonce long et chiffré, dans un lien, partait en « [masqué] »."""
+    for lien in ("https://fspdubai.com/property/dubai-high-floor-2-br-apartment-bright-unit-with-canal-pool-view",
+                 "https://www.jamesedition.com/real_estate/marbella-spain/villa-with-sea-views-in-sierra-blanca-12345678",
+                 "http://fspdubai.com/en/property/dubai-premium-4-br-townhouse-high-potential-investment."):
+        texte = f"La fiche : {lien} (à voir)"
+        assert masquer_secrets(texte) == texte
+    # Hors d'un lien, ou dans ses paramètres, le jeton reste masqué ; les clés connues, partout.
+    jeton = "a1" * 25
+    assert masquer_secrets(f"jeton {jeton}") == f"jeton {MASQUE}"
+    assert masquer_secrets(f"https://site.ch/x?jeton={jeton}") == f"https://site.ch/x?jeton={MASQUE}"
+    assert MASQUE in masquer_secrets("https://site.ch/sk-ant-api03-abcdefghijklmnopqrstuv")
+    assert MASQUE in masquer_secrets("https://u:p@h/postgresql://u:motdepasse@hote/db")
+
+
 def test_debit():
     d = Debit(maximum=2, fenetre=60)
     assert d.permis("p", 0) and d.permis("p", 1) and not d.permis("p", 2)
