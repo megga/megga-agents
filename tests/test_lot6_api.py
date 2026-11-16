@@ -541,7 +541,7 @@ def test_une_place_de_cle_est_rendue_si_le_tour_n_a_pas_lieu(sqlite):
     conv = app.state.conversations
     origine = conv.repondre_api
 
-    async def deja_pris(personne, texte):  # une autre requête de la même personne a pris la dernière place
+    async def deja_pris(personne, texte, role="public"):  # une autre requête de la même personne a pris la dernière place
         return None
 
     conv.repondre_api = deja_pris

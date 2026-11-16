@@ -76,6 +76,56 @@ class WhatsApp(Strict):
     version_graph: str = Field(default="v26.0", pattern=r"^v\d+\.\d+$")
 
 
+# Les groupes d'outils qu'un rôle peut recevoir (noyau/roles.py, noyau/app.py, outils_du_client).
+GROUPES_OUTILS = ("rappels", "immobilier")
+
+
+class Role(Strict):
+    """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils."""
+
+    consignes: str = Field(default="", max_length=12000)
+    outils: tuple[Literal["rappels", "immobilier"], ...] = ("rappels",)
+
+    @field_validator("consignes")
+    @classmethod
+    def sans_artefacts(cls, v: str) -> str:
+        if re.search(r"[\u2014\u2013\u00b7]", v):
+            raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+
+class Roles(Strict):
+    """Les personnes qui écrivent à l'agent, par rôle (noyau/roles.py). Sans rôles, tout le monde parle au même agent.
+
+    gestionnaire : les gens du client (leurs numéros dans le secret GESTIONNAIRES, jamais ici) ;
+    partenaire   : ceux que le client a inscrits (table megga_partenaires) ;
+    visiteur     : toute autre personne ; sans ce rôle, un visiteur n'est pas servi (refus, une fois par jour s'il est réglé).
+    Un numéro bloqué par le client n'est jamais lu.
+    """
+
+    gestionnaire: Role | None = None
+    partenaire: Role | None = None
+    visiteur: Role | None = None
+    refus: str | None = Field(default=None, max_length=1000)
+
+
+class Gestion(Strict):
+    """La gestion du site du client (son API /api/gestion), que les outils des packs appellent au nom d'un
+    gestionnaire. La clé est un secret (GESTION_CLE), jamais ici. `sites` : les biens dont l'identifiant
+    commence par ce préfixe ont leur propre site."""
+
+    url: str = Field(pattern=r"^https://[a-z0-9.-]+(:\d+)?$")
+    sites: dict[str, str] = {}
+
+    @field_validator("sites")
+    @classmethod
+    def adresses(cls, v: dict[str, str]) -> dict[str, str]:
+        for prefixe, url in v.items():
+            if not re.fullmatch(r"[a-z0-9-]{1,40}", prefixe) or not re.fullmatch(r"https://[a-z0-9.-]+", url):
+                raise ValueError("sites : {préfixe de l'identifiant d'un bien: adresse https du site}")
+        return v
+
+
 class Config(Strict):
     version: int = VERSION
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
@@ -101,6 +151,10 @@ class Config(Strict):
     outils: tuple[Literal["immobilier"], ...] = ()
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
     catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
+    # Les rôles des personnes (gestionnaires, partenaires, visiteurs) ; sans eux, un seul agent pour tous.
+    roles: Roles | None = None
+    # La gestion du site du client, pour les outils qui agissent en son nom.
+    gestion: Gestion | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -113,9 +167,17 @@ class Config(Strict):
     @model_validator(mode="after")
     def outils_du_metier(self):
         hors = [o for o in self.outils if o not in METIERS[self.metier]]
+        for r in self.les_roles().values():
+            hors += [o for o in r.outils if o != "rappels" and o not in METIERS[self.metier] and o not in hors]
         if hors:
             raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
         return self
+
+    def les_roles(self) -> dict[str, Role]:
+        """Les rôles réglés : {nom: rôle}, vide sans rôles."""
+        if self.roles is None:
+            return {}
+        return {n: r for n in ("gestionnaire", "partenaire", "visiteur") if (r := getattr(self.roles, n)) is not None}
 
     @field_validator("version")
     @classmethod
@@ -135,7 +197,7 @@ class Config(Strict):
 def manques(conf: Config) -> list[str]:
     """Ce qui empêche une configuration valide de servir (l'atelier et le pilotage la refusent)."""
     m = []
-    if "immobilier" in conf.outils and not conf.catalogue:
+    if ("immobilier" in conf.outils or any("immobilier" in r.outils for r in conf.les_roles().values())) and not conf.catalogue:
         m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
     return m
 

@@ -11,7 +11,7 @@ from agno.agent import Agent
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 
-from .config import Config
+from .config import Config, Role
 from .garde import crochet_secrets
 from .typographie import crochet_typographie
 
@@ -39,7 +39,7 @@ def modele(nom: str, cles: dict[str, str]) -> Model:
     raise ValueError(f"modèle inconnu : {nom}")
 
 
-def consignes(config: Config) -> list[str]:
+def consignes(config: Config, role: Role | None = None) -> list[str]:
     base = [
         f"Tu es {config.nom_agent}, et tu travailles pour {config.entreprise}.",
         f"Ton ton : {config.ton}. Langue par défaut : {config.langue}.",
@@ -47,22 +47,24 @@ def consignes(config: Config) -> list[str]:
     ]
     if config.consignes.strip():
         base.append(config.consignes.strip())
+    if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
+        base.append(role.consignes.strip())
     return base
 
 
 def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None,
-               outils: list | None = None) -> Agent:
+               outils: list | None = None, role: Role | None = None, nom_role: str | None = None) -> Agent:
     """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs."""
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
     return Agent(
-        id=config.id,
+        id=f"{config.id}-{nom_role}" if nom_role else config.id,
         name=config.nom_agent,
         model=principal,
         fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
         db=db,
-        instructions=consignes(config),
+        instructions=consignes(config, role),
         add_history_to_context=True,
         num_history_runs=12,
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.
@@ -74,4 +76,6 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         post_hooks=[crochet_secrets, crochet_typographie],
         markdown=False,
         telemetry=False,
+        # Les photos reçues sont montrées au modèle, jamais gardées dans l'historique (la base).
+        store_media=False,
     )

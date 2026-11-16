@@ -1,7 +1,8 @@
 """WhatsApp par l'API Cloud de Meta : signature, lecture des messages reçus, envoi.
 
 Repris d'Alix (meta.js) : texte, vocaux (reçus et envoyés), modèles approuvés,
-réactions, accusé de lecture. Les autres médias viendront avec les packs.
+réactions, accusé de lecture ; photos, vidéos et documents reçus (leur identifiant chez Meta) ;
+images, documents, vidéos, listes, boutons, carrousels et formulaires (WhatsApp Flows) envoyés.
 """
 
 from __future__ import annotations
@@ -39,6 +40,17 @@ def signature_valide(corps: bytes, entete: str | None, secret: str | None) -> bo
 
 
 @dataclass(frozen=True)
+class Media:
+    """Une photo, une vidéo ou un document reçu : son identifiant chez Meta, pour le télécharger plus tard."""
+
+    id: str
+    genre: str  # image, video, document
+    type: str = ""  # le type MIME
+    nom: str = ""
+    compressee: bool = False  # une vidéo envoyée comme vidéo ; comme document, elle garde sa qualité
+
+
+@dataclass(frozen=True)
 class Entrant:
     id: str
     de: str
@@ -46,6 +58,10 @@ class Entrant:
     envoye: float  # secondes depuis 1970
     genre: str
     vocal: str = ""  # l'identifiant chez Meta d'un message vocal
+    media: Media | None = None
+    choix: str = ""  # l'identifiant d'une ligne de liste ou d'un bouton choisi
+    formulaire: str = ""  # un formulaire rempli (WhatsApp Flow), ses champs en JSON
+    profil: str = ""  # le nom que la personne s'est donné sur WhatsApp
 
     def frais(self, maintenant: float | None = None) -> bool:
         return not self.envoye or (maintenant or time.time()) - self.envoye <= FRAICHEUR_S
@@ -61,33 +77,65 @@ def lire_entrants(evenement: dict, numero_id: str) -> list[Entrant]:
             v = c.get("value") or {}
             if c.get("field") != "messages" or (v.get("metadata") or {}).get("phone_number_id") != numero_id:
                 continue
+            profils = {chiffres(x.get("wa_id")): " ".join(str((x.get("profile") or {}).get("name") or "").split())[:80]
+                       for x in v.get("contacts") or [] if isinstance(x, dict)}
             for m in v.get("messages") or []:
-                lu = _lire(m)
+                lu = _lire(m, profils.get(chiffres((m or {}).get("from")), "") if isinstance(m, dict) else "")
                 if lu:
                     sortie.append(lu)
     return sortie
 
 
-def _lire(m: dict) -> Entrant | None:
+def _lire(m: dict, profil: str = "") -> Entrant | None:
     if not isinstance(m, dict) or not m.get("from") or m.get("type") in IGNORES:
         return None
+    genre = m.get("type")
+    interactif = m.get("interactive") or {}
     candidats = [
         (m.get("text") or {}).get("body"),
         (m.get("button") or {}).get("text"),
-        ((m.get("interactive") or {}).get("button_reply") or {}).get("title"),
-        ((m.get("interactive") or {}).get("list_reply") or {}).get("title"),
+        (interactif.get("button_reply") or {}).get("title"),
+        (interactif.get("list_reply") or {}).get("title"),
         (m.get("image") or {}).get("caption"),
+        (m.get("video") or {}).get("caption"),
         (m.get("document") or {}).get("caption"),
     ]
     texte = next((t for t in candidats if isinstance(t, str) and t.strip()), "")
+    x = m.get(genre) if genre in ("image", "video", "document") else None
+    media = None
+    if isinstance(x, dict) and x.get("id"):
+        type_ = str(x.get("mime_type") or "")[:80]
+        # Une vidéo envoyée comme document garde sa qualité d'origine.
+        video = genre == "video" or (genre == "document" and type_.startswith("video/"))
+        media = Media(id=str(x["id"])[:80], genre="video" if video else genre, type=type_, nom=str(x.get("filename") or "")[:120],
+                      compressee=genre == "video")
+    choix = (interactif.get("list_reply") or {}).get("id") or (interactif.get("button_reply") or {}).get("id") \
+        or (m.get("button") or {}).get("payload") or ""
+    formulaire = (interactif.get("nfm_reply") or {}).get("response_json") if interactif.get("type") == "nfm_reply" else ""
     return Entrant(
         id=str(m.get("id") or ""),
         de=f"+{chiffres(m.get('from'))}",
         texte=texte.strip()[:4000],
         envoye=float(m.get("timestamp") or 0),
-        genre=str(m.get("type") or ""),
-        vocal=str((m.get("audio") or {}).get("id") or "") if m.get("type") == "audio" else "",
+        genre=str(genre or ""),
+        vocal=str((m.get("audio") or {}).get("id") or "") if genre == "audio" else "",
+        media=media,
+        choix=str(choix)[:200],
+        formulaire=str(formulaire or "")[:8000],
+        profil=profil,
     )
+
+
+def decrire_media(media: Media, n: int) -> str:
+    """Le média tel que l'agent le lit dans le message : son genre et son numéro, que ses outils comprennent."""
+    nom = f", « {media.nom} »" if media.nom else ""
+    if media.genre == "video":
+        qualite = ", compressée par WhatsApp" if media.compressee else ", qualité d'origine"
+        return f"[Vidéo reçue : média {n}{qualite}{nom}]"
+    if media.genre == "image":
+        return f"[Photo reçue : média {n}]"
+    genre = "PDF" if "pdf" in (media.type + media.nom).lower() else "Document"
+    return f"[{genre} reçu : média {n}{nom}]"
 
 
 def fenetre_ouverte(dernier_entrant: float | None, maintenant: float | None = None) -> bool:
@@ -167,6 +215,90 @@ class Expediteur:
             "audio": {"id": media, "voice": True} if ogg else {"id": media},
         })
 
+    async def televerser(self, octets: bytes, type_: str, nom: str) -> str:
+        """Dépose un fichier chez Meta ; rend son identifiant, à envoyer ensuite."""
+        r = await self._client.post(
+            f"{self._graph}/{self._numero}/media",
+            headers=self._auth,
+            data={"messaging_product": "whatsapp", "type": type_},
+            files={"file": (nom, octets, type_)},
+        )
+        if r.status_code >= 400:
+            raise RuntimeError(f"Meta dépôt {r.status_code} {r.text[:200]}")
+        return r.json()["id"]
+
+    async def _media(self, vers: str, genre: str, media_id: str = "", lien: str = "", legende: str = "", nom: str = "") -> dict:
+        if bool(media_id) == bool(lien):
+            raise ValueError("un média : son identifiant chez Meta, ou un lien, pas les deux")
+        corps = {"id": media_id} if media_id else {"link": lien}
+        if legende:
+            corps["caption"] = str(legende)[:1024]
+        if nom:
+            corps["filename"] = str(nom)[:240]
+        return await self._envoyer({"recipient_type": "individual", "to": chiffres(vers), "type": genre, genre: corps})
+
+    async def image(self, vers: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        return await self._media(vers, "image", media_id, lien, legende)
+
+    async def document(self, vers: str, nom: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        return await self._media(vers, "document", media_id, lien, legende, nom)
+
+    async def video(self, vers: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        return await self._media(vers, "video", media_id, lien, legende)
+
+    async def liste(self, vers: str, corps: str, bouton: str, section: str, lignes: list[dict]) -> dict:
+        """Une liste à choix (« bouton » l'ouvre), dix lignes au plus : [{id, titre, description?}]."""
+        return await self._envoyer({
+            "recipient_type": "individual", "to": chiffres(vers), "type": "interactive",
+            "interactive": {
+                "type": "list",
+                "body": {"text": str(corps)[:1024]},
+                "action": {"button": str(bouton)[:20], "sections": [{"title": str(section)[:24], "rows": [
+                    {"id": str(l["id"])[:200], "title": str(l["titre"])[:24], **({"description": str(l["description"])[:72]} if l.get("description") else {})}
+                    for l in lignes[:10]]}]},
+            },
+        })
+
+    async def boutons(self, vers: str, corps: str, boutons: list[dict]) -> dict:
+        """Jusqu'à trois boutons de réponse : [{id, titre}]."""
+        return await self._envoyer({
+            "recipient_type": "individual", "to": chiffres(vers), "type": "interactive",
+            "interactive": {
+                "type": "button",
+                "body": {"text": str(corps)[:1024]},
+                "action": {"buttons": [{"type": "reply", "reply": {"id": str(b["id"])[:256], "title": str(b["titre"])[:20]}} for b in boutons[:3]]},
+            },
+        })
+
+    async def carrousel(self, vers: str, corps: str, cartes: list[dict]) -> dict:
+        """De 2 à 10 cartes : [{image (lien), texte (160), bouton (20), url}]."""
+        return await self._envoyer({
+            "recipient_type": "individual", "to": chiffres(vers), "type": "interactive",
+            "interactive": {
+                "type": "carousel",
+                "body": {"text": str(corps)[:1024]},
+                "action": {"cards": [{
+                    "card_index": i, "type": "cta_url",
+                    "header": {"type": "image", "image": {"link": c["image"]}},
+                    "body": {"text": str(c["texte"])[:160]},
+                    "action": {"name": "cta_url", "parameters": {"display_text": str(c["bouton"])[:20], "url": c["url"]}},
+                } for i, c in enumerate(cartes[:10])]},
+            },
+        })
+
+    async def formulaire(self, vers: str, flow_id: str, corps: str, bouton: str, jeton: str, ecran: str) -> dict:
+        """Un formulaire publié (WhatsApp Flow), qu'un bouton ouvre."""
+        return await self._envoyer({
+            "recipient_type": "individual", "to": chiffres(vers), "type": "interactive",
+            "interactive": {
+                "type": "flow",
+                "body": {"text": str(corps)[:1024]},
+                "action": {"name": "flow", "parameters": {
+                    "flow_message_version": "3", "flow_id": str(flow_id), "flow_cta": str(bouton)[:30], "flow_token": jeton,
+                    "flow_action": "navigate", "flow_action_payload": {"screen": ecran}}},
+            },
+        })
+
     async def telecharger(self, media_id: str, maximum: int = MEDIA_MAX) -> bytes:
         """Un média reçu : Meta donne d'abord une adresse temporaire, qui demande aussi le jeton."""
         r = await self._client.get(f"{self._graph}/{media_id}", headers=self._auth)
@@ -204,4 +336,28 @@ class SansWhatsApp:
         self._refus()
 
     async def telecharger(self, media_id: str, maximum: int = MEDIA_MAX) -> bytes:
+        self._refus()
+
+    async def televerser(self, octets: bytes, type_: str, nom: str) -> str:
+        self._refus()
+
+    async def image(self, vers: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        self._refus()
+
+    async def document(self, vers: str, nom: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        self._refus()
+
+    async def video(self, vers: str, media_id: str = "", lien: str = "", legende: str = "") -> dict:
+        self._refus()
+
+    async def liste(self, vers: str, corps: str, bouton: str, section: str, lignes: list[dict]) -> dict:
+        self._refus()
+
+    async def boutons(self, vers: str, corps: str, boutons: list[dict]) -> dict:
+        self._refus()
+
+    async def carrousel(self, vers: str, corps: str, cartes: list[dict]) -> dict:
+        self._refus()
+
+    async def formulaire(self, vers: str, flow_id: str, corps: str, bouton: str, jeton: str, ecran: str) -> dict:
         self._refus()
