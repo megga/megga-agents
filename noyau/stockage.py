@@ -720,6 +720,29 @@ class Reseau:
             c.execute(update(r).where(r.c.id == str(ident)).values(close=time.time()))
         return dict(l._mapping)
 
+    def reprendre_demande(self, d: dict, propositions: list[dict], suite: dict | None = None) -> bool:
+        """Une demande reprise d'un autre agent (packs/immobilier/reprise.py), avec son identifiant et ses choix ;
+        faux si elle existe déjà."""
+        with self._e.begin() as c:
+            if c.execute(select(self._d.c.id).where(self._d.c.id == d["id"])).first() is not None:
+                return False
+            c.execute(insert(self._d).values(id=d["id"], partenaire=d["partenaire"], nom=d.get("nom", "")[:200], gestionnaire=d["gestionnaire"],
+                                             recherche=(d.get("recherche") or "")[:400], suite=(suite or {}).get("recherche", ""),
+                                             depuis=(suite or {}).get("depuis"), cree=d["cree"], statut=d.get("statut") or "nouvelle"))
+            for x in propositions:
+                c.execute(insert(self._p).values(demande=d["id"], rang=int(x["rang"]), reference=str(x["reference"])[:40], bien=_json(x.get("bien") or {}),
+                                                 choix=x.get("choix"), etat=x.get("etat"), decide=x.get("decide")))
+        return True
+
+    def reprendre_recherche(self, r: dict) -> bool:
+        """Une recherche gardée reprise d'un autre agent, avec son identifiant ; faux si elle existe déjà."""
+        with self._e.begin() as c:
+            if c.execute(select(self._r.c.id).where(self._r.c.id == r["id"])).first() is not None:
+                return False
+            c.execute(insert(self._r).values(id=r["id"][:16], partenaire=r["partenaire"], criteres=_json(r["criteres"]), resume=r["resume"][:400],
+                                             cree=r["cree"], derniere=r["derniere"], close=r.get("close")))
+        return True
+
     def oublier_partenaire(self, partenaire: str) -> None:
         """Un partenaire retiré : ses recherches ne sont plus suivies."""
         with self._e.begin() as c:
