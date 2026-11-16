@@ -342,7 +342,8 @@ class Visiteurs:
             message = (message or "").strip()[:1500]
             if not message:
                 raise ValueError("le message pour le visiteur est vide")
-            etat = await self.ecrire(vers, message, "reponse_visiteur", [court(message, 200)])
+            langue = "en" if question and q.get("langue") not in (None, "", "fr") else ""
+            etat = await self.ecrire(vers, message, "reponse_visiteur", [court(message, 200)], langue)
             if question:
                 await asyncio.to_thread(s.questions.repondre, q["id"], message)
             await self.noter_message(vers, message, remis=etat != "aucune")

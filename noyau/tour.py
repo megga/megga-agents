@@ -446,14 +446,14 @@ class Conversations:
                 log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
                 self.noter_journal("envoi_echec", detail="modele")
         # Le repli : le modèle « message » (« Vous avez un message de… ») annonce ce qui est gardé.
-        if garder and self.differes is not None and await self._annoncer(personne):
+        if garder and self.differes is not None and await self._annoncer(personne, langue):
             return "modele"
         return "attente"
 
-    async def _annoncer(self, personne: str) -> bool:
-        """Le modèle Meta « message », s'il est réglé : il annonce un message qui attend, sa réponse rouvre les 24 heures et
-        ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
-        modele = self.conf.modeles_meta.get("message")
+    async def _annoncer(self, personne: str, langue: str = "") -> bool:
+        """Le modèle Meta « message » (« message_<langue> » d'abord), s'il est réglé : il annonce un message qui attend, sa
+        réponse rouvre les 24 heures et ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
+        modele = self.conf.modeles_meta.get(f"message_{langue}") or self.conf.modeles_meta.get("message")
         if modele is None:
             return False
         # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.

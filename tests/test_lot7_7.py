@@ -101,3 +101,24 @@ def test_variables_des_modeles_sur_une_ligne():
     from noyau.whatsapp import en_ligne
 
     assert en_ligne("Prix en hausse.\nLe suivi s'arrête.\t  Fin") == "Prix en hausse. Le suivi s'arrête. Fin"
+
+
+def test_le_repli_en_anglais_pour_qui_parle_anglais(tmp_path):
+    from test_lot7_4 import CONF_WA, VISITEUR, FauxExp, run
+    from test_lot7_6 import FauxAgent
+
+    from noyau.tour import Conversations
+
+    url = f"sqlite:///{tmp_path}/m.db"
+    conf = configuration.Config.model_validate({**CONF_WA.model_dump(mode="json"), "modeles_meta": {
+        "message": {"nom": "fsp_socle_message"}, "message_en": {"nom": "fsp_socle_message", "langue": "en"}}})
+    exp, langues = FauxExp(), []
+
+    async def modele(vers, nom, langue, variables):
+        langues.append((nom, langue))
+
+    exp.modele = modele
+    c = Conversations(conf, FauxAgent(), exp, contacts=stockage.Contacts(url), differes=stockage.Differes(url), rappels=stockage.Rappels(url))
+    assert run(c.envoyer_de_soi_meme(VISITEUR, [{"texte": "Here is the villa."}], "reponse_visiteur", ["Here is"], "en")) == "modele"
+    assert run(c.envoyer_de_soi_meme("+41790000099", [{"texte": "Voici la villa."}], "reponse_visiteur", ["Voici"])) == "modele"
+    assert langues == [("fsp_socle_message", "en"), ("fsp_socle_message", "fr")]

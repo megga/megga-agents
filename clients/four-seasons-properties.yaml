@@ -95,6 +95,7 @@ roles:
 # Les modèles Meta du socle (docs/modeles-fsp.md), sur le compte WhatsApp « FSP ».
 modeles_meta:
   message: {nom: fsp_socle_message}
+  message_en: {nom: fsp_socle_message, langue: en}
   rappel: {nom: fsp_socle_rappel}
   demande: {nom: fsp_socle_demande}
   partenaire: {nom: fsp_socle_partenaire}
@@ -103,6 +104,7 @@ modeles_meta:
   rapprochement: {nom: fsp_socle_nouveau}
   livraison: {nom: fsp_socle_livraison}
   reponse_visiteur: {nom: fsp_socle_reponse}
+  reponse_visiteur_en: {nom: fsp_socle_reponse, langue: en}
   suivi_visiteur: {nom: fsp_socle_suivi}
   suivi_visiteur_en: {nom: fsp_socle_suivi, langue: en}
   ouverture: {nom: fsp_socle_ouverture}
