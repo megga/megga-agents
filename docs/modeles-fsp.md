@@ -15,12 +15,12 @@ Un modèle Meta est le seul message permis hors des 24 heures. Ceux-ci remplacen
 
 | Usage du socle | Nom | Pour | Texte | Bouton |
 |---|---|---|---|---|
-| `message` (le repli de tous) | `fsp_socle_message` | tous | Bonjour, {{1}} a un nouveau message pour vous. Touchez le bouton pour le lire. | Lire le message |
-| `message_en` | `fsp_socle_message` (en) | tous | Hello, {{1}} has a new message for you. Tap the button to read it. | Read the message |
-| `rappel` | `fsp_socle_rappel` | le gestionnaire | Bonjour, voici le rappel que vous m'avez demandé : {{1}}. Répondez ici pour la suite. | |
-| `demande` | `fsp_socle_demande` | le gestionnaire | Bonjour, vous avez une nouvelle demande.<br>Objet : {{1}}<br>De : {{2}}<br>Contact : {{3}}<br>Touchez le bouton pour la voir en entier. | Voir la demande |
-| `partenaire` | `fsp_socle_partenaire` | le gestionnaire | Bonjour, {{1}} cherche un bien pour un client. Ce qui correspond : {{2}}. Touchez le bouton pour choisir ce que je lui transmets. | Choisir |
-| `veille`, `zone`, `rapprochement` | `fsp_socle_nouveau` | le gestionnaire | Bonjour, j'ai du nouveau pour vous : {{1}}. Touchez le bouton pour voir le détail. | Voir le détail |
+| `message` (le repli de tous) | `fsp_socle_attente` | tous | Bonjour, {{1}} a une mise à jour concernant votre échange en cours. Touchez le bouton pour l'afficher. | Afficher |
+| `message_en` | `fsp_socle_attente` (en) | tous | Hello, {{1}} has an update on your ongoing conversation. Tap the button to view it. | View |
+| `rappel` | `fsp_socle_rappel_2` | le gestionnaire | Bonjour, voici le rappel que vous avez programmé : {{1}}. Répondez ici pour le traiter. | |
+| `demande` | `fsp_socle_demande_2` | le gestionnaire | Bonjour, une demande d'information est arrivée pour votre agence.<br>Objet : {{1}}<br>De : {{2}}<br>Contact : {{3}}<br>Touchez le bouton pour la voir en entier. | Voir la demande |
+| `partenaire` | `fsp_socle_partenaire_2` | le gestionnaire | Bonjour, {{1}}, partenaire de votre réseau, vous adresse une demande pour un client ({{2}}). Touchez le bouton pour y répondre. | Répondre |
+| `veille`, `zone`, `rapprochement` | `fsp_socle_suivi_maj` | le gestionnaire | Bonjour, voici la mise à jour d'un de vos suivis : {{1}}. Touchez le bouton pour voir le détail. | Voir le détail |
 | `livraison` | `fsp_socle_livraison` | un partenaire | Bonjour, Four Seasons Properties a répondu à votre demande : la référence {{1}}. Touchez le bouton pour recevoir le dossier. | Recevoir le dossier |
 | `reponse_visiteur` | `fsp_socle_reponse` | un visiteur | Bonjour, Four Seasons Properties vous a répondu : « {{1}} ». Touchez le bouton pour lire la réponse en entier. | Lire la réponse |
 | `reponse_visiteur_en` | `fsp_socle_reponse` (en) | un visiteur | Hello, Four Seasons Properties has replied to you: “{{1}}”. Tap the button to read the full reply. | Read the reply |
@@ -34,9 +34,9 @@ Ce que valent les variables, par exemple :
 - `rappel` : « appeler M. Martin pour la villa de Cologny » ;
 - `demande` : « information sur la villa MBOL-1E00 à Marbella », « Jeanne Martin », « jeanne@exemple.ch, +41 79 123 45 67 » ; ou « nouveau contact (acheteur) », « Marc Dupont », « +41 79 111 22 33 par WhatsApp » ; ou « question « le prix est-il négociable ? » », « un visiteur », « +971 50 123 4567 par WhatsApp » ;
 - `partenaire` : « Marc Dupont (Riviera Immobilier) », « G8LR-2DW8 et MBOL-1E00 » ;
-- `nouveau` : « 3 nouvelles annonces pour la veille villas à Cologny », « le suivi Marbella, villas se termine aujourd'hui », « le bien « Villa avec vue » pourrait intéresser un client » ;
+- `suivi_maj` : « 3 nouvelles annonces pour la veille villas à Cologny », « le suivi Marbella, villas se termine aujourd'hui », « le bien « Villa avec vue » pourrait intéresser un client » ;
 - `livraison` : « G8LR-2DW8 » ; `reponse` : le début de la réponse ; `suivi` : « la villa MBOL-1E00 à Marbella » ; `ouverture` : « Marie Dupont », « une annonce ».
 
 L'anglais sert quand le socle connaît la langue de la personne : le suivi, le premier contact, la réponse à une question, et le message en attente qui les annonce. Tout ce qui va au gestionnaire reste en français ; le dossier d'un partenaire aussi (sa langue n'est pas gardée).
 
-Catégorie : utilitaire pour tous, sauf `ouverture` (un premier message à un contact) déclaré marketing, comme Meta l'a classé pour Alix.
+Catégorie : utilitaire pour tous, sauf `ouverture` (un premier message à un contact) déclaré marketing, comme Meta l'a classé pour Alix. Le premier jeu (16.11.2026) a vu six modèles reclassés en marketing par Meta (`message`, `rappel`, `demande`, `partenaire`, `nouveau`) : ils ont été réécrits pour dire la démarche précise de la personne (son échange en cours, son rappel programmé, une demande pour son agence, un de ses suivis), soumis sous de nouveaux noms, et les anciens supprimés. Une règle pour la suite : un modèle utilitaire nomme toujours ce que la personne a demandé ou ce qui la concerne, jamais un « nouveau message » vague.
