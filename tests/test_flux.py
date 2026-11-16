@@ -93,6 +93,21 @@ def test_une_adresse_de_base_coupee_en_trois():
     assert "".join(parties) + fin == "La base : [masqué] fin"
 
 
+def test_le_flux_masque_comme_la_reponse_entiere():
+    """Coupé n'importe où, le flux masque exactement comme garde.masquer_secrets sur le texte entier : le chemin d'une
+    adresse d'annonce reste lisible, un jeton et une clé sont masqués (aucune règle de garde ne passe un blanc)."""
+    from noyau.garde import masquer_secrets
+
+    jeton = "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0"
+    texte = (f"Voici l'annonce https://site.ch/property/dubai-high-floor-2-br-apartment-1234567890abcdef1234567890abcdef12?ref={jeton} "
+             f"et votre clé {SECRET}, jeton {jeton}.")
+    attendu = masquer_secrets(texte)
+    assert "dubai-high-floor" in attendu and jeton not in attendu and "sk-" not in attendu
+    for i in range(1, len(texte)):
+        parties, fin = tout_passer([texte[:i], texte[i:]])
+        assert "".join(parties) + fin == attendu, i
+
+
 def test_le_texte_part_avant_la_fin():
     """Le direct : des mots entiers partent dès qu'ils sont sûrs, sans attendre la fin du tour."""
     parties, fin = tout_passer(["Bonjour, ", "je cherche ", "vos biens ", "à Nyon."])

@@ -106,3 +106,45 @@ test("redémarrer un conteneur endormi : rien à faire", async () => {
   assert.equal(await a.redemarrer(), false);
   assert.equal(alarme(), null);
 });
+
+test("une alarme en échec se repose elle-même, de plus en plus tard, puis repart de zéro", async () => {
+  const { a, alarme, ctx, stock } = objet();
+  a.demarrer = async () => {
+    throw new Error("base injoignable");
+  };
+  const avant = Date.now();
+  await a.alarm(); // ne lève plus : Cloudflare l'oublierait après six essais
+  assert.ok(alarme() >= avant + 60_000 && alarme() <= Date.now() + 61_000);
+  await ctx.storage.setAlarm(null);
+  await a.alarm();
+  assert.ok(alarme() >= avant + 120_000 && alarme() <= Date.now() + 121_000);
+  assert.equal(stock.get("echecs_alarme"), 2);
+  assert.ok(stock.get("alertes").every((x) => x.quoi === "rappels"));
+  a.demarrer = async () => {};
+  await a.alarm();
+  assert.equal(stock.has("echecs_alarme"), false);
+});
+
+test("un webhook que le conteneur n'a pas reçu est gardé, puis rejoué marqué", async () => {
+  const { a, journal, alarme, ctx, stock } = objet();
+  a.demarrer = async () => {
+    throw new Error("le conteneur ne répond pas");
+  };
+  const requete = () => new Request("http://agent/whatsapp", { method: "POST", body: '{"w":1}', headers: { "x-hub-signature-256": "sha256=ab" } });
+  await assert.rejects(a.fetch(requete()));
+  assert.equal(stock.get("webhooks").length, 1);
+  assert.ok(alarme() <= Date.now() + 61_000);
+  a.demarrer = async () => {};
+  const vus = [];
+  const port = ctx.container.getTcpPort();
+  ctx.container.getTcpPort = () => ({
+    fetch: async (u, o = {}) => {
+      if (new URL(u).pathname === "/whatsapp") vus.push([o.body, o.headers["x-hub-signature-256"], o.headers["x-megga-rejoue"], o.headers["x-megga-interne"]]);
+      return port.fetch(u, o);
+    },
+  });
+  await a.alarm();
+  assert.deepEqual(vus, [['{"w":1}', "sha256=ab", "1", await jetonInterne("admin", "essai")]]);
+  assert.equal(stock.has("webhooks"), false);
+  assert.ok(journal.some((j) => j[1] === "/interne/rappels"));
+});

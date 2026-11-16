@@ -37,6 +37,7 @@ EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que p
 NON_COMPRIS = "Je n'ai pas pu écouter ce vocal. Pouvez-vous me l'écrire ?"
 REGARD = "\U0001F440"
 REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
+ABANDON_RAPPEL = 24 * 3600  # un rappel encore en échec un jour après son heure est abandonné (noté au journal)
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
 IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
@@ -429,10 +430,17 @@ class Conversations:
             return "libre"
         modele = self.conf.modeles_meta.get(usage)
         if modele:
-            await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
-            self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
-            return "modele"
-        # Sans modèle de cet usage : le modèle « message » annonce que quelque chose attend (le rappel part au message suivant).
+            try:
+                await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
+                self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
+                return "modele"
+            except Exception as e:
+                # Un modèle suspendu, reclassé ou refusé : le rappel attend le prochain message, sans boucler toutes les
+                # 5 minutes (relecture du 16.11.2026, I10).
+                log.error("modèle « %s » refusé (%s) : %s", usage, self.conf.id, str(e)[:200])
+                self.noter_journal("envoi_echec", detail="modele")
+        # Sans modèle de cet usage (ou refusé) : le modèle « message » annonce que quelque chose attend (le rappel part
+        # au message suivant).
         await self._annoncer(personne)
         return "attente"
 
@@ -515,8 +523,9 @@ class Conversations:
                 if m.get("apercu"):  # la carte d'une annonce : son lien avec son aperçu
                     await self.exp.texte(personne, nettoyer(m["texte"]), apercu=True)
                 else:
-                    await self.exp.texte(personne, nettoyer(m["texte"]))
-                self._noter_fil(personne, "envoye", usage, nettoyer(m["texte"]))
+                    await self.exp.texte(personne, m["texte"] if m.get("secret") else nettoyer(m["texte"]))
+                # Un mot de passe ne se range jamais dans le fil (relu par la console et par le résumé du fil).
+                self._noter_fil(personne, "envoye", usage, "(mot de passe envoyé)" if m.get("secret") else nettoyer(m["texte"]))
 
     async def _rappels_differes(self, personne: str) -> None:
         """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant."""
@@ -556,6 +565,10 @@ class Conversations:
                 bilan[voie] += 1
             except Exception as e:
                 log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
+                if maintenant - float(r["quand"]) > ABANDON_RAPPEL:  # un jour d'échecs : abandonné, plus retenté
+                    await asyncio.to_thread(self.rappels.marquer, r["id"], "echec")
+                    self.noter_journal("rappel_echec", detail="abandonné après un jour")
+                    continue
                 self.noter_journal("rappel_echec", detail=type(e).__name__)
                 bilan["echec"] += 1
         prochain = await asyncio.to_thread(self.rappels.prochain)

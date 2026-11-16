@@ -267,7 +267,7 @@ def test_la_gestion_au_nom_d_un_gestionnaire():
 
     def repondre(r: httpx.Request):
         vus.append((r.method, r.url.path, r.headers.get("authorization"), r.headers.get("x-gestion-compte")))
-        if r.url.path.endswith("/refus"):
+        if r.url.path.endswith("/vitrine"):
             return httpx.Response(403, json={"erreur": "compte inconnu"})
         return httpx.Response(200, json={"annonces": [{"slug": "cologny-villa"}]})
 
@@ -277,12 +277,22 @@ def test_la_gestion_au_nom_d_un_gestionnaire():
     async def tout():
         assert await g.appel("greg@agence.ch", "GET", "/annonces") == {"annonces": [{"slug": "cologny-villa"}]}
         with pytest.raises(GestionErreur, match="compte inconnu") as e:
-            await g.appel("greg@agence.ch", "GET", "/refus")
+            await g.appel("greg@agence.ch", "GET", "/vitrine")
         assert e.value.statut == 403
         with pytest.raises(GestionErreur):
             await g.appel("", "GET", "/annonces")
         with pytest.raises(GestionErreur):
             await g.appel("greg@agence.ch", "GET", "/../admin")
+        # Un identifiant venu du modèle ne coupe, ne détourne ni ne prolonge le chemin (relecture du 16.11.2026, C2).
+        for slug in ("cologny-villa#", "x?x=", "%2e%2e/%2e%2e/annonces/x", "x/visibilite", "x/acces#", "Villa", "x\n"):
+            with pytest.raises(GestionErreur, match="chemin"):
+                await g.appel("greg@agence.ch", "DELETE", f"/annonces/{slug}/videos", corps={"numero": 1})
+        with pytest.raises(GestionErreur, match="chemin"):
+            await g.appel("greg@agence.ch", "GET", "/clients/recherches/r1%2F..")
+        with pytest.raises(GestionErreur, match="chemin"):
+            await g.octets("greg@agence.ch", "/gestion/images/a.jpg?x=1")
+        await g.appel("greg@agence.ch", "DELETE", "/annonces/cologny-villa/videos", corps={"numero": 1})
+        await g.appel("greg@agence.ch", "GET", "/clients/recherches/r1-ab/biens")
 
     asyncio.run(tout())
     assert vus[0] == ("GET", "/api/gestion/annonces", "Bearer cle-gestion", "greg@agence.ch")

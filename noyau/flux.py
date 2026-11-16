@@ -46,8 +46,9 @@ def decouper(tampon: str) -> tuple[str, str]:
     morceaux du modèle ; aucune partie d'un secret ne doit partir avant que masquer_secrets l'ait vu en entier.
     Plus on garde, plus c'est sûr et moins c'est « en direct ».
 
-    La coupe se fait au dernier blanc (espace, tabulation, retour à la ligne) : aucun motif de garde._SECRETS ne
-    contient de blanc, un secret tient donc toujours dans un seul mot, et un mot ne part qu'une fois complet. Le
+    La coupe se fait au dernier blanc (espace, tabulation, retour à la ligne) : aucune règle de garde.masquer_secrets
+    ne passe un blanc (ni les motifs de secrets, ni le jeton, ni le chemin d'adresse qu'il épargne), un secret tient
+    donc toujours dans un seul mot, et un mot ne part qu'une fois complet. Le
     texte part ainsi mot par mot ; un long passage sans blanc (une adresse web) attend le blanc suivant ou la fin.
     """
     coupe = max(tampon.rfind(blanc) for blanc in " \t\n\r")

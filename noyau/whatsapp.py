@@ -68,8 +68,8 @@ class Entrant:
     formulaire: str = ""  # un formulaire rempli (WhatsApp Flow), ses champs en JSON
     profil: str = ""  # le nom que la personne s'est donné sur WhatsApp
 
-    def frais(self, maintenant: float | None = None) -> bool:
-        return not self.envoye or (maintenant or time.time()) - self.envoye <= FRAICHEUR_S
+    def frais(self, maintenant: float | None = None, limite: float = FRAICHEUR_S) -> bool:
+        return not self.envoye or (maintenant or time.time()) - self.envoye <= limite
 
 
 def lire_entrants(evenement: dict, numero_id: str) -> list[Entrant]:
@@ -129,6 +129,26 @@ def _lire(m: dict, profil: str = "") -> Entrant | None:
         formulaire=str(formulaire or "")[:8000],
         profil=profil,
     )
+
+
+def lire_echecs(evenement: dict, numero_id: str) -> list[str]:
+    """Les envois que Meta a refusés après coup (statut « failed ») : le code et le titre de l'erreur, sans numéro ni texte.
+    Meta accepte d'abord un envoi, puis le refuse par un webhook de statut (numéro sans WhatsApp, modèle suspendu, moyen de
+    paiement manquant, personne qui a bloqué le numéro)."""
+    sortie: list[str] = []
+    if not isinstance(evenement, dict) or evenement.get("object") != "whatsapp_business_account":
+        return sortie
+    for e in evenement.get("entry") or []:
+        for c in e.get("changes") or []:
+            v = c.get("value") or {}
+            if c.get("field") != "messages" or (v.get("metadata") or {}).get("phone_number_id") != numero_id:
+                continue
+            for s in v.get("statuses") or []:
+                if isinstance(s, dict) and s.get("status") == "failed":
+                    erreur = next((x for x in s.get("errors") or [] if isinstance(x, dict)), {})
+                    titre = re.sub(r"[+\d]{6,}", "…", str(erreur.get("title") or erreur.get("message") or ""))  # jamais un numéro
+                    sortie.append(f"{erreur.get('code', '?')} {titre}".strip()[:200])
+    return sortie
 
 
 def decrire_media(media: Media, n: int) -> str:

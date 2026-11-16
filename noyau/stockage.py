@@ -1148,7 +1148,9 @@ class Journal:
     """
 
     # mise_a_jour_bloquee : le pilote ne peut plus avancer seul une mise à jour de l'image (retour non fait, ligne retouchée)
-    ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec", "mise_a_jour_bloquee")
+    # envoi_refuse : Meta a refusé un envoi après l'avoir accepté ; message_ancien : un message reçu trop tard pour une réponse
+    ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec", "mise_a_jour_bloquee", "envoi_refuse",
+               "message_ancien")
 
     def __init__(self, url: str):
         self._e, self._t = _table(

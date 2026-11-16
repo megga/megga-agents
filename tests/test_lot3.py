@@ -89,6 +89,21 @@ def test_secrets_masques():
     assert MASQUE in masquer_secrets("a1" * 25)
 
 
+def test_un_lien_d_annonce_n_est_pas_un_secret():
+    """Relecture du 16.11.2026 (C1) : un identifiant d'annonce long et chiffré, dans un lien, partait en « [masqué] »."""
+    for lien in ("https://fspdubai.com/property/dubai-high-floor-2-br-apartment-bright-unit-with-canal-pool-view",
+                 "https://www.jamesedition.com/real_estate/marbella-spain/villa-with-sea-views-in-sierra-blanca-12345678",
+                 "http://fspdubai.com/en/property/dubai-premium-4-br-townhouse-high-potential-investment."):
+        texte = f"La fiche : {lien} (à voir)"
+        assert masquer_secrets(texte) == texte
+    # Hors d'un lien, ou dans ses paramètres, le jeton reste masqué ; les clés connues, partout.
+    jeton = "a1" * 25
+    assert masquer_secrets(f"jeton {jeton}") == f"jeton {MASQUE}"
+    assert masquer_secrets(f"https://site.ch/x?jeton={jeton}") == f"https://site.ch/x?jeton={MASQUE}"
+    assert MASQUE in masquer_secrets("https://site.ch/sk-ant-api03-abcdefghijklmnopqrstuv")
+    assert MASQUE in masquer_secrets("https://u:p@h/postgresql://u:motdepasse@hote/db")
+
+
 def test_debit():
     d = Debit(maximum=2, fenetre=60)
     assert d.permis("p", 0) and d.permis("p", 1) and not d.permis("p", 2)
@@ -200,3 +215,21 @@ def test_agent_a_ses_outils_et_sa_memoire(tmp_path):
     noms = [getattr(o, "__name__", "") for o in agent.tools]
     assert noms == ["rappeler", "mes_rappels", "annuler_rappel"]
     assert agent.enable_agentic_memory is True
+
+
+def test_un_modele_rappel_refuse_ne_boucle_pas(rappels):
+    """Relecture du 16.11.2026 (I10) : un modèle « rappel » suspendu par Meta ne fait plus échouer le rappel toutes les
+    5 minutes ; il attend le prochain message, et le modèle « message » l'annonce s'il est réglé."""
+    class Refuse(Exp):
+        async def modele(self, vers, nom, langue, variables):
+            if nom == "rappel_client":
+                raise RuntimeError("Meta 400 : modèle en pause")
+            self.journal.append(("modele", vers, nom))
+
+    rappels.ajouter(MOI, time.time() - 1, "relancer M. Exemple")
+    exp = Refuse()
+    c = Conversations(conf(modeles_meta={"rappel": {"nom": "rappel_client"}, "message": {"nom": "attente_client"}}), Agent(), exp,
+                      contacts=Contacts(time.time() - 30 * 3600), rappels=rappels, attente=0.01)
+    bilan = asyncio.run(c.envoyer_rappels_echus(time.time()))
+    assert bilan["echec"] == 0 and bilan["attente"] == 1 and rappels.differes(MOI)
+    assert exp.journal == [("modele", MOI, "attente_client")]
