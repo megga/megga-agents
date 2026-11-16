@@ -61,7 +61,7 @@ class Conversations:
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
                  journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None,
-                 differes=None, choix: dict | None = None, echeances: list | None = None, fil_tenu=None):
+                 differes=None, choix: dict | None = None, echeances: list | None = None, fil_tenu=None, etats=None):
         self.conf = conf
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
@@ -94,7 +94,9 @@ class Conversations:
         # Le dernier message de chaque personne, tel que le modèle l'a lu (une règle apprise doit en venir).
         self._entendus: dict[str, str] = {}
         # L'heure du dernier modèle « message » envoyé à chaque personne : une annonce suffit tant qu'elle n'a pas répondu.
+        # Gardée aussi dans la base (stockage.Etats) : un conteneur qui s'endort ne la renvoie pas (relecture, I13).
         self._annonces: dict[str, float] = {}
+        self.etats = etats
         self._boites: dict[str, _Boite] = {}
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
@@ -157,7 +159,14 @@ class Conversations:
             premier = await self._premier(personne, role)
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
             await self._sans_echec(self.exp.lu(dernier.id))
-            await self._sans_echec(self._rappels_differes(personne))
+            livres = {"n": 0}
+            await self._sans_echec(self._rappels_differes(personne, livres))
+            # Le bouton d'un modèle Meta (« Afficher », « Voir la demande ») : ce qui attendait vient de partir, c'est la
+            # réponse ; son libellé n'est pas une question pour le modèle (relecture du 16.11.2026, I11).
+            if livres["n"] and all(m.genre == "button" for m in messages):
+                for m in messages:
+                    self._noter_fil(personne, "recu", "bouton", m.texte)
+                return
             if not self.debit.permis(personne):
                 for m in messages:  # reçus, mais sans tour
                     self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
@@ -466,6 +475,11 @@ class Conversations:
             return False
         # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.
         deja = self._annonces.get(personne)
+        if deja is None and self.etats is not None:
+            try:
+                deja = await asyncio.to_thread(self.etats.lire, personne, "annonce")
+            except Exception as e:
+                log.warning("annonce illisible : %s", str(e)[:200])
         dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
         if deja and time.time() - deja < ANNONCE_VALIDE and (dernier is None or deja > dernier):
             return True
@@ -473,6 +487,8 @@ class Conversations:
             await self.exp.modele(personne, modele.nom, modele.langue, [self.conf.nom_agent])
             self._noter_fil(personne, "envoye", "modele", "un message attend")
             self._annonces[personne] = time.time()
+            if self.etats is not None:
+                await self._sans_echec(asyncio.to_thread(self.etats.ecrire, personne, "annonce", self._annonces[personne]))
             if len(self._annonces) > 5000:
                 for p in list(self._annonces)[:1000]:
                     del self._annonces[p]
@@ -509,12 +525,15 @@ class Conversations:
                 # Un mot de passe ne se range jamais dans le fil (relu par la console et par le résumé du fil).
                 self._noter_fil(personne, "envoye", usage, "(mot de passe envoyé)" if m.get("secret") else nettoyer(m["texte"]))
 
-    async def _rappels_differes(self, personne: str) -> None:
-        """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant."""
+    async def _rappels_differes(self, personne: str, livres: dict | None = None) -> None:
+        """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant.
+        `livres["n"]` : combien sont partis."""
+        livres = {"n": 0} if livres is None else livres
         if self.differes is not None:
             for m in await asyncio.to_thread(self.differes.prendre, personne):
                 try:
                     await self._envoyer_messages(personne, [m], "differe")
+                    livres["n"] += 1
                 except Exception as e:
                     # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
                     log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
@@ -526,6 +545,7 @@ class Conversations:
             await self.exp.texte(personne, nettoyer(f"Rappel : {r['texte']}"))
             self._noter_fil(personne, "envoye", "rappel", nettoyer(f"Rappel : {r['texte']}"))
             await asyncio.to_thread(self.rappels.marquer, r["id"], "envoye")
+            livres["n"] += 1
 
     async def envoyer_rappels_echus(self, maintenant: float) -> dict:
         """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""

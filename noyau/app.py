@@ -280,7 +280,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
                                   choix=relations.choix if relations else None, echeances=relations.echeances if relations else None,
-                                  fil_tenu=fil_tenu)
+                                  fil_tenu=fil_tenu, etats=stockage.Etats(env["DATABASE_URL"]) if env.get("DATABASE_URL") else None)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")

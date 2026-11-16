@@ -220,18 +220,10 @@ def preparer(url: str) -> None:
     creer = getattr(base, "_create_all_tables", None)  # Agno ne crée ses tables qu'au premier usage
     if creer:
         creer()
-    Contacts(url)
-    Rappels(url)
-    Journal(url)
-    Fil(url)
-    ClesApi(url)
-    Bloques(url)
-    Partenaires(url)
-    Medias(url)
-    Etats(url)
-    Ordres(url)
-    JournalPilotage(url)
-    Reglages(url)
+    # Toutes nos tables, celles du pack immobilier (lot 7) comprises : sans elles, l'import d'une base qui les a échoue
+    # (relecture du 16.11.2026, I14). Un essai vérifie qu'aucune n'est oubliée (tests/test_noyau.py).
+    for table in TABLES:
+        table(url)
     _table_schema(url)
 
 
@@ -1661,3 +1653,8 @@ class Nonces:
             return True
         except IntegrityError:
             return False
+
+
+# Chaque classe qui crée une de nos tables ; preparer() les crée toutes.
+TABLES = (Contacts, Rappels, Jetons, ClesApi, Bloques, Partenaires, Reseau, Questions, Differes, Carnet, Veilles, Regles, Medias,
+          Etats, Journal, Fil, Reglages, Ordres, JournalPilotage, Installations, Nonces)

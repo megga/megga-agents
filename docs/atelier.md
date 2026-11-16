@@ -13,7 +13,7 @@ La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`
 | MEGGA | `ADMIN_TOKEN` | tous les clients, tous les réglages, forcer une mise en service, reprendre la main |
 | client | délivré par MEGGA, montré une fois | son seul agent : métier, prénom, voix, ton, outils à cocher |
 
-Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
+Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Il ne met pas non plus en service une version qui change ce que MEGGA règle (le numéro WhatsApp, les modèles Meta, la gestion du site, les consignes écrites sur mesure) : revenir à une version d'avant n'est permis au client que si ces réglages sont les mêmes que ceux en service. Un modèle par métier qu'il applique garde les consignes sur mesure de MEGGA. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
 
 ## Les modèles par métier
 

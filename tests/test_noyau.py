@@ -129,3 +129,23 @@ def test_export_import_aller_retour(tmp_path, genre):
     assert stockage.importer(fichier, cible) == n  # rejouable sans doublon
     lus = stockage.base_agno(cible).get_user_memories(user_id="+41790000000")
     assert [m.memory for m in lus] == ["Préfère être appelé le matin"]
+
+
+def test_l_import_cree_toutes_nos_tables(tmp_path):
+    """Relecture du 16.11.2026 (I14) : une base qui a les tables du lot 7 s'exporte et se recharge dans une base neuve ;
+    aucune classe qui crée une table n'est oubliée par preparer()."""
+    import inspect
+
+    a, b = f"sqlite:///{tmp_path}/a.db", f"sqlite:///{tmp_path}/b.db"
+    avec_table = {c for _, c in inspect.getmembers(stockage, inspect.isclass)
+                  if c.__module__ == stockage.__name__ and "__init__" in vars(c) and "_table(" in inspect.getsource(c.__init__)}
+    assert avec_table == set(stockage.TABLES)
+    stockage.migrer(a)
+    for c in stockage.TABLES:
+        c(a)
+    stockage.Reseau(a).creer("+41790000003", "Marc", "+41790000001", "villa", [{"reference": "G8LR2DW8"}])
+    stockage.Questions(a).poser("+41790000002", "+41790000001", "Libre en mars ?", "la villa", "fr", None)
+    stockage.Veilles(a).ajouter("+41790000001", "veille", {"recherche": "villa"}, 1.0)
+    n = stockage.exporter(a, tmp_path / "x.jsonl")
+    assert stockage.importer(tmp_path / "x.jsonl", b) == n
+    assert stockage.Reseau(b).de_partenaire("+41790000003", 0)[0]["propositions"][0]["reference"] == "G8LR2DW8"
