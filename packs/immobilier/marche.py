@@ -596,10 +596,12 @@ class Marche:
             if fini:  # la fin se dit toujours : sans elle, le courtier croirait la veille encore en route
                 pourquoi = "la dernière recherche n'a pas pu se faire (les portails ne répondaient pas)" if echec else "rien de neuf depuis la dernière fois"
                 tete = f"La veille {self.nom_veille(v)} s'arrête aujourd'hui : {pourquoi}. Dis-moi si tu veux la prolonger."
-                await self.prevenir(l["personne"], [{"texte": tete}], "veille", tete)
+                await self.prevenir(l["personne"], [{"texte": tete}], "veille", f"la veille {self.nom_veille(v)} se termine aujourd'hui")
             return
         tete = f"Veille {self.nom_veille(v)} : {len(pretes)} nouvelle(s) annonce(s)." + (" C'était la dernière recherche de cette veille." if fini else "")
-        await self.prevenir(l["personne"], [{"texte": tete}, *({"texte": t, "apercu": True} for _, t in pretes)], "veille", tete)
+        n = len(pretes)
+        await self.prevenir(l["personne"], [{"texte": tete}, *({"texte": t, "apercu": True} for _, t in pretes)], "veille",
+                            f"{n} {'nouvelle annonce' if n == 1 else 'nouvelles annonces'} pour la veille {self.nom_veille(v)}")
 
     async def executer_zone(self, l: dict, maintenant: float) -> None:
         s, z = self.s, dict(l["donnees"])
@@ -621,5 +623,6 @@ class Marche:
             await asyncio.to_thread(s.veilles.mettre, l["id"], {**z, "restantes": restantes, "derniere": apres if apres["mediane"] else avant})
         texte = "\n".join(x for x in [dit, f"Le suivi {carnets.nom_zone(z)} s'arrête aujourd'hui : dis-moi si tu veux le prolonger." if fini else ""] if x)
         if texte:
-            await self.prevenir(l["personne"], [{"texte": texte}], "zone", court(texte, 200))
+            fin = " se termine aujourd'hui" if fini else ""
+            await self.prevenir(l["personne"], [{"texte": texte}], "zone", f"le suivi {carnets.nom_zone(z)}{fin}")
 

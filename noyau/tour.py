@@ -397,8 +397,9 @@ class Conversations:
         if self.contacts is not None and quand:
             await asyncio.to_thread(self.contacts.noter, personne, quand)
 
-    async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str) -> str:
-        """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance).
+    async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str, variable: str | None = None) -> str:
+        """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance). Hors des 24 heures, le modèle
+        Meta de cet usage reçoit `variable` (le texte lui-même, sans elle).
 
         Rend « libre » (dans les 24 heures), « modele » (par le modèle Meta de cet
         usage) ou « attente » (ni l'un ni l'autre : à remettre au prochain message).
@@ -410,7 +411,7 @@ class Conversations:
             return "libre"
         modele = self.conf.modeles_meta.get(usage)
         if modele:
-            await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(texte)[:1000]])
+            await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
             self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
             return "modele"
         # Sans modèle de cet usage : le modèle « message » annonce que quelque chose attend (le rappel part au message suivant).
@@ -445,14 +446,14 @@ class Conversations:
                 log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
                 self.noter_journal("envoi_echec", detail="modele")
         # Le repli : le modèle « message » (« Vous avez un message de… ») annonce ce qui est gardé.
-        if garder and self.differes is not None and await self._annoncer(personne):
+        if garder and self.differes is not None and await self._annoncer(personne, langue):
             return "modele"
         return "attente"
 
-    async def _annoncer(self, personne: str) -> bool:
-        """Le modèle Meta « message », s'il est réglé : il annonce un message qui attend, sa réponse rouvre les 24 heures et
-        ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
-        modele = self.conf.modeles_meta.get("message")
+    async def _annoncer(self, personne: str, langue: str = "") -> bool:
+        """Le modèle Meta « message » (« message_<langue> » d'abord), s'il est réglé : il annonce un message qui attend, sa
+        réponse rouvre les 24 heures et ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
+        modele = self.conf.modeles_meta.get(f"message_{langue}") or self.conf.modeles_meta.get("message")
         if modele is None:
             return False
         # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.
@@ -532,7 +533,7 @@ class Conversations:
                 bilan["echec"] += 1
                 continue
             try:
-                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel")
+                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel", str(r["texte"]).strip().rstrip("."))
                 await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
                 bilan[voie] += 1
             except Exception as e:

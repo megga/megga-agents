@@ -224,8 +224,8 @@ class Visiteurs:
                 raise ValueError("il faut son nom et ce qu'elle veut : demande-les d'abord")
             numero, _ = await self.reseau.courtier()
             texte = self.fiche_contact(personne, contact)
-            etat = await self.ecrire(numero, texte, "demande", [f"un nouveau contact ({PROFILS[contact['profil']]})", contact["nom"],
-                                                                 "par WhatsApp" if not par_api(personne) else "par un logiciel", personne])
+            etat = await self.ecrire(numero, texte, "demande", [f"nouveau contact ({PROFILS[contact['profil']]})", contact["nom"],
+                                                                 f"{personne} par WhatsApp" if not par_api(personne) else "par un logiciel"])
             e["contacts"] += 1
             e["contact"] = contact
             await self.garder_etat(personne, e)
@@ -260,7 +260,7 @@ class Visiteurs:
             qui = ", ".join(x for x in [f"*{nom}*" if nom else "", PROFILS.get((e.get("contact") or {}).get("profil"), "")] if x) or "Un visiteur"
             ecrire = (f"Ou lui écrire : {lien_wa(personne)}" if not par_api(personne) else "Il est venu par un logiciel : il verra ta réponse à son prochain message.")
             texte = f"*Question d'un visiteur* ({ident})\n\n{qui}, {personne}\n\n« {question} »\n\nRéponds-moi ici, je lui transmets (question {ident}). {ecrire}"
-            etat = await self.ecrire(numero, texte, "demande", [f"une question : {court(question, 150)}", nom or "un visiteur", "par WhatsApp", personne])
+            etat = await self.ecrire(numero, texte, "demande", [f"question « {court(question, 150)} »", nom or "un visiteur", f"{personne} par WhatsApp"])
             e["questions"] += 1
             await self.garder_etat(personne, e)
             if etat == "libre":
@@ -342,7 +342,8 @@ class Visiteurs:
             message = (message or "").strip()[:1500]
             if not message:
                 raise ValueError("le message pour le visiteur est vide")
-            etat = await self.ecrire(vers, message, "reponse_visiteur", [court(message, 200)])
+            langue = "en" if question and q.get("langue") not in (None, "", "fr") else ""
+            etat = await self.ecrire(vers, message, "reponse_visiteur", [court(message, 200)], langue)
             if question:
                 await asyncio.to_thread(s.questions.repondre, q["id"], message)
             await self.noter_message(vers, message, remis=etat != "aucune")
@@ -614,7 +615,8 @@ class Visiteurs:
                 + (f"Pour l'envoyer sur WhatsApp : {lien_wa(tel, reponse)}" if tel else "À envoyer par e-mail."),
             ] if x)
             await self.reseau.ecrire(numero, [{"texte": infos}, {"texte": reponse}], "demande",
-                                     [court(etiquette or "le site", 200), d["nom"], d["email"], d["telephone"] or "non indiqué"])
+                                     [f"information sur {court(etiquette, 180)}" if etiquette else "information depuis le site",
+                                      d["nom"], ", ".join(x for x in (d["email"], d["telephone"]) if x) or "non indiqué"])
             recentes = [x for x in await asyncio.to_thread(s.etats.lire, numero, "demandes_site") or [] if time.time() - x["quand"] < 7 * JOUR]
             await asyncio.to_thread(s.etats.ecrire, numero, "demandes_site", [*recentes, {k: d[k] for k in ("nom", "email", "telephone", "langue")}
                                                                              | {"bien": etiquette, "quand": time.time()}][-5:])
