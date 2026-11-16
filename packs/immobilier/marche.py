@@ -102,8 +102,8 @@ def sur_site(url: str, sites: list[str]) -> str | None:
 
 def requetes(mots: str, sites: list[str], mode: str) -> list[str]:
     """Une requête par site en mode avancé ; groupées par « OR », 128 caractères au plus, en mode simple."""
-    if mode == "avancee":
-        return [f"{mots} site:{s}" for s in sites]
+    if mode == "avancee":  # les mots raccourcis pour que chaque requête tienne dans la limite, nom du site compris
+        return [f"{mots[:max(1, LIMITE - len(f' site:{s}'))].rstrip()} site:{s}" for s in sites]
     groupes: list[list[str]] = []
     for s in sites:
         if groupes and len(f"{mots} " + " OR ".join(f"site:{x}" for x in [*groupes[-1], s])) <= LIMITE:

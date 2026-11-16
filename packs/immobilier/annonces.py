@@ -382,6 +382,8 @@ def outils(s: Services) -> list:
             rediger: vrai pour faire réécrire les textes qu'il ne dicte pas.
         """
         personne, _ = qui(run_context)
+        if len(medias or []) > 40:  # ce que dit l'outil au modèle
+            raise ValueError("40 photos au plus par annonce : demande lesquelles garder")
         avant = (s.etats.lire(personne, "brouillon") or {}).get("champs") or {}
         nouveaux = garde.nettoyer({k: v for k, v in {
             "commune": commune, "categorie": categorie, "transaction": transaction, "adresse": adresse, "quartier": quartier,

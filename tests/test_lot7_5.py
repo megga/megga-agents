@@ -456,3 +456,10 @@ def test_la_reference_d_une_zone_ne_glisse_pas():
         dits.append(dit)
         ref = apres if dit else ref
     assert dits[0] is None and "(+8 %)" in dits[1]  # 30 000 puis 32 448 : la référence n'a pas glissé à 31 200
+
+
+def test_une_requete_avancee_tient_dans_la_limite():
+    from packs.immobilier.marche import LIMITE
+
+    mots = "villa contemporaine avec vue sur le lac Léman, piscine, cinq chambres, Cologny, Vandœuvres ou Collonge-Bellerive"
+    assert all(len(q) <= LIMITE and q.endswith(" site:christiesrealestate.com") for q in requetes(mots, ["christiesrealestate.com"], "avancee"))

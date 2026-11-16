@@ -1090,14 +1090,15 @@ class Regles:
         t = self._t
         with self._e.begin() as c:
             ancienne = None
+            # La même règle déjà là : rien n'est remplacé (ni effacé), on le dit.
+            pareille = c.execute(select(t.c.id).where(t.c.personne == personne, func.lower(t.c.texte) == texte.lower())).scalar()
+            if pareille is not None:
+                return {"id": int(pareille), "deja": True, "ancienne": None}
             if remplace:
                 ancienne = c.execute(select(t.c.id, t.c.texte).where(t.c.id == int(remplace), t.c.personne == personne)).first()
                 if ancienne is None:
                     raise ValueError(f"pas de règle {remplace} à remplacer")
                 c.execute(delete(t).where(t.c.id == ancienne.id))
-            pareille = c.execute(select(t.c.id).where(t.c.personne == personne, func.lower(t.c.texte) == texte.lower())).scalar()
-            if pareille is not None:
-                return {"id": int(pareille), "deja": True, "ancienne": None}
             if (c.execute(select(func.count()).where(t.c.personne == personne)).scalar() or 0) >= REGLES_MAX:
                 raise ValueError(f"déjà {REGLES_MAX} règles : demande laquelle retirer")
             ident = c.execute(insert(t).values(personne=personne, texte=texte[:240], portee=portee[:40], qui=(qui or None) and qui[:80],
