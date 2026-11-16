@@ -31,7 +31,7 @@ function liaison(journal, reponse = () => Response.json({ reponse: "Bonjour !" }
       getByName: (nom) => ({
         fetch: async (r) => {
           journal.push({ j, nom, chemin: new URL(r.url).pathname, auth: r.headers.get("authorization"), corps: await r.text() });
-          return reponse();
+          return reponse(r);
         },
         cles: async (methode, chemin, corps) => {
           journal.push({ j, nom, cles: methode, chemin, corps });
@@ -104,6 +104,33 @@ test("la réponse du conteneur : statut, type et attente seulement", async () =>
   assert.equal(r.status, 429);
   assert.equal(r.headers.get("retry-after"), "12");
   assert.equal(r.headers.get("x-interne"), null);
+});
+
+test("la réponse au fil de l'eau : Accept transmis, flux rendu morceau par morceau", async () => {
+  const journal = [];
+  const vus = [];
+  let pousser;
+  const e = await env(journal, (r) => {
+    vus.push(r.headers.get("accept"));
+    const corps = new ReadableStream({ start: (c) => (pousser = c) });
+    return new Response(corps, { headers: { "content-type": "text/event-stream; charset=utf-8", "x-interne": "secret" } });
+  });
+  const r = await message(e, "cabinet", { personne: "p1", texte: "Bonjour" }, CLE, { accept: "text/event-stream" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("content-type"), "text/event-stream; charset=utf-8");
+  assert.equal(r.headers.get("cache-control"), "no-store");
+  assert.equal(r.headers.get("x-interne"), null);
+  // Le premier morceau arrive au logiciel avant que le conteneur ait fini.
+  const lecteur = r.body.getReader();
+  const morceau = new TextEncoder().encode('event: texte\ndata: {"texte": "Bon"}\n\n');
+  pousser.enqueue(morceau);
+  assert.deepEqual((await lecteur.read()).value, morceau);
+  pousser.close();
+  assert.equal((await lecteur.read()).done, true);
+  // Un autre Accept ne passe pas ; sans Accept, rien.
+  await message(e, "cabinet", { personne: "p1", texte: "x" }, CLE, { accept: "application/xml" });
+  await message(e, "cabinet", { personne: "p1", texte: "x" });
+  assert.deepEqual(vus, ["text/event-stream", null, null]);
 });
 
 test("un conteneur injoignable : 503, sans texte du message dans le journal", async () => {

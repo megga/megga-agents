@@ -39,6 +39,7 @@ const json = (v, status = 200) => Response.json(v, { status });
 const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.headers.get("authorization") ?? "").replace(/^Bearer /, ""), env.ADMIN_TOKEN);
 // L'entrée par API : une clé bien formée (noyau/api.py), un corps de 16 Kio au plus.
 const CLE_API = /^Bearer mga_[A-Za-z0-9_-]{43}$/;
+const FLUX = /\btext\/event-stream\b/;
 const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
 // Le site d'un client (lot 7.4) : une clé d'au moins 32 caractères, un corps de 16 Kio au plus.
@@ -157,13 +158,20 @@ async function messageApi(requete, env, id) {
       new Request("http://agent/api/messages", {
         method: "POST",
         body: corps,
-        headers: { authorization: requete.headers.get("authorization"), "content-type": "application/json" },
+        headers: {
+          authorization: requete.headers.get("authorization"),
+          "content-type": "application/json",
+          // La réponse au fil de l'eau (docs/api.md) : de l'en-tête Accept, seul ce type passe.
+          ...(FLUX.test(requete.headers.get("accept") ?? "") ? { accept: "text/event-stream" } : {}),
+        },
       }),
     );
-    // Seuls le statut, le type et l'attente passent : rien d'autre du conteneur ne sort.
+    // Seuls le statut, le type et l'attente passent : rien d'autre du conteneur ne sort. Le corps n'est pas lu
+    // ici : un flux part au logiciel morceau par morceau.
     const entetes = { "content-type": r.headers.get("content-type") ?? "application/json" };
     const attente = r.headers.get("retry-after");
     if (attente) entetes["retry-after"] = attente;
+    if (FLUX.test(entetes["content-type"])) entetes["cache-control"] = "no-store";
     return new Response(r.body, { status: r.status, headers: entetes });
   } catch (e) {
     console.error("message par API en échec", id, String(e?.message ?? e).slice(0, 200));

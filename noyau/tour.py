@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import accueil as accueils
+from . import flux
 from .api import DELAI_TOUR
 from .config import Config
 from .garde import TROP, Debit, masquer_secrets
@@ -45,6 +46,35 @@ ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute
 def en_echec(sortie) -> bool:
     statut = getattr(sortie, "status", None)
     return str(getattr(statut, "value", statut) or "").upper() in {"ERROR", "CANCELLED"}
+
+
+@dataclass
+class _SortieDuFlux:
+    """La sortie d'un tour en flux quand Agno ne l'a pas rendue elle-même."""
+
+    content: str
+    status: str = "COMPLETED"
+
+
+async def _suivre(evenements, sur_evenement):
+    """Les événements d'un tour d'Agno en flux (stream_events, yield_run_output) : les morceaux de texte et les
+    appels d'outils (leur nom seulement, jamais leurs arguments) partent à `sur_evenement` ; rend la sortie finale,
+    celle qui a passé les crochets de sortie."""
+    sortie, morceaux = None, []
+    async for ev in evenements:
+        genre = getattr(ev, "event", None)
+        if genre is None:  # la sortie finale (RunOutput)
+            sortie = ev
+        elif genre == "RunContent" and isinstance(getattr(ev, "content", None), str) and ev.content:
+            morceaux.append(ev.content)
+            await sur_evenement("texte", ev.content)
+        elif genre in ("ToolCallStarted", "ToolCallCompleted"):
+            nom = getattr(getattr(ev, "tool", None), "tool_name", None)
+            if nom:
+                await sur_evenement("outil", {"outil": nom, "etat": "debut" if genre == "ToolCallStarted" else "fin"})
+        elif genre == "RunError":
+            sortie = _SortieDuFlux("", "ERROR")
+    return sortie if sortie is not None else _SortieDuFlux("".join(morceaux))
 
 
 @dataclass
@@ -283,15 +313,23 @@ class Conversations:
             log.warning("photo illisible (%s) : %s", self.conf.id, str(e)[:200])
             return None
 
-    async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None) -> tuple[str, bool]:
-        """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur."""
+    async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None,
+                        sur_evenement=None) -> tuple[str, bool]:
+        """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur.
+        `sur_evenement` : async f(genre, valeur), appelée au fil du tour (« texte » : un morceau brut du modèle,
+        « outil » : {outil, etat}) ; sans elle, le tour se fait d'un bloc, comme avant."""
         self._entendus[personne] = entendu
         if len(self._entendus) > 5000:  # oublie les plus anciens
             for p in list(self._entendus)[:1000]:
                 del self._entendus[p]
         try:
             options = {"images": images} if images else {}
-            sortie = await self.agent_du_role(role).arun(entendu, user_id=personne, session_id=personne, **options)
+            agent = self.agent_du_role(role)
+            if sur_evenement is None:
+                sortie = await agent.arun(entendu, user_id=personne, session_id=personne, **options)
+            else:
+                sortie = await _suivre(agent.arun(entendu, user_id=personne, session_id=personne, stream=True,
+                                                  stream_events=True, yield_run_output=True, **options), sur_evenement)
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
                 self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
@@ -308,13 +346,24 @@ class Conversations:
         """Le dernier message de cette personne, tel que le modèle l'a lu dans son tour."""
         return self._entendus.get(personne, "")
 
-    async def repondre_api(self, personne: str, texte: str, role: str = "public") -> tuple[str, bool] | None:
+    async def repondre_api(self, personne: str, texte: str, role: str = "public", sur_evenement=None) -> tuple[str, bool] | None:
         """Un tour demandé par un logiciel (noyau/api.py) : la réponse est rendue, rien ne part sur WhatsApp.
 
         Pas de regroupement d'attente (le logiciel envoie un message entier), pas de rappels. Les tours d'une
         même personne passent l'un après l'autre. Rend (réponse, échec), ou None si le débit de la personne
         est dépassé : rien n'est alors noté, le logiciel renverra le même message.
+
+        Avec `sur_evenement` (async f(genre, valeur)), la réponse part aussi au fil de l'eau (noyau/flux.py) : les
+        morceaux de texte, masqués, et les outils. La réponse rendue à la fin reste celle qui fait foi.
         """
+        masque = flux.Masque() if sur_evenement else None
+
+        async def relayer(genre, valeur):
+            if genre != "texte":
+                await sur_evenement(genre, valeur)
+            elif propre := masque.ajouter(valeur):
+                await sur_evenement("texte", propre)
+
         lance = asyncio.current_task()
         if lance is not None:  # un arrêt en douceur attend aussi les tours par API
             self.taches.add(lance)
@@ -329,9 +378,12 @@ class Conversations:
                 if bienvenue and accueils.est_salutation(texte):
                     brute, echec = bienvenue, False
                 else:
+                    if bienvenue and masque is not None:  # l'accueil d'abord, comme dans la réponse rendue
+                        await relayer("texte", bienvenue + "\n\n")
                     try:
                         brute, echec = await asyncio.wait_for(
-                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role), self.delai_api)
+                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role,
+                                           sur_evenement=relayer if masque is not None else None), self.delai_api)
                     except asyncio.TimeoutError:
                         log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
                         self.noter_journal("tour_echec", detail="delai")
@@ -339,6 +391,8 @@ class Conversations:
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
                 reponse = nettoyer(masquer_secrets(brute))
+                if masque is not None and (reste := masque.finir()):
+                    await sur_evenement("texte", reste)
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:
