@@ -418,7 +418,9 @@ def test_catalogue(atelier):
     c = atelier.get("/atelier/catalogue", headers=jeton_client(atelier)).json()
     # la base de connaissances (lot 9.2), les leads et les connecteurs (lot 9.4) vont avec tous les métiers
     assert c["metiers"] == {"general": ["connaissances", "leads", "connecteurs"],
-                            "immobilier": ["immobilier", "connaissances", "leads", "connecteurs"]}
+                            "immobilier": ["immobilier", "connaissances", "leads", "connecteurs"],
+                            **{m: ["connaissances", "leads", "connecteurs"]
+                               for m in ("sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage")}}
     assert "nom_agent" in c["champs_client"]
 
 

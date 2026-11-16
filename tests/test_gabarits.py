@@ -79,7 +79,7 @@ def jeton_client_cree(t):
     ({"nom_agent": "L" * 41}, "nom_agent", "Le prénom doit faire 40 caractères au plus."),
     ({"nom_agent": ""}, "nom_agent", "Donnez un prénom à votre agent."),
     ({"voix": "pas une voix !"}, "voix.voix", "Choisissez une voix dans la liste."),
-    ({"metier": "boulanger"}, "metier", "Choisissez un métier : general ou immobilier."),
+    ({"metier": "boulanger"}, "metier", "Choisissez un métier : general, immobilier, sante, hotellerie, juridique, commerce, fiduciaire ou garage."),
     ({"outils": ["immobilier"]}, "", "Ces outils ne vont pas avec ce métier : immobilier."),
     ({"outils": ["fax"]}, "outils", "Cet outil n'existe pas."),
     ({"ton": "vif \u2014 et drôle"}, "ton", "Pas de tiret long ni de point médian."),
