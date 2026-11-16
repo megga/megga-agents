@@ -76,7 +76,7 @@ def agent_fsp(tmp_path, conf=None, gestionnaires=GESTIONNAIRES):
 def test_la_configuration_de_four_seasons():
     conf = configuration.lire("clients/four-seasons-properties.yaml")
     assert list(conf.les_roles()) == ["gestionnaire", "partenaire", "visiteur"]
-    assert conf.whatsapp is None and conf.gestion.url == "https://fourseasonsproperties.ch"
+    assert conf.whatsapp.numero_id == "1402857672917787" and conf.gestion.url == "https://fourseasonsproperties.ch"
     assert configuration.manques(conf) == []
     # Rien de secret : ni numéro de gestionnaire, ni clé
     texte_brut = open("clients/four-seasons-properties.yaml", encoding="utf-8").read()

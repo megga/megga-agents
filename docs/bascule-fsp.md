@@ -20,7 +20,10 @@ La clé Anthropic se lit dans `~/.config/alix-essai/anthropic.key`, jamais affic
 
 Un biais à lire avec la note : le joueur du socle n'avance pas l'horloge, et le socle ne vide pas son historique avec le temps (il relit toujours ses douze derniers tours, puis le fil), alors qu'Alix repart à neuf après 12 heures. Les cas « le lendemain » (G06, G14, R01, M01, V08) sont donc plus faciles au socle ; c'est son comportement réel, pas un artifice du banc, mais la comparaison n'y est pas à armes égales.
 
-## 2. Le numéro de test (**Julien**)
+## 2. Le numéro de test (fait le 16.11.2026)
+
+Le +1 669 328 2299, acheté chez Telnyx (renvoi d'appel vers le mobile de Julien pour le code), est inscrit chez Meta sur un compte WhatsApp à part, « Four Seasons Properties », branché sur l'app « Alix MEGGA » (le compte « FSP » d'Alix envoie ses événements à l'app d'Alix : on n'y touche pas). Identifiant du numéro : `1402857672917787`. Les 13 modèles sont sur ce compte (`docs/modeles-fsp.md`). Ce qui suit est la marche suivie.
+
 
 Un numéro au nom de Four Seasons Properties, dans le portefeuille WhatsApp Business de MEGGA, branché sur l'app Meta « Alix MEGGA » (dont le webhook est la porte) :
 1. Dans le Business Manager de MEGGA, compte WhatsApp Business : ajouter le numéro, nom affiché « Four Seasons Properties » (catégorie immobilier).

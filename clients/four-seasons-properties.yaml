@@ -92,7 +92,10 @@ roles:
         I'd be delighted to help you explore our property collection or connect you directly with Greg for a personal consultation.
 
         Are you looking to buy, rent or sell?
-# Les modèles Meta du socle (docs/modeles-fsp.md), sur le compte WhatsApp « FSP ».
+whatsapp:
+  # Le numéro de l'essai, +1 669 328 2299 (Telnyx), sur le compte WhatsApp « Four Seasons Properties » (16.11.2026).
+  numero_id: "1402857672917787"
+# Les modèles Meta du socle (docs/modeles-fsp.md), sur le même compte.
 modeles_meta:
   message: {nom: fsp_socle_message}
   message_en: {nom: fsp_socle_message, langue: en}

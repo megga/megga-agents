@@ -1,6 +1,6 @@
 # Les modèles WhatsApp de Four Seasons sur le socle
 
-Un modèle Meta est le seul message permis hors des 24 heures. Ceux-ci remplacent, pour le socle, les modèles posés à la hâte pour Alix : un seul jeu, rédigé d'un bloc, sur le compte WhatsApp « FSP » (celui d'Alix, où le numéro de test sera ajouté).
+Un modèle Meta est le seul message permis hors des 24 heures. Ceux-ci remplacent, pour le socle, les modèles posés à la hâte pour Alix : un seul jeu, rédigé d'un bloc, sur le compte WhatsApp « Four Seasons Properties » (portefeuille MEGGA, branché sur l'app « Alix MEGGA »), celui du numéro de l'essai, +1 669 328 2299. Soumis à Meta le 16.11.2026.
 
 ## Les règles du jeu
 
