@@ -825,27 +825,36 @@ def outils(s: Services) -> list:
                 "Demande un oui explicite ; n'appelle confirmer_action (slug « site ») qu'au message suivant, après ce oui.")
 
     async def porte_site(site: str, action: str, run_context: RunContext, mot_de_passe: str = "") -> str:
-        """Ferme, ouvre ou change le mot de passe d'un site à part de l'agence (administrateur seulement) ; confirmer_action à son oui.
+        """Ferme, ouvre ou change le mot de passe d'un site de l'agence (administrateur seulement) ; confirmer_action à son oui.
 
         Args:
-            site: le préfixe du site (celui des identifiants de ses biens).
+            site: le préfixe du site (celui des identifiants de ses biens), ou le nom du site principal.
             action: fermer, ouvrir ou changer.
             mot_de_passe: seulement s'il le dicte.
         """
         personne, compte = qui(run_context)
-        if site not in s.gestion.reglage.sites:
-            raise ValueError(f"site : un de {', '.join(s.gestion.reglage.sites) or 'aucun'}")
+        sites = adresses_des_portes()
+        if site not in sites:
+            raise ValueError(f"site : un de {', '.join(sites) or 'aucun'}")
         if action not in ("fermer", "ouvrir", "changer"):
             raise ValueError("action : fermer, ouvrir ou changer")
         await administrateur(compte)
-        mdp = None if action == "ouvrir" else mot_de_passe_valide(mot_de_passe)
+        # Le site principal fermé sans mot de passe dicté reprend le sien, qu'Alix ne relit pas : rien à créer ni à envoyer.
+        garde_le_sien = site in s.gestion.reglage.principal and action == "fermer" and not mot_de_passe
+        mdp = None if action == "ouvrir" or garde_le_sien else mot_de_passe_valide(mot_de_passe)
         preparer(personne, run_context, {"action": f"{action} le site {site}", "slug": site,
                                          "acces": {"cible": "porte", "site": site, "action": action, "motDePasse": mdp}})
         effet = {"fermer": "il demandera un mot de passe, que je t'enverrai", "ouvrir": "il s'ouvrira à tous, sans mot de passe",
                  "changer": "son mot de passe changera, et je t'enverrai le nouveau"}[action]
-        hote = s.gestion.reglage.sites[site].removeprefix("https://")
+        if garde_le_sien:
+            effet = "il demandera de nouveau son mot de passe, inchangé"
+        hote = sites[site].removeprefix("https://")
         return (f"À confirmer ({action}) : {hote} ; {effet}. Demande un oui explicite ; "
                 f"n'appelle confirmer_action (slug « {site} ») qu'au message suivant, après ce oui.")
+
+    def adresses_des_portes() -> dict[str, str]:
+        """Les sites qui s'ouvrent et se ferment : les sites à part, et le site principal s'il le peut."""
+        return {**s.gestion.reglage.sites, **s.gestion.reglage.principal}
 
     async def envoyer_secret(personne: str, titre: str, mdp: str) -> None:
         await s.exp.texte(personne, titre)
@@ -865,16 +874,22 @@ def outils(s: Services) -> list:
         mdp = acces.get("motDePasse")
         if acces["cible"] == "porte":
             site, action = acces["site"], acces["action"]
+            principal = site in s.gestion.reglage.principal
             if action == "ouvrir":
                 corps = {"actif": False}
-            elif action == "changer":
+            elif action == "changer" or (principal and mdp):
                 corps = {"actif": True, "motDePasse": mdp or nouveau_mot_de_passe()}
+            elif principal:
+                # Le site principal reprend le mot de passe du site : la gestion ne le rend pas, et il n'y a rien à envoyer.
+                corps = {"actif": True}
             else:
                 corps = {"actif": True, "motDePasse": mdp or "", "motDePasseSiAbsent": nouveau_mot_de_passe()}
             r = await g(compte, "PUT", f"/acces/porte/{site}", corps=corps)
             if action == "ouvrir":
-                return "Le site est ouvert à tous, dans quelques minutes."
-            return await secret_ou_dire(personne, f"Mot de passe de {s.gestion.reglage.sites[site].removeprefix('https://')} :",
+                return "Le site est ouvert à tous, en moins d'une minute."
+            if "motDePasse" not in corps and "motDePasseSiAbsent" not in corps:
+                return "C'est fait : le site demande de nouveau son mot de passe, inchangé. Dis-le en une phrase."
+            return await secret_ou_dire(personne, f"Mot de passe de {adresses_des_portes()[site].removeprefix('https://')} :",
                                         r.get("motDePasse") or corps.get("motDePasse") or corps["motDePasseSiAbsent"],
                                         "C'est fait, et le mot de passe est envoyé dans la conversation. Dis-le en une phrase, sans le répéter.")
         mdp = mdp or nouveau_mot_de_passe()

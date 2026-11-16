@@ -46,6 +46,8 @@ class FauxSite:
                                     "categorie": "Villa", "equipements": ["pool"]},
         }
         self.acces = {}
+        self.portes = []  # les PUT /acces/porte/<site>, dans l'ordre
+        self.mot_de_passe_porte = {}
         self.recherches = [{"id": "r1", "client": {"nom": "Les Martin"}, "criteres": {"communes": ["Cologny"], "budgetMax": 10000000},
                             "biens": []}]
         self.appels = []
@@ -114,6 +116,16 @@ class FauxSite:
             if suite == "/fiche":
                 return httpx.Response(200, json={"fiche": {"titre": a["titre"], "adresse": "Cologny", "prix": a["prix"],
                                                            "chiffres": [{"libelle": "Chambres", "valeur": "5"}]}})
+        m = re.fullmatch(r"/acces/porte/([a-z]+)", chemin)
+        if m and r.method == "PUT":
+            # Comme la vraie gestion : le site principal (geneve) ne rend que le mot de passe reçu ; les autres, celui en vigueur.
+            site = m.group(1)
+            self.portes.append((site, corps))
+            if site == "geneve":
+                return httpx.Response(200, json={"ok": True, "actif": corps["actif"], "motDePasse": corps["actif"] and corps.get("motDePasse") or None})
+            mdp = corps.get("motDePasse") or self.mot_de_passe_porte.get(site) or corps.get("motDePasseSiAbsent") or ""
+            self.mot_de_passe_porte[site] = mdp
+            return httpx.Response(200, json={"ok": True, "actif": corps["actif"], "motDePasse": mdp or None})
         if chemin == "/clients" and r.method == "GET":
             return httpx.Response(200, json={"recherches": self.recherches})
         m = re.fullmatch(r"/clients/recherches/([A-Za-z0-9_-]+)", chemin)
@@ -334,8 +346,58 @@ def test_un_mot_de_passe_ne_passe_jamais_par_le_modele(alix):
     assert mdp not in run(o["envoyer_mot_de_passe"]("cologny-villa-lac", Tour(GREG, "t3")))
     # Un site à part : seulement ceux que la configuration connaît
     with pytest.raises(ValueError, match="site"):
-        run(o["porte_site"]("geneve", "fermer", Tour(GREG, "t4")))
+        run(o["porte_site"]("lausanne", "fermer", Tour(GREG, "t4")))
     assert "fspmarbella.com" in run(o["porte_site"]("marbella", "fermer", Tour(GREG, "t4")))
+
+
+def test_greg_ouvre_et_ferme_le_site_de_geneve(alix):
+    """Greg, 16.11.2026 : Genève s'ouvre et se ferme comme Marbella et Dubaï. Fermé sans mot de passe dicté, il reprend
+    celui du site, qu'Alix ne relit pas : rien n'est créé ni envoyé."""
+    o, site, exp, *_ = alix
+    assert CONF.gestion.principal == {"geneve": "https://fspgeneva.com"} and "geneve" not in CONF.gestion.sites
+    r = run(o["porte_site"]("geneve", "ouvrir", Tour(GREG, "t1")))
+    assert r.startswith("À confirmer (ouvrir) : fspgeneva.com ; il s'ouvrira à tous") and site.portes == []
+    assert "ouvert à tous" in run(o["confirmer_action"]("geneve", Tour(GREG, "t2")))
+    assert site.portes[-1] == ("geneve", {"actif": False})
+
+    envois = len(exp.envois)
+    r = run(o["porte_site"]("geneve", "fermer", Tour(GREG, "t3")))
+    assert "son mot de passe, inchangé" in r and "t'enverrai" not in r
+    fait = run(o["confirmer_action"]("geneve", Tour(GREG, "t4")))
+    assert site.portes[-1] == ("geneve", {"actif": True}) and "inchangé" in fait and len(exp.envois) == envois
+
+    run(o["porte_site"]("geneve", "fermer", Tour(GREG, "t5"), mot_de_passe="Leman-Neuf-2027"))
+    fait = run(o["confirmer_action"]("geneve", Tour(GREG, "t6")))
+    assert site.portes[-1] == ("geneve", {"actif": True, "motDePasse": "Leman-Neuf-2027"})
+    assert exp.envois[-1] == ("texte", GREG, "Leman-Neuf-2027") and "Leman-Neuf-2027" not in fait
+    assert exp.envois[-2] == ("texte", GREG, "Mot de passe de fspgeneva.com :")
+
+    run(o["porte_site"]("geneve", "changer", Tour(GREG, "t7")))
+    run(o["confirmer_action"]("geneve", Tour(GREG, "t8")))
+    nouveau = site.portes[-1][1]["motDePasse"]
+    assert re.fullmatch(r"[A-Za-z]+-[A-Za-z]+-\d{4}", nouveau) and exp.envois[-1] == ("texte", GREG, nouveau)
+    assert all("motDePasseSiAbsent" not in c for s_, c in site.portes if s_ == "geneve")
+
+
+def test_marbella_garde_son_mot_de_passe_quand_on_le_referme(alix):
+    o, site, exp, *_ = alix
+    run(o["porte_site"]("marbella", "fermer", Tour(GREG, "t1"), mot_de_passe="Riviera-2027"))
+    run(o["confirmer_action"]("marbella", Tour(GREG, "t2")))
+    run(o["porte_site"]("marbella", "ouvrir", Tour(GREG, "t3")))
+    run(o["confirmer_action"]("marbella", Tour(GREG, "t4")))
+    run(o["porte_site"]("marbella", "fermer", Tour(GREG, "t5")))
+    run(o["confirmer_action"]("marbella", Tour(GREG, "t6")))
+    assert "motDePasseSiAbsent" in site.portes[-1][1] and exp.envois[-1] == ("texte", GREG, "Riviera-2027")
+
+
+def test_le_site_principal_n_est_pas_un_prefixe_de_biens():
+    g = Gestion(CONF.gestion, "cle-gestion")
+    assert g.site_du_bien("geneve-appartement-quai-wilson") == CONF.gestion.url.rstrip("/")
+    assert g.site_du_bien("marbella-villa-olie") == "https://fspmarbella.com"
+    with pytest.raises(ValueError, match="principal"):
+        configuration.Gestion(url="https://agence.ch", sites={"geneve": "https://a.ch"}, principal={"geneve": "https://b.ch"})
+    with pytest.raises(ValueError):
+        configuration.Gestion(url="https://agence.ch", principal={"a": "https://a.ch", "b": "https://b.ch"})
 
 
 def test_montrer_et_chercher(alix):
