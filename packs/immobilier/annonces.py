@@ -821,7 +821,7 @@ def outils(s: Services) -> list:
         await administrateur(compte)
         preparer(personne, run_context, {"action": "mot de passe du site", "slug": "site",
                                          "acces": {"cible": "site", "motDePasse": mot_de_passe_valide(mot_de_passe)}})
-        return ("À confirmer (mot de passe du site) : le site principal demandera un nouveau mot de passe, que je t'enverrai. "
+        return ("À confirmer (mot de passe du site) : le mot de passe du site principal changera, et je t'enverrai le nouveau ; s'il est ouvert, il le reste. "
                 "Demande un oui explicite ; n'appelle confirmer_action (slug « site ») qu'au message suivant, après ce oui.")
 
     async def porte_site(site: str, action: str, run_context: RunContext, mot_de_passe: str = "") -> str:
@@ -845,7 +845,7 @@ def outils(s: Services) -> list:
         preparer(personne, run_context, {"action": f"{action} le site {site}", "slug": site,
                                          "acces": {"cible": "porte", "site": site, "action": action, "motDePasse": mdp}})
         effet = {"fermer": "il demandera un mot de passe, que je t'enverrai", "ouvrir": "il s'ouvrira à tous, sans mot de passe",
-                 "changer": "son mot de passe changera, et je t'enverrai le nouveau"}[action]
+                 "changer": "il demandera un nouveau mot de passe, même s'il était ouvert, et je te l'enverrai"}[action]
         if garde_le_sien:
             effet = "il demandera de nouveau son mot de passe, inchangé"
         hote = sites[site].removeprefix("https://")

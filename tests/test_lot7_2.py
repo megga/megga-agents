@@ -372,7 +372,7 @@ def test_greg_ouvre_et_ferme_le_site_de_geneve(alix):
     assert exp.envois[-1] == ("texte", GREG, "Leman-Neuf-2027") and "Leman-Neuf-2027" not in fait
     assert exp.envois[-2] == ("texte", GREG, "Mot de passe de fspgeneva.com :")
 
-    run(o["porte_site"]("geneve", "changer", Tour(GREG, "t7")))
+    assert "même s'il était ouvert" in run(o["porte_site"]("geneve", "changer", Tour(GREG, "t7")))
     run(o["confirmer_action"]("geneve", Tour(GREG, "t8")))
     nouveau = site.portes[-1][1]["motDePasse"]
     assert re.fullmatch(r"[A-Za-z]+-[A-Za-z]+-\d{4}", nouveau) and exp.envois[-1] == ("texte", GREG, nouveau)
