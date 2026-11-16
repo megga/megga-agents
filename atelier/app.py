@@ -660,6 +660,37 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             if e.statut in (400, 404, 409):
                 raise Refus(e.statut, "décision refusée", {"texte": e.texte}) from e
             raise Refus(502 if e.statut else 504, f"décision non transmise : {raison(e)}", {"statut": e.statut}) from e
+    # La base de connaissances (lot 9.2, noyau/connaissances.py) : les documents restent dans la base du client ; hors
+    # Cloudflare, ils s'ajoutent sur son serveur (python -m noyau.connaissances), rien n'entrant chez lui.
+
+    async def base_du_client(qui: Identite, ident: str, methode: str, chemin: str = "", corps: dict | None = None) -> dict:
+        await bd(suivable, qui, ident, True)
+        try:
+            return await porte.connaissances(ident, methode, chemin, corps)
+        except PorteErreur as e:
+            if e.statut in (400, 404, 409, 413):
+                try:
+                    message = json.loads(e.texte).get("erreur") or e.texte
+                except (ValueError, AttributeError):
+                    message = e.texte
+                raise Refus(e.statut, str(message)[:300]) from e
+            raise Refus(502 if e.statut else 504, f"base de connaissances injoignable : {raison(e)}") from e
+
+    @r.get("/clients/{ident}/connaissances")
+    async def documents(ident: str, qui: Identite = Depends(identite)):
+        """Les documents de la base de connaissances du client."""
+        return await base_du_client(qui, ident, "GET")
+
+    @r.post("/clients/{ident}/connaissances", status_code=201)
+    async def ajouter_document(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """{titre, genre (texte, pdf, html), texte ou base64, source?} : lu, découpé et rangé dans la base du client."""
+        if set(corps) - {"titre", "genre", "texte", "base64", "source"} or not isinstance(corps.get("titre"), str):
+            raise Refus(400, "{titre, genre (texte, pdf, html), texte ou base64, source?}")
+        return await base_du_client(qui, ident, "POST", corps=corps)
+
+    @r.delete("/clients/{ident}/connaissances/{numero}")
+    async def retirer_document(ident: str, numero: int, qui: Identite = Depends(identite)):
+        return await base_du_client(qui, ident, "DELETE", f"/{int(numero)}")
 
     # Les installations hors Cloudflare
 

@@ -265,7 +265,6 @@ class AgentClient extends Conteneur {
     return { statut: r.status, donnees };
   }
 
-  /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
   /** Une décision de la console sur une demande d'accord (noyau/approbations.py) : l'action accordée est faite par le conteneur. */
   async decider(n, accord) {
     if (!/^\d{1,10}$/.test(String(n)) || typeof accord !== "boolean") throw new Error("demande");
@@ -292,6 +291,34 @@ class AgentClient extends Conteneur {
     return { statut: r.status, donnees };
   }
 
+  /** La base de connaissances du conteneur (lot 9.2) : lister, ajouter un document (le corps tel quel), en retirer un. */
+  async connaissances(methode, chemin = "", corps = null) {
+    if (!/^(\/\d{1,10})?$/.test(chemin)) throw new Error("chemin de document");
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    this.activite = Date.now(); // un document se calcule : le conteneur reste éveillé le temps qu'il faut
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const options = { method: methode, headers: { "x-megga-interne": jeton } };
+    if (corps !== null) {
+      options.body = corps;
+      options.headers["content-type"] = "application/json";
+    }
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/connaissances${chemin}`, options);
+    const texte = await r.text();
+    let donnees;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    return { statut: r.status, donnees };
+  }
+
+  /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
   async cles(methode, chemin = "", corps = null) {
     if (!/^(\/[0-9a-f]{12})?$/.test(chemin)) throw new Error("chemin de clé");
     const dormait = !this.ctx.container?.running;

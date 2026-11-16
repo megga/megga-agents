@@ -89,6 +89,7 @@ REPONSES_APPROBATION = {
            "refusee": "The team did not approve your request."},
 }
 ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
+CORPS_DOCUMENT = 12 * 1024 * 1024  # un document de 8 Mo, en base64 dans du JSON
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
 
 
@@ -110,12 +111,18 @@ class Deja:
         return True
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None) -> list:
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None,
+                     connaissances=None) -> list:
     """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle.
     `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés ;
-    `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
+    `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py) ; `connaissances` : la base de
+    documents du client (noyau/connaissances.py), sans elle l'outil dit qu'il n'y a rien à chercher ici."""
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
     liste = outils_rappels(rappels, conf.fuseau) if "rappels" in groupes else []
+    if "connaissances" in groupes:
+        from .connaissances import outils as outils_connaissances
+
+        liste += outils_connaissances(connaissances)
     if "annonces" in groupes:
         if services is None:
             raise RuntimeError("outils d'annonces sans gestion du site (Config.gestion et GESTION_CLE)")
@@ -182,7 +189,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
           quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
-          fil_tenu=None) -> FastAPI:
+          fil_tenu=None, connaissances=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -231,6 +238,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             personnes = Personnes(conf, gestionnaires, stockage.Bloques(env["DATABASE_URL"]), stockage.Partenaires(env["DATABASE_URL"]))
     if personnes is None:
         personnes = Personnes(conf)
+    # La base de connaissances (noyau/connaissances.py), si l'agent ou un rôle en a le groupe d'outils ; son modèle ne
+    # se charge qu'à la première recherche ou au premier document.
+    groupes_actifs = {*conf.outils, *(o for r in conf.les_roles().values() for o in r.outils)}
+    if connaissances is None and "connaissances" in groupes_actifs and env.get("DATABASE_URL"):
+        from .connaissances import Base
+
+        connaissances = Base(stockage.Connaissances(env["DATABASE_URL"]))
     if expediteur is None:
         expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
                       if conf.whatsapp else SansWhatsApp())
@@ -284,11 +298,12 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
             fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels), contexte=ensemble(du_fil, gardien.contexte),
-                           gardien=gardien)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, connaissances=connaissances),
+                           contexte=ensemble(du_fil, gardien.contexte), gardien=gardien)
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
         # chaque tour (le fil ; les demandes, les questions, les règles des packs ; l'issue de ses demandes d'accord).
-        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations),
+        agents = agents or {nom: construire(conf, base, cles,
+                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, connaissances),
                                             role=role, nom_role=nom, gardien=gardien,
                                             contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None,
                                                               gardien.contexte))
@@ -683,6 +698,47 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if cles_api is None:
             return Response("base absente", status_code=503)
         return None
+
+    # La base de connaissances (lot 9.2) : la console ajoute, liste et retire les documents du client, à travers la porte.
+
+    def base_lisible(requete: Request) -> Response | None:
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if connaissances is None:
+            return erreur(409, "cet agent n'a pas de base de connaissances (groupe d'outils « connaissances »)")
+        return None
+
+    @app.get("/interne/connaissances")
+    async def interne_documents(requete: Request):
+        if (refus := base_lisible(requete)) is not None:
+            return refus
+        return {"documents": await asyncio.to_thread(connaissances.documents)}
+
+    @app.post("/interne/connaissances")
+    async def interne_ajouter_document(requete: Request):
+        """{titre, genre (texte, pdf, html), texte ou base64, source?} : le document lu, découpé, calculé, rangé."""
+        if (refus := base_lisible(requete)) is not None:
+            return refus
+        corps = bytearray()
+        async for morceau in requete.stream():
+            corps += morceau
+            if len(corps) > CORPS_DOCUMENT:
+                return erreur(413, "document trop gros")
+        try:
+            from .connaissances import contenu_de
+
+            titre, contenu, genre, source = contenu_de(json.loads(bytes(corps)))
+            return await asyncio.to_thread(connaissances.ajouter, titre, contenu, genre, source)
+        except ValueError as e:  # JSON illisible, document refusé, bornes du client
+            return erreur(400, str(e)[:300])
+
+    @app.delete("/interne/connaissances/{ident}")
+    async def interne_retirer_document(ident: str, requete: Request):
+        if (refus := base_lisible(requete)) is not None:
+            return refus
+        if not ident.isdigit() or len(ident) > 10:
+            return erreur(400, "identifiant de document")
+        return {"id": int(ident), "retire": await asyncio.to_thread(connaissances.retirer, int(ident))}
 
     @app.get("/interne/cles")
     async def interne_cles(requete: Request):

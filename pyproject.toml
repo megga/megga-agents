@@ -17,6 +17,11 @@ dependencies = [
   "pyyaml>=6",
   "httpx>=0.27",
   "cryptography>=43",
+  # La base de connaissances (noyau/connaissances.py) : le modèle de recherche, et la lecture des PDF.
+  "onnxruntime==1.32.0",
+  "tokenizers==0.23.3",
+  "numpy>=2",
+  "pypdf==7.1.0",
 ]
 
 [project.optional-dependencies]

@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import (Column, Float, Integer, MetaData, String, Table, Text, UniqueConstraint, and_, create_engine, delete, func, insert,
+from sqlalchemy import (Column, Float, Integer, LargeBinary, MetaData, String, Table, Text, UniqueConstraint, and_, create_engine, delete, func, insert,
                         or_, select, text, update)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -1199,6 +1199,69 @@ class Approbations:
             if lignes:
                 c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relu=1))
         return lignes
+DOCUMENTS_MAX = 200  # par client
+PASSAGES_MAX = 20_000
+
+
+class Connaissances:
+    """La base de connaissances d'un client (noyau/connaissances.py) : ses documents (megga_documents) et leurs passages,
+    chacun avec son vecteur (megga_passages, float32 en octets, et le modèle qui l'a calculé). Le texte d'origine n'est
+    pas gardé : seulement ses passages, ce que l'agent cite."""
+
+    def __init__(self, url: str):
+        self._e, self._d = _table(
+            url,
+            "megga_documents",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("titre", String(200), nullable=False),
+            Column("source", String(500), nullable=True),
+            Column("genre", String(10), nullable=False),
+            Column("taille", Integer, nullable=False),
+            Column("passages", Integer, nullable=False),
+            Column("ajoute", Float, nullable=False),
+        )
+        _, self._p = _table(
+            url,
+            "megga_passages",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("document", Integer, nullable=False, index=True),
+            Column("rang", Integer, nullable=False),
+            Column("texte", Text, nullable=False),
+            Column("modele", String(60), nullable=False),
+            Column("vecteur", LargeBinary, nullable=False),
+        )
+
+    def ajouter(self, titre: str, source: str | None, genre: str, taille: int, modele: str, passages: list[tuple[str, bytes]]) -> int:
+        """Un document et ses passages, d'un coup ; une ValueError au-delà des bornes du client."""
+        d, p = self._d, self._p
+        with self._e.begin() as c:
+            if (c.execute(select(func.count()).select_from(d)).scalar() or 0) >= DOCUMENTS_MAX:
+                raise ValueError(f"déjà {DOCUMENTS_MAX} documents : retirez-en d'abord")
+            if (c.execute(select(func.count()).select_from(p)).scalar() or 0) + len(passages) > PASSAGES_MAX:
+                raise ValueError(f"la base dépasserait {PASSAGES_MAX} passages : retirez des documents d'abord")
+            ident = int(c.execute(insert(d).values(titre=titre[:200], source=source, genre=genre[:10], taille=int(taille),
+                                                   passages=len(passages), ajoute=time.time())).inserted_primary_key[0])
+            if passages:
+                c.execute(insert(p), [{"document": ident, "rang": i, "texte": texte, "modele": modele[:60], "vecteur": v}
+                                      for i, (texte, v) in enumerate(passages)])
+        return ident
+
+    def retirer(self, ident: int) -> bool:
+        with self._e.begin() as c:
+            c.execute(delete(self._p).where(self._p.c.document == int(ident)))
+            return c.execute(delete(self._d).where(self._d.c.id == int(ident))).rowcount > 0
+
+    def documents(self) -> list[dict]:
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(self._d).order_by(self._d.c.id))]
+
+    def passages(self, modele: str) -> list[dict]:
+        """Les passages calculés par ce modèle, avec le titre et la source de leur document."""
+        d, p = self._d, self._p
+        q = (select(p.c.id, p.c.texte, p.c.vecteur, d.c.titre, d.c.source).join(d, d.c.id == p.c.document)
+             .where(p.c.modele == modele).order_by(p.c.document, p.c.rang))
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(q)]
 
 
 class Medias:

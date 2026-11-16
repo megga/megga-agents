@@ -11,6 +11,8 @@
 //                                  le site d'un client (lot 7.4) : un bien entré en ligne, une demande d'information
 //                                  d'une fiche ; transmis tel quel, la clé du site (SITE_CLE) vérifiée par le conteneur
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
+//   GET|POST /admin/clients/:id/connaissances, DELETE /admin/clients/:id/connaissances/:n
+//                                  la base de connaissances d'un client (lot 9.2), gardée par son conteneur
 //                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
@@ -40,6 +42,8 @@ const texte = (t, status = 200) => new Response(t, { status, headers: { "content
 const json = (v, status = 200) => Response.json(v, { status });
 const autorise = (requete, env) => Boolean(env.ADMIN_TOKEN) && egal((requete.headers.get("authorization") ?? "").replace(/^Bearer /, ""), env.ADMIN_TOKEN);
 // L'entrée par API : une clé bien formée (noyau/api.py), un corps de 16 Kio au plus.
+// Un document de la base de connaissances : 8 Mo, en base64 dans du JSON (noyau/app.py, CORPS_DOCUMENT).
+const TAILLE_DOCUMENT = 12 * 1024 * 1024;
 const CLE_API = /^Bearer mga_[A-Za-z0-9_-]{43}$/;
 const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
@@ -67,6 +71,8 @@ export async function recevoir(requete, env, ctx) {
   if (site) return messageSite(requete, env, site[1], site[2]);
   const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
   if (cles) return clesApi(requete, env, cles[1], cles[2] ?? "");
+  const documents = url.pathname.match(/^\/admin\/clients\/([^/]+)\/connaissances(\/[^/]+)?$/);
+  if (documents) return connaissances(requete, env, documents[1], documents[2] ?? "");
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
@@ -176,6 +182,27 @@ async function messageApi(requete, env, id) {
 }
 
 /** Les clés des logiciels d'un client : la porte transmet à son conteneur, qui les garde en empreinte. */
+/** La base de connaissances d'un client (noyau/connaissances.py) : la porte transmet à son conteneur, qui la garde. */
+async function connaissances(requete, env, id, chemin) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const permis = chemin ? requete.method === "DELETE" : ["GET", "POST"].includes(requete.method);
+  if (!permis) return texte("méthode", 405);
+  if (chemin && !/^\/\d{1,10}$/.test(chemin)) return texte("identifiant de document", 400);
+  const longueur = Number(requete.headers.get("content-length") ?? 0);
+  if (requete.method === "POST" && !(longueur > 0 && longueur <= TAILLE_DOCUMENT)) return texte("document trop gros ou longueur absente", 413);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  const corps = requete.method === "POST" ? await requete.text() : null;
+  try {
+    const { statut, donnees } = await agent.connaissances(requete.method, chemin, corps);
+    return json(donnees, statut);
+  } catch (e) {
+    console.error("connaissances en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "conteneur injoignable" }, 503);
+  }
+}
+
 async function clesApi(requete, env, id, chemin) {
   if (!autorise(requete, env)) return texte("refusé", 401);
   const permis = chemin ? requete.method === "DELETE" : ["GET", "POST"].includes(requete.method);
