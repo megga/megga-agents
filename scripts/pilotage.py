@@ -76,7 +76,11 @@ def cle() -> int:
 
 
 def _appel(methode: str, url: str, corps: dict) -> int:
-    """Un appel à la porte avec le jeton d'administration (trousseau) ; seule sa réponse s'affiche."""
+    """Un appel à la porte avec le jeton d'administration (trousseau) ; seule sa réponse s'affiche. En https seulement :
+    le jeton, et pour « poser » la clé privée de pilotage, ne voyagent jamais en clair."""
+    if not url.startswith("https://"):
+        print("l'adresse de la porte : en https")
+        return 2
     requete = urllib.request.Request(url, method=methode, data=json.dumps(corps).encode(),
                                      headers={"authorization": f"Bearer {_trousseau('megga-agents-admin')}",
                                               "content-type": "application/json",

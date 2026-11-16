@@ -126,13 +126,17 @@ class MisesAJour:
     @classmethod
     def depuis(cls, env: dict, transport_kube=None) -> "MisesAJour":
         actif = oui(env.get("MISES_A_JOUR"), "MISES_A_JOUR", False)
-        if not actif:  # sans mises à jour, rien d'autre à lire : un réglage inutile n'empêche pas le pilote de démarrer
-            return cls(sauvegardes=env.get("PILOTE_SAUVEGARDES") or "/sauvegardes")
+        if not actif:  # sans mises à jour, rien d'autre à exiger : un réglage inutile n'empêche pas le pilote de démarrer
+            try:  # le miroir du client, s'il en a un : une mise à jour déjà lancée finit sur le bon dépôt
+                depot_ = images.depot(env.get("MEGGA_DEPOT"))
+            except Exception:
+                depot_ = images.DEPOT
+            return cls(depot=depot_, sauvegardes=env.get("PILOTE_SAUVEGARDES") or "/sauvegardes")
         r = cls(actif=actif, depot=images.depot(env.get("MEGGA_DEPOT")), registre_url=env.get("MEGGA_REGISTRE_URL") or None,
                 compte=env.get("REGISTRE_COMPTE") or None, jeton=env.get("REGISTRE_JETON") or None,
                 sauvegardes=env.get("PILOTE_SAUVEGARDES") or "/sauvegardes")
         images.adresse_registre(r.depot, r.registre_url)  # une adresse refusée l'est au démarrage
-        if actif and env.get("AGENT_DEPLOIEMENT"):
+        if env.get("AGENT_DEPLOIEMENT"):
             if not (re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", env["AGENT_DEPLOIEMENT"])
                     and re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,252}", env.get("PILOTE_DEPLOIEMENT") or "")):
                 raise RuntimeError("AGENT_DEPLOIEMENT et PILOTE_DEPLOIEMENT : les noms des deux Deployments")
@@ -705,14 +709,13 @@ class Pilote:
         if self.mode not in MODES:
             raise RuntimeError("PILOTAGE : non, suivi ou complet")
         self.accord = oui(env.get("PILOTAGE_ACCORD"), "PILOTAGE_ACCORD", True)
-        source = source_config(env)
-        if not source:
-            raise RuntimeError("CLIENT_CONFIG_FILE manquante")
-        self.base = configuration.lire(source)
+        self.base = configuration.lire(source_config(env))
         try:
-            self.intervalle = max(1.0, float(env.get("PILOTAGE_INTERVALLE") or 60))
+            self.intervalle = float(env.get("PILOTAGE_INTERVALLE") or 60)
         except ValueError:
             raise RuntimeError("PILOTAGE_INTERVALLE : un nombre de secondes") from None
+        if not 1 <= self.intervalle <= 3600:  # « inf » endormirait le pilote pour toujours
+            raise RuntimeError("PILOTAGE_INTERVALLE : de 1 à 3600 secondes")
         self.horloge = horloge
         self.delai = delai(env)
         self.maj = MisesAJour.depuis(env, transport_kube)
