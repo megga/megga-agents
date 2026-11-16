@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Vérifie qu'une image a bien été signée par MEGGA (clé publique socle/cosign.pub).
-# Sert à MEGGA avant un déploiement, au pilote et au client avant une mise à jour.
+# Sert à MEGGA avant un déploiement, et au client avant d'installer une image à la main (le pilote, lui,
+# vérifie la signature lui-même, pilote/image.py).
 #   scripts/verifier_image.sh ghcr.io/megga/megga-agents@sha256:<empreinte>
 set -euo pipefail
 image="${1:?image, de préférence par empreinte (@sha256:…)}"

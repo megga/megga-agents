@@ -253,6 +253,22 @@ def test_l_essai_en_flux_garde_ses_refus_en_json(atelier_en_flux):
     assert r.status_code == 400 and "message" in r.json()["erreur"]
     assert t.post("/atelier/clients/exemple/versions/9/essai", headers={**MEGGA, **FLUX}, json={"message": "x"}).status_code == 404
     assert t.post("/atelier/clients/exemple/versions/1/essai", headers=FLUX, json={"message": "x"}).status_code == 401
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers={**MEGGA, **FLUX}, json={"message": "x", "role": 3})
+    assert r.status_code == 400 and "role" in r.json()["erreur"]
+
+
+def test_l_essai_en_flux_compte_dans_le_plafond_du_jour(atelier_en_flux, monkeypatch):
+    import atelier.app
+    from test_lot5 import MEGGA, nouveau_client
+
+    monkeypatch.setattr(atelier.app, "ESSAIS_PAR_JOUR", 1)
+    t = atelier_en_flux
+    nouveau_client(t)
+    assert t.post("/atelier/clients/exemple/versions/1/essai", headers={**MEGGA, **FLUX}, json={"message": "x"}).status_code == 200
+    # Le suivant est refusé avant tout flux, en JSON, qu'il soit demandé en flux ou d'un bloc
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers={**MEGGA, **FLUX}, json={"message": "x"})
+    assert r.status_code == 429 and r.headers["content-type"].startswith("application/json")
+    assert t.post("/atelier/clients/exemple/versions/1/essai", headers=MEGGA, json={"message": "x"}).status_code == 429
 
 
 def test_avec_un_vrai_agent_agno(sqlite):

@@ -241,7 +241,7 @@ class Assistante(Redactrice):
             v = lire_json(await self._texte(CONSIGNE_FICHES, contenu, 2500), "[", "]")
             for k, p in enumerate(lot):
                 f = v[k] if isinstance(v, list) and k < len(v) and isinstance(v[k], dict) else {"annonce": False}
-                sortie.append({"url": p["url"], **f})
+                sortie.append({**f, "url": p["url"]})  # le lien de la page, jamais celui que dirait le modèle
         return sortie
 
     async def trier_nouveautes(self, recherche: str, annonces: list[dict]) -> list[int]:

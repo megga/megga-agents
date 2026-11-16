@@ -6,7 +6,9 @@ set -euo pipefail
 compte="${1:?identifiant du compte WhatsApp}"
 read -r -s -p "Jeton d'utilisateur système (META_TOKEN) : " jeton
 echo
-curl -sS -X POST "https://graph.facebook.com/v26.0/$compte/subscribed_apps" -H "authorization: Bearer $jeton"
+# Le jeton par un fichier de configuration de curl (printf est interne au shell) : jamais dans ps.
+entete() { printf 'header = "authorization: Bearer %s"\n' "$jeton"; }
+curl -sS -X POST "https://graph.facebook.com/v26.0/$compte/subscribed_apps" -K <(entete)
 echo
-curl -sS "https://graph.facebook.com/v26.0/$compte/subscribed_apps" -H "authorization: Bearer $jeton" | python3 -c 'import json,sys;d=json.load(sys.stdin);print([a.get("whatsapp_business_api_data",{}).get("name") for a in d.get("data",[])] or d)'
+curl -sS "https://graph.facebook.com/v26.0/$compte/subscribed_apps" -K <(entete) | python3 -c 'import json,sys;d=json.load(sys.stdin);print([a.get("whatsapp_business_api_data",{}).get("name") for a in d.get("data",[])] or d)'
 unset jeton

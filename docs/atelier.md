@@ -13,7 +13,7 @@ La même image que les agents, en service « atelier » (`MEGGA_SERVICE=atelier`
 | MEGGA | `ADMIN_TOKEN` | tous les clients, tous les réglages, forcer une mise en service, reprendre la main |
 | client | délivré par MEGGA, montré une fois | son seul agent : métier, prénom, voix, ton, outils à cocher |
 
-Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
+Ce qu'un client ne peut pas toucher est repris tel quel de la version de base. Il ne met pas non plus en service une version qui change ce que MEGGA règle (le numéro WhatsApp, les modèles Meta, la gestion du site, les consignes écrites sur mesure) : revenir à une version d'avant n'est permis au client que si ces réglages sont les mêmes que ceux en service. Un modèle par métier qu'il applique garde les consignes sur mesure de MEGGA. Quand MEGGA reprend la main, le client peut encore préparer et essayer des versions, mais seul MEGGA les met en service.
 
 ## Les modèles par métier
 
@@ -39,7 +39,7 @@ Une configuration refusée rend, champ par champ, un message en français clair,
 1. MEGGA crée le client d'une configuration complète : version 1, brouillon. Puis lui donne un jeton.
 2. `valider` montre la configuration qui résulterait des changements, sans rien garder.
 3. Une nouvelle version part d'une base (la dernière par défaut) : un brouillon. Dans `modeles`, `voix` et `whatsapp`, les changements se fusionnent clé par clé ; partout ailleurs, la valeur donnée remplace l'ancienne en entier (c'est ainsi qu'on retire un modèle Meta ou une voix par langue).
-4. `essai` : l'agent de cette version répond, hors WhatsApp, dans une base d'essai à part. Rien ne part au numéro du client. Chaque version et chaque conversation d'essai est une personne neuve.
+4. `essai` : l'agent de cette version répond, hors WhatsApp, dans une base d'essai à part ; avec des rôles, celui du rôle demandé (`role`, le visiteur par défaut), avec ses consignes et sans les outils du pack (ils demandent la gestion du site du client). 200 essais par agent et par jour au plus. Rien ne part au numéro du client. Chaque version et chaque conversation d'essai est une personne neuve.
 5. `activer` : la porte inscrit la configuration dans l'annuaire, puis le conteneur du client redémarre dès qu'il a fini ses tours en cours, et relit la configuration. La version devient publiée, donc figée, et en service. Un brouillon jamais essayé est refusé (MEGGA peut forcer). Une version d'une autre zone que celle en service est refusée : changer de zone, c'est déménager le client. Hors Cloudflare (chez le client, zone suisse), un ordre signé part à l'installation à la place de l'annuaire (voir « Les installations hors Cloudflare »).
 6. Revenir en arrière : `activer` une version publiée plus ancienne.
 
@@ -103,6 +103,8 @@ D'où viennent les chiffres :
 - les échecs et la voix : un petit journal du noyau (`megga_journal`), sans texte ni numéro, seule source des échecs ;
 - les conversations : le fil du noyau (`megga_fil`), écrit en arrière-plan comme le journal, sans jamais retarder une réponse ; celles d'avant le fil se rebâtissent des tours d'Agno ;
 - les pannes d'un conteneur (démarrage, transmission, rappels) : les dix dernières, gardées par son objet à la porte, marquées résolues quand il répond de nouveau. Une alarme en échec se repose elle-même (1, 2, 5, 10, puis 15 minutes) au lieu de s'arrêter ; un webhook que le conteneur n'a pas reçu est gardé par son objet (un jour, 200 au plus) et rejoué quand il répond, lu alors jusqu'à 24 heures après son envoi. Les simples accusés de Meta (envoyé, remis, lu) ne réveillent plus le conteneur.
+
+**Le plafond du jour** : un visiteur, un partenaire ou une personne venue par API a au plus 100 tours de modèle par jour, et tous ensemble 2 000 par client (`noyau/garde.py`, `Plafond`) ; au-delà, une phrase polie, une fois, puis plus rien jusqu'au lendemain (429 par API), et l'alerte `plafond`. Les gestionnaires ne sont jamais arrêtés. Un tour appelle 25 outils au plus.
 
 MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
 

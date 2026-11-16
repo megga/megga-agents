@@ -28,6 +28,6 @@ else
 fi
 corps=$(python3 -c 'import json,sys;print(json.dumps({"DATABASE_URL":sys.stdin.read().strip()}))' <<<"$base")
 curl -sS --fail-with-body -X PUT "$porte/admin/clients/$id/secrets" \
-  -H "authorization: Bearer $admin" -H "content-type: application/json" --data-binary @- <<<"$corps"
+  -K <(printf 'header = "authorization: Bearer %s"\n' "$admin") -H "content-type: application/json" --data-binary @- <<<"$corps"
 echo
 unset admin base corps

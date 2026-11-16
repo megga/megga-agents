@@ -33,12 +33,15 @@ async def composer(fiche: dict, photos: list[bytes], modele: str, version: str =
     """Les octets du PDF, composés par le service de fiche."""
     demande = json.dumps({"modele": modele, "fiche": fiche, "photos": [base64.b64encode(p).decode() for p in photos],
                           "version": version, "sans_prix": sans_prix, "marque": marque}).encode()
+    # Le service de fiche ne reçoit que ce qu'il lui faut : jamais les clés du conteneur (relecture du 16.11.2026).
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "LANG", "TZ") if k in os.environ}
     p = await asyncio.create_subprocess_exec("node", str(SERVICE), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-                                             stderr=asyncio.subprocess.PIPE)
+                                             stderr=asyncio.subprocess.PIPE, env=env)
     try:
         sortie, erreur = await asyncio.wait_for(p.communicate(demande), DELAI)
     except asyncio.TimeoutError:
         p.kill()
+        await p.wait()
         raise RuntimeError("la fiche a pris trop de temps") from None
     if p.returncode != 0 or not sortie.startswith(b"%PDF"):
         raise RuntimeError(f"fiche non composée : {erreur.decode(errors='replace')[:200]}")
@@ -227,18 +230,31 @@ def _png(largeur: int, hauteur: int, donnees_zlib: bytes) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + bloc(b"IHDR", tete) + bloc(b"IDAT", donnees_zlib) + bloc(b"IEND", b"")
 
 
+IMAGE_MAX = 25_000_000  # une photo tirée d'un PDF, une fois décompressée
+
+
+def _decompresser(brut: bytes, maximum: int) -> bytes:
+    """zlib, borné : une plaquette piégée (quelques Ko qui en font des centaines de Mo) est refusée sans remplir la
+    mémoire du conteneur (relecture du 16.11.2026, I6)."""
+    d = zlib.decompressobj()
+    sortie = d.decompress(brut, maximum)
+    if d.unconsumed_tail:
+        raise ValueError("image du PDF trop lourde une fois décompressée")
+    return sortie
+
+
 def octets_image(pdf: bytes, im: dict) -> bytes:
     """Les octets d'une image du PDF, en JPEG ou en PNG."""
     brut = pdf[im["debut"]:im["fin"]]
     if im["mode"] == "jpeg":
         return brut
     if im["mode"] == "flate-jpeg":
-        return zlib.decompress(brut)
+        return _decompresser(brut, IMAGE_MAX)
     if im.get("png"):
         return _png(im["largeur"], im["hauteur"], brut)
     if im.get("predicteur") != 1 or im["largeur"] * im["hauteur"] * 3 > BRUT_MAX:
         raise ValueError("image du PDF illisible")
-    pixels = zlib.decompress(brut)
+    pixels = _decompresser(brut, im["largeur"] * im["hauteur"] * 3)
     ligne = im["largeur"] * 3
     if len(pixels) < ligne * im["hauteur"]:
         raise ValueError("image du PDF incomplète")

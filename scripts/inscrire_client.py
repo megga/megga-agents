@@ -34,7 +34,7 @@ def sql(c: configuration.Config) -> str:
     donnees = json.dumps(c.model_dump(), ensure_ascii=False)
     return (
         "INSERT INTO clients (id, numero_id, zone, config, actif, version, maj_le) VALUES "
-        f"({q(c.id)}, {q(c.whatsapp.numero_id)}, {q(c.zone)}, {q(donnees)}, 1, NULL, datetime('now')) "
+        f"({q(c.id)}, {q(c.whatsapp.numero_id) if c.whatsapp else 'NULL'}, {q(c.zone)}, {q(donnees)}, 1, NULL, datetime('now')) "
         "ON CONFLICT(id) DO UPDATE SET numero_id = excluded.numero_id, zone = excluded.zone, "
         "config = excluded.config, actif = 1, version = NULL, maj_le = excluded.maj_le;\n"
     )
@@ -54,7 +54,10 @@ def main() -> int:
         return 0
     with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False, encoding="utf-8") as f:
         f.write(commande)
-    return subprocess.call(["npx", "wrangler", "d1", "execute", BASE, "--remote", "--file", f.name], cwd=RACINE / "porte")
+    try:
+        return subprocess.call(["npx", "wrangler", "d1", "execute", BASE, "--remote", "--file", f.name], cwd=RACINE / "porte")
+    finally:
+        Path(f.name).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

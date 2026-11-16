@@ -22,7 +22,7 @@ def en_vie(intervalle: str | float | None) -> bool:
         i = float(intervalle or 60)
     except ValueError:
         i = 60.0
-    i = max(1.0, i) if math.isfinite(i) else 60.0  # comme le pilote
+    i = min(max(1.0, i), 3600.0) if math.isfinite(i) else 60.0  # le pilote refuse de démarrer hors de 1 à 3600
     try:
         return time.time() - VIVANT.stat().st_mtime < 3 * i + 60
     except OSError:
