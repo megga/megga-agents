@@ -179,3 +179,13 @@ class Expediteur:
         if f.status_code >= 400:
             raise RuntimeError(f"Meta fichier {f.status_code}")
         return f.content[:maximum]
+
+
+class SansWhatsApp:
+    """L'expéditeur d'un agent branché seulement par API : rien ne part sur WhatsApp."""
+
+    def __getattr__(self, nom):
+        async def refus(*_a, **_k):
+            raise RuntimeError("cet agent n'a pas de numéro WhatsApp")
+
+        return refus

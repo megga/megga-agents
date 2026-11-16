@@ -36,7 +36,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 60s
-    # Aucun port publié : seule l'entrée HTTPS lui parle, et seulement pour /whatsapp.
+    # Aucun port publié : seule l'entrée HTTPS lui parle, et seulement pour /whatsapp et /api/messages.
     expose: ["8080"]
     # À l'arrêt (mise à jour, redémarrage), l'agent finit ses tours en cours (100 secondes au plus).
     # Il s'arrête aussi de lui-même quand le pilote a noté une nouvelle configuration : relancé, il la relit.

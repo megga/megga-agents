@@ -26,7 +26,11 @@ relancent, et il la relit.
 Routes :
   GET  /sante     l'état du conteneur, sans rien de privé
   GET  /whatsapp  l'abonnement du webhook de Meta (chez le client ; chez MEGGA, la porte s'en charge)
-  POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature)
+  POST /whatsapp  un webhook de Meta, transmis tel quel (corps et signature) ; sans numéro configuré, 404
+  POST /api/messages  un logiciel parle à l'agent (clé du logiciel, noyau/api.py et docs/api.md)
+  GET  /interne/cles             les clés des logiciels, sans empreinte (jeton INTERNE_TOKEN)
+  POST /interne/cles             {id, logiciel, empreinte, par_minute} une clé créée par l'atelier
+  DELETE /interne/cles/{id}      retire une clé
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
   GET  /interne/suivi[?depuis=]                 volumes, modèles, échecs (jeton INTERNE_TOKEN)
@@ -50,6 +54,7 @@ from collections import OrderedDict
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from . import api as entree_api
 from . import config as configuration
 from . import licence as licences
 from . import pilotage as pilotages
@@ -62,7 +67,7 @@ from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
-from .whatsapp import Expediteur, lire_entrants, signature_valide
+from .whatsapp import Expediteur, SansWhatsApp, lire_entrants, signature_valide
 
 log = logging.getLogger("megga")
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
@@ -117,7 +122,7 @@ def _reecriture(conf, cles):
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
-          quitter=None) -> FastAPI:
+          quitter=None, cles_api=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -149,14 +154,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if agent is None:
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
         agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
-        contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         reecrire = reecrire or _reecriture(conf, cles)
     if env.get("DATABASE_URL"):
         journal = journal or stockage.Journal(env["DATABASE_URL"])
         lecture = lecture or stockage.Suivi(env["DATABASE_URL"])
         fil = fil or stockage.Fil(env["DATABASE_URL"])
+        contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
+        cles_api = cles_api or stockage.ClesApi(env["DATABASE_URL"])
     if expediteur is None:
-        expediteur = Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
+        expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
+                      if conf.whatsapp else SansWhatsApp())
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
@@ -164,6 +171,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     jeton_interne = env.get("INTERNE_TOKEN", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
+    debit_cles = entree_api.DebitCles()
 
     def licence_echue() -> bool:
         """Au-delà du délai de grâce, même un agent lancé avant cesse de servir (vérifié à chaque appel)."""
@@ -242,6 +250,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     @app.get("/whatsapp")
     async def abonnement(requete: Request):
         """Meta vérifie l'adresse du webhook : le défi est rendu si le jeton correspond."""
+        if conf.whatsapp is None:
+            return Response("pas de WhatsApp", status_code=404)
         p = requete.query_params
         jeton = env.get("META_VERIFY_TOKEN", "")
         # En octets : un jeton accentué se compare aussi (sur des textes, compare_digest n'accepte que l'ASCII).
@@ -253,6 +263,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     async def whatsapp(requete: Request):
         if licence_echue():
             return Response("licence échue", status_code=503)
+        if conf.whatsapp is None:
+            return Response("pas de WhatsApp", status_code=404)
         corps = await requete.body()
         if not signature_valide(corps, requete.headers.get("x-hub-signature-256"), secret):
             return Response("signature", status_code=401)
@@ -271,6 +283,50 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             lus += 1
         # Meta veut une réponse rapide : le tour se poursuit après.
         return Response(f"reçu {lus}", media_type="text/plain")
+
+    def erreur(statut: int, message: str, entetes: dict | None = None, **autres) -> JSONResponse:
+        return JSONResponse({"erreur": message, **autres}, status_code=statut, headers=entetes)
+
+    @app.post("/api/messages")
+    async def api_messages(requete: Request):
+        """Un logiciel parle à l'agent : la réponse vient dans la même requête (noyau/api.py, docs/api.md)."""
+        if licence_echue():
+            return erreur(503, "licence échue")
+        if cles_api is None:
+            return erreur(503, "entrée par API indisponible")
+        jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        cle = await asyncio.to_thread(cles_api.par_empreinte, entree_api.empreinte(jeton)) if entree_api.CLE.fullmatch(jeton) else None
+        if cle is None:
+            return erreur(401, "clé refusée")
+        # Lu par morceaux, borné : un corps trop gros est refusé sans être gardé en mémoire.
+        corps = bytearray()
+        async for morceau in requete.stream():
+            corps += morceau
+            if len(corps) > entree_api.CORPS_MAX:
+                return erreur(413, "requête trop grosse")
+        try:
+            donnees = json.loads(bytes(corps))
+        except ValueError:
+            return erreur(400, "corps : du JSON")
+        if not isinstance(donnees, dict) or set(donnees) - {"personne", "texte"}:
+            return erreur(400, "corps : {personne, texte}")
+        personne, texte = donnees.get("personne"), donnees.get("texte")
+        if not isinstance(personne, str) or not entree_api.IDENTIFIANT.fullmatch(personne):
+            return erreur(400, "personne : un identifiant de 1 à 40 caractères (lettres, chiffres, . _ -), avec au moins une lettre ; jamais un numéro de téléphone")
+        if not isinstance(texte, str) or not texte.strip() or len(texte) > entree_api.TEXTE_MAX:
+            return erreur(400, f"texte : de 1 à {entree_api.TEXTE_MAX} caractères")
+        if not debit_cles.permis(cle):
+            conversations._noter_journal("api_debit", detail=cle["id"])
+            attente = debit_cles.attente(cle)
+            return erreur(429, "trop de messages pour cette clé", attente=attente, entetes={"retry-after": str(attente)})
+        tour = await conversations.repondre_api(entree_api.personne_interne(cle["logiciel"], personne), texte.strip())
+        if tour is None:
+            conversations._noter_journal("api_debit", detail="personne")
+            return erreur(429, "trop de messages pour cette personne", attente=60, entetes={"retry-after": "60"})
+        reponse, echec = tour
+        if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse
+            return erreur(503, "l'agent n'a pas pu répondre", reponse=reponse)
+        return {"reponse": reponse}
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")
@@ -343,6 +399,45 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if (refus := lisible(requete)) is not None:
             return refus
         return {"alertes": await asyncio.to_thread(journal.alertes, date(requete.query_params.get("depuis")))}
+
+    def cles_lisibles(requete: Request) -> Response | None:
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if cles_api is None:
+            return Response("base absente", status_code=503)
+        return None
+
+    @app.get("/interne/cles")
+    async def interne_cles(requete: Request):
+        if (refus := cles_lisibles(requete)) is not None:
+            return refus
+        return {"cles": await asyncio.to_thread(cles_api.lister)}
+
+    @app.post("/interne/cles")
+    async def interne_ajouter_cle(requete: Request):
+        """Une clé créée par l'atelier : son empreinte seulement, la clé ne vient jamais jusqu'ici."""
+        if (refus := cles_lisibles(requete)) is not None:
+            return refus
+        try:
+            d = await requete.json()
+            ident, logiciel, empreinte = d["id"], d["logiciel"], d["empreinte"]
+            debit = entree_api.par_minute(d.get("par_minute"))
+        except (ValueError, KeyError, TypeError):
+            return erreur(400, "{id, logiciel, empreinte, par_minute}")
+        if not (isinstance(ident, str) and entree_api.IDENT_CLE.fullmatch(ident) and isinstance(logiciel, str)
+                and entree_api.LOGICIEL.fullmatch(logiciel) and isinstance(empreinte, str) and entree_api.EMPREINTE.fullmatch(empreinte)):
+            return erreur(400, "{id, logiciel, empreinte, par_minute}")
+        if not await asyncio.to_thread(cles_api.ajouter, ident, logiciel, empreinte, debit):
+            return erreur(409, "clé déjà enregistrée")
+        return {"id": ident, "logiciel": logiciel, "par_minute": debit}
+
+    @app.delete("/interne/cles/{ident}")
+    async def interne_retirer_cle(ident: str, requete: Request):
+        if (refus := cles_lisibles(requete)) is not None:
+            return refus
+        if not entree_api.IDENT_CLE.fullmatch(ident):
+            return erreur(400, "identifiant de clé")
+        return {"id": ident, "retiree": await asyncio.to_thread(cles_api.retirer, ident)}
 
     if env.get("JWT_VERIFICATION_KEY"):
         from agno.os import AgentOS

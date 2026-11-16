@@ -126,7 +126,7 @@ Chaque client a une **zone**, choisie à l'installation : là où tournent son a
 - piloté par la console comme une installation client (canal sortant, signé), sans aucune conversation qui en sorte ;
 - le modèle : un modèle hébergé en Suisse si rien ne doit sortir, ou Claude par l'Europe si le client l'accepte par contrat.
 
-**Hors WhatsApp** : pour un logiciel (par exemple médical), le noyau offre aussi une entrée par API, appelée depuis le logiciel du client. Les données de patients n'ont alors pas à passer par Meta.
+**Hors WhatsApp** : pour un logiciel (par exemple médical), le noyau offre aussi une entrée par API, appelée depuis le logiciel du client. Les données de patients n'ont alors pas à passer par Meta. Fait au lot 6.6 : `POST /api/messages` (chez MEGGA, `https://api.megga.ai/api/<client>/messages`, servi par la porte), une clé par logiciel gardée en empreinte dans la base du client, WhatsApp devenu facultatif ; le guide du développeur : `docs/api.md`.
 
 Plusieurs clients suisses partagent le serveur, séparés comme sur Cloudflare ; un client premium peut avoir son serveur à lui.
 

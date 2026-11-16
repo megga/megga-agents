@@ -172,7 +172,7 @@ class AgentClient extends Conteneur {
 
   /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
   async suivre(chemin, recherche = "") {
-    if (!/^(\/conversations(\/\+?\d{6,20})?|\/alertes)?$/.test(chemin)) throw new Error("chemin de suivi");
+    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes)?$/.test(chemin)) throw new Error("chemin de suivi");
     const cle = chemin + recherche;
     const duree = chemin.startsWith("/conversations") ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
     this.cacheSuivi ??= new Map();
@@ -187,7 +187,9 @@ class AgentClient extends Conteneur {
       throw e;
     }
     const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
-    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/suivi${chemin}${recherche}`, { headers: { "x-megga-interne": jeton } });
+    const r = await this.ctx.container
+      .getTcpPort(PORT)
+      .fetch(`http://container/interne/suivi${chemin.replace(/:/g, "%3A")}${recherche}`, { headers: { "x-megga-interne": jeton } });
     const texte = await r.text();
     let donnees = null;
     try {
@@ -201,6 +203,34 @@ class AgentClient extends Conteneur {
     }
     // Réveillé seulement pour être lu : il se rendort vite, sauf si une vraie requête est arrivée entre-temps.
     if (dormait && !((this.activite ?? 0) >= debut)) await this.ctx.container.setInactivityTimeout(SOMMEIL_SUIVI_MS).catch(() => {});
+    return { statut: r.status, donnees };
+  }
+
+  /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
+  async cles(methode, chemin = "", corps = null) {
+    if (!/^(\/[0-9a-f]{12})?$/.test(chemin)) throw new Error("chemin de clé");
+    const dormait = !this.ctx.container?.running;
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const options = { method: methode, headers: { "x-megga-interne": jeton } };
+    if (corps !== null) {
+      options.body = JSON.stringify(corps);
+      options.headers["content-type"] = "application/json";
+    }
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/cles${chemin}`, options);
+    const texte = await r.text();
+    let donnees;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    if (dormait) await this.ctx.container.setInactivityTimeout(SOMMEIL_SUIVI_MS).catch(() => {});
     return { statut: r.status, donnees };
   }
 

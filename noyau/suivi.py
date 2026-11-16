@@ -12,7 +12,8 @@ import re
 from .config import Config
 from .garde import masquer_secrets
 
-PERSONNE = re.compile(r"^\+?\d{6,20}$")
+# Un numéro WhatsApp, ou une personne d'un logiciel par API (noyau/api.py).
+PERSONNE = re.compile(r"^(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:(?=[^:]*[A-Za-z])[A-Za-z0-9._-]{1,40})$")
 
 
 def entree_hors_cache(m: dict) -> int:
@@ -52,6 +53,8 @@ def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_e
         "tours_en_echec": int((journal.get("tour_echec") or {}).get("nombre", 0)),
         "secours": secours,
         "personnes": len({t["personne"] for t in tours if t["personne"]}),
+        # Les tours venus d'un logiciel par API, comptés aussi dans « tours » (et dans les coûts).
+        "tours_api": sum(1 for t in tours if str(t["personne"] or "").startswith("api:")),
         "derniere_activite": max((t["quand"] for t in tours), default=None),
         "modeles": modeles,
         "journal": journal,

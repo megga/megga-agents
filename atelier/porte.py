@@ -65,3 +65,7 @@ class Porte:
         params = {"id": ident} if ident else None
         d = await self._appel("GET", "/admin/clients", params=params)
         return {e["id"]: e for e in d.get("clients", [])}
+
+    async def cles(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
+        """Les clés des logiciels d'un client, gardées dans sa base : lister, ajouter (une empreinte), retirer."""
+        return await self._appel(methode, f"/admin/clients/{ident}/cles{chemin}", json=corps)

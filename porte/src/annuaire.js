@@ -1,4 +1,4 @@
-// L'annuaire des clients (D1) : numéro WhatsApp vers client, zone, configuration.
+// L'annuaire des clients (D1) : numéro WhatsApp vers client (s'il en a un), zone, configuration.
 // Rien de secret ici : les secrets d'un client sont dans le stockage de son objet.
 
 const ID = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -39,12 +39,13 @@ export async function inscrire(db, id, { version, config } = {}) {
   if (!config || typeof config !== "object" || Array.isArray(config)) throw new RefusAnnuaire(400, "configuration : un objet");
   if (config.id !== id) throw new RefusAnnuaire(400, "configuration d'un autre client");
   if (!Number.isInteger(version) || version < 1) throw new RefusAnnuaire(400, "version");
-  const numero = config.whatsapp?.numero_id;
-  if (!NUMERO.test(String(numero ?? ""))) throw new RefusAnnuaire(400, "numéro WhatsApp");
+  // Sans WhatsApp, un client ne sert que par API (lot 6.6) : pas de numéro dans l'annuaire.
+  const numero = config.whatsapp == null ? null : config.whatsapp.numero_id;
+  if (numero !== null && !NUMERO.test(String(numero ?? ""))) throw new RefusAnnuaire(400, "numéro WhatsApp");
   const avant = await db.prepare("SELECT zone FROM clients WHERE id = ?").bind(id).first();
   // L'objet d'un client vit dans la juridiction de sa zone : changer de zone, c'est le déménager.
   if (avant && avant.zone !== config.zone) throw new RefusAnnuaire(409, "changement de zone : déménagement, pas un réglage");
-  const pris = await db.prepare("SELECT id FROM clients WHERE numero_id = ? AND id != ?").bind(numero, id).first();
+  const pris = numero !== null && (await db.prepare("SELECT id FROM clients WHERE numero_id = ? AND id != ?").bind(numero, id).first());
   if (pris) throw new RefusAnnuaire(409, "numéro déjà servi par un autre client");
   await db
     .prepare(

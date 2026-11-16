@@ -52,16 +52,17 @@ def test_migrations_au_demarrage(base):
         jouees.append(2)
         stockage._table(base, nom, Column("id", String(8), primary_key=True))
 
+    n = stockage.SCHEMA_VERSION
     try:
-        assert stockage.migrer(base, version=2, etapes={2: etape_2}) == 2
-        assert stockage.migrer(base, version=2, etapes={2: etape_2}) == 2
+        assert stockage.migrer(base, version=n + 1, etapes={n + 1: etape_2}) == n + 1
+        assert stockage.migrer(base, version=n + 1, etapes={n + 1: etape_2}) == n + 1
         assert jouees == [2]
         # retour arrière : l'image précédente démarre sur la base migrée par la suivante
-        assert stockage.migrer(base, version=1) == 2
+        assert stockage.migrer(base, version=n) == n + 1
         # au-delà, elle refuse
-        stockage.migrer(base, version=3, etapes={3: lambda c, s: None})
+        stockage.migrer(base, version=n + 2, etapes={n + 2: lambda c, s: None})
         with pytest.raises(stockage.BaseTropRecente):
-            stockage.migrer(base, version=1)
+            stockage.migrer(base, version=n)
     finally:
         e = stockage.moteur(base)
         schema = stockage.SCHEMA if e.dialect.name == "postgresql" else None

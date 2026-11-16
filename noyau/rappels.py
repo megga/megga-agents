@@ -1,6 +1,6 @@
 """Les rappels, seulement à la demande : « rappelle-moi jeudi à 9 h de relancer M. X ».
 
-Jamais de message spontané. Chaque outil agit pour la personne qui parle
+Jamais de message spontané. Pas de rappels dans une conversation par API (noyau/api.py) : personne ne les recevrait. Chaque outil agit pour la personne qui parle
 (run_context.user_id, posé par le noyau) et ne voit jamais les rappels d'une autre.
 À l'heure dite, la porte réveille le conteneur, qui envoie le rappel :
 dans les 24 heures de WhatsApp, un message libre ; au-delà, le modèle Meta
@@ -44,6 +44,9 @@ def outils(rappels, fuseau: str):
     def _qui(run_context: RunContext) -> str:
         if not run_context or not run_context.user_id:
             raise ValueError("personne inconnue")
+        if run_context.user_id.startswith("api:"):
+            # Par API, personne ne recevrait le rappel (un appel vers le logiciel viendra s'il le faut).
+            raise ValueError("les rappels ne sont pas disponibles dans cette conversation : dis-le simplement")
         return run_context.user_id
 
     def rappeler(quand: str, quoi: str, run_context: RunContext) -> str:

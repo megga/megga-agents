@@ -16,6 +16,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 VERSION = 1
+# La première image qui sert une configuration sans WhatsApp (entrée par API seulement).
+SANS_WHATSAPP_DEPUIS = (0, 3, 0)
 ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
 METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
@@ -84,7 +86,9 @@ class Config(Strict):
     ton: str = Field(default="chaleureux et professionnel", max_length=200)
     consignes: str = Field(default="", max_length=8000)
     modeles: Modeles = Modeles()
-    whatsapp: WhatsApp
+    # Facultatif : un agent branché seulement par API (un logiciel, noyau/api.py) n'a pas de numéro.
+    # Une configuration sans WhatsApp demande une image qui la connaît (0.3.0 et après).
+    whatsapp: WhatsApp | None = None
     voix: Voix = Voix()
     # Les modèles Meta du client, par usage (« rappel », « relance »).
     modeles_meta: dict[str, ModeleMeta] = {}

@@ -66,7 +66,7 @@ def test_refus_en_clair(atelier):
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "boulangerie", "client": IDENTITE, "nom_agent": "Lea"})
     assert r.status_code == 400 and r.json()["erreur"] == "Choisissez un modèle : généraliste, immobilier."
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": {"id": "x1"}, "nom_agent": "Lea"})
-    assert r.json()["erreur"] == "Il manque : entreprise, zone, numero_id."
+    assert r.json()["erreur"] == "Il manque : entreprise, zone."
     assert t.post("/atelier/clients", headers=jeton_client_cree(t), json={"gabarit": "generaliste", "client": IDENTITE}).status_code == 403
 
 

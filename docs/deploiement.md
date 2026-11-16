@@ -44,6 +44,10 @@ Aucun secret ne passe par Claude ni par le dépôt : chacun se saisit en masqué
    L'adresse est lue dans `.env.local` (celle sans le regroupeur de connexions de Neon, mieux adaptée à un conteneur qui garde ses connexions), sans s'afficher.
 9. **Julien** : écrire au numéro, puis envoyer un vocal. Le premier message réveille le conteneur (quelques secondes).
 
+**L'entrée par API sur `api.megga.ai` (lot 6.6)** : la porte la sert comme domaine personnalisé (`routes` de `porte/wrangler.jsonc`), et n'y sert que `/api/<client>/messages` (404 pour tout le reste) ; `workers.dev` reste l'adresse de secours, et celle de Meta, de l'administration, de l'atelier et du pilotage. Prérequis, **à vérifier par Julien avant « Fusionne et déploie »** : la zone `megga.ai` est gérée par le compte Cloudflare de MEGGA (sinon `wrangler deploy` échoue), et aucun enregistrement DNS `api` n'y existe déjà (Cloudflare crée lui-même l'enregistrement et le certificat).
+
+Au déploiement qui suit le lot 6.6, l'annuaire passe à sa migration `0003` (un client sans numéro WhatsApp) par l'étape « L'annuaire est à jour » du workflow, avant la porte. La base de chaque client passe à la version 2 de nos tables (personne en 80 caractères) au réveil de son conteneur.
+
 ## Revenir en arrière
 
 Dans l'app Meta, retirer l'adresse du webhook : plus rien n'arrive à la porte. Ou supprimer le Worker `megga-agents`. Alix FSP n'est pas concernée.

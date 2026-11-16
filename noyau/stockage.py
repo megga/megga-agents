@@ -31,9 +31,22 @@ from sqlalchemy.exc import IntegrityError
 FORMAT = 1
 # La version de nos tables (préfixe megga_). Chaque migration est additive : une image démarre
 # aussi sur une base migrée par la version suivante (retour arrière), pas au-delà.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+# La longueur d'une personne : un numéro WhatsApp, ou « api:<logiciel>:<identifiant> » (noyau/api.py).
+PERSONNE = 80
+
+
+def _elargir_personnes(c, schema) -> None:
+    """Version 2 : la personne passe de 32 à 80 caractères (les conversations par API). SQLite ne borne pas
+    la longueur ; sous Postgres, élargir garde les lignes et reste lisible par l'image précédente."""
+    if c.dialect.name != "postgresql":
+        return
+    for table in ("megga_contacts", "megga_rappels", "megga_fil"):
+        c.execute(text(f'ALTER TABLE IF EXISTS "{schema}"."{table}" ALTER COLUMN personne TYPE VARCHAR({PERSONNE})'))
+
+
 # Les étapes de migration, de la version n-1 à n : {n: fonction(connexion, schéma)}.
-ETAPES: dict = {}
+ETAPES: dict = {2: _elargir_personnes}
 # Le schéma Postgres des tables d'Agno (SQLite n'a pas de schéma).
 SCHEMA = "ai"  # celui d'Agno par défaut, qu'il emploie dans tous les cas
 
@@ -209,6 +222,7 @@ def preparer(url: str) -> None:
     Rappels(url)
     Journal(url)
     Fil(url)
+    ClesApi(url)
     Ordres(url)
     JournalPilotage(url)
     Reglages(url)
@@ -254,7 +268,7 @@ class Contacts:
         self._e, self._t = _table(
             url,
             "megga_contacts",
-            Column("personne", String(32), primary_key=True),
+            Column("personne", String(PERSONNE), primary_key=True),
             Column("dernier_entrant", Float, nullable=False),
         )
 
@@ -283,7 +297,7 @@ class Rappels:
             url,
             "megga_rappels",
             Column("id", String(36), primary_key=True),
-            Column("personne", String(32), nullable=False, index=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
             Column("quand", Float, nullable=False, index=True),
             Column("texte", String(500), nullable=False),
             Column("etat", String(10), nullable=False, default="attente"),
@@ -381,6 +395,54 @@ class Jetons:
             return c.execute(delete(self._t).where(self._t.c.client == client)).rowcount
 
 
+class ClesApi:
+    """Les clés des logiciels qui parlent à l'agent par API (table megga_cles_api, dans la base du client).
+
+    Seule leur empreinte est gardée : une clé se montre une fois, à sa création (par l'atelier, ou chez le
+    client par python -m noyau.cles). Une clé retirée reste listée, marquée, et ne sert plus.
+    """
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_cles_api",
+            Column("id", String(12), primary_key=True),
+            Column("empreinte", String(64), nullable=False, unique=True),
+            Column("logiciel", String(20), nullable=False),
+            Column("par_minute", Integer, nullable=False),
+            Column("cree", Float, nullable=False),
+            Column("retiree", Float, nullable=True),
+        )
+
+    def ajouter(self, ident: str, logiciel: str, empreinte: str, par_minute: int, quand: float | None = None) -> bool:
+        """Faux si cet identifiant ou cette empreinte existent déjà."""
+        try:
+            with self._e.begin() as c:
+                c.execute(insert(self._t).values(id=ident, empreinte=empreinte, logiciel=logiciel, par_minute=par_minute,
+                                                 cree=quand or time.time(), retiree=None))
+            return True
+        except IntegrityError:
+            return False
+
+    def par_empreinte(self, empreinte: str) -> dict | None:
+        """La clé en service de cette empreinte : {id, logiciel, par_minute}, ou None."""
+        t = self._t
+        with self._e.connect() as c:
+            l = c.execute(select(t.c.id, t.c.logiciel, t.c.par_minute).where(t.c.empreinte == empreinte, t.c.retiree.is_(None))).first()
+        return dict(l._mapping) if l else None
+
+    def lister(self) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.id, t.c.logiciel, t.c.par_minute, t.c.cree, t.c.retiree).order_by(t.c.cree))
+            return [dict(l._mapping) for l in lignes]
+
+    def retirer(self, ident: str, quand: float | None = None) -> bool:
+        t = self._t
+        with self._e.begin() as c:
+            return c.execute(update(t).where(t.c.id == ident, t.c.retiree.is_(None)).values(retiree=quand or time.time())).rowcount > 0
+
+
 class Journal:
     """Ce qu'Agno ne garde pas : les échecs autour d'un tour et les volumes de voix (table megga_journal).
 
@@ -437,7 +499,7 @@ class Fil:
             url,
             "megga_fil",
             Column("id", String(32), primary_key=True),
-            Column("personne", String(32), nullable=False, index=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
             Column("quand", Float, nullable=False, index=True),
             Column("sens", String(8), nullable=False),  # recu, envoye
             Column("genre", String(12), nullable=False),  # texte, vocal, rappel, modele

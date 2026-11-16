@@ -1,4 +1,4 @@
-"""Un tour de conversation sur WhatsApp, de la réception à la réponse.
+"""Un tour de conversation sur WhatsApp, de la réception à la réponse (et le même tour par API).
 
 - Les messages d'une même personne qui arrivent à quelques secondes d'intervalle
   sont lus ensemble (on envoie souvent plusieurs messages à la suite).
@@ -130,16 +130,7 @@ class Conversations:
         if not entendu:
             await self._ecrire(personne, NON_COMPRIS if sourd else "Je ne lis que les messages écrits et les vocaux pour le moment.")
             return
-        try:
-            sortie = await self.agent.arun(entendu, user_id=personne, session_id=personne)
-            reponse = EXCUSE if en_echec(sortie) else (getattr(sortie, "content", None) or "")
-            if en_echec(sortie):
-                log.error("tour en échec (%s)", self.conf.id)
-                self._noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
-        except Exception as e:
-            log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
-            self._noter_journal("tour_echec", detail=type(e).__name__)
-            reponse = EXCUSE
+        reponse, _ = await self._executer(personne, entendu)
         if not reponse.strip():
             return
         if vocal and self.voie is not None and self.voie.parle and se_prete(reponse) and reponse != EXCUSE:
@@ -148,6 +139,44 @@ class Conversations:
                     await self._ecrire(personne, reponse)
                 return
         await self._ecrire(personne, reponse)
+
+    async def _executer(self, personne: str, entendu: str) -> tuple[str, bool]:
+        """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur."""
+        try:
+            sortie = await self.agent.arun(entendu, user_id=personne, session_id=personne)
+            if en_echec(sortie):
+                log.error("tour en échec (%s)", self.conf.id)
+                self._noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
+                return EXCUSE, True
+            return getattr(sortie, "content", None) or "", False
+        except Exception as e:
+            log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
+            self._noter_journal("tour_echec", detail=type(e).__name__)
+            return EXCUSE, True
+
+    async def repondre_api(self, personne: str, texte: str) -> tuple[str, bool] | None:
+        """Un tour demandé par un logiciel (noyau/api.py) : la réponse est rendue, rien ne part sur WhatsApp.
+
+        Pas de regroupement d'attente (le logiciel envoie un message entier), pas de rappels. Les tours d'une
+        même personne passent l'un après l'autre. Rend (réponse, échec), ou None si le débit de la personne
+        est dépassé.
+        """
+        lance = asyncio.current_task()
+        if lance is not None:  # un arrêt en douceur attend aussi les tours par API
+            self.taches.add(lance)
+        try:
+            async with self._verrous.setdefault(personne, asyncio.Lock()):
+                await self._sans_echec(self._noter(personne, time.time()))
+                self._noter_fil(personne, "recu", "texte", texte)
+                if not self.debit.permis(personne):
+                    return None
+                brute, echec = await self._executer(personne, texte)
+                reponse = nettoyer(masquer_secrets(brute))
+                self._noter_fil(personne, "envoye", "texte", reponse)
+                return reponse, echec
+        finally:
+            if lance is not None:
+                self.taches.discard(lance)
 
     async def _ecouter(self, media_id: str) -> str:
         if self.voie is None or not self.voie.ecoute:
