@@ -8,9 +8,21 @@ configuration (Config.gestion).
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from noyau.config import Gestion as ReglageGestion
+
+# Les routes de l'API de gestion que les outils appellent, et elles seules. Un identifiant venu du modèle y entre :
+# rien ne doit pouvoir couper le chemin (« # », « ? »), le détourner (« .. », « %2e ») ni lui ajouter un segment
+# (« villa/visibilite ») ; « retirer_video(slug="villa#") » appelait sinon DELETE /annonces/villa.
+SLUG = r"[a-z0-9][a-z0-9-]{0,119}"
+CHEMIN = re.compile(
+    r"/(?:resume|clients|annonces|vitrine|vitrine/correspondances|acces/site|acces/porte/[a-z0-9][a-z0-9-]{0,39}"
+    rf"|annonces/{SLUG}(?:/(?:fiche|acces|photos|documents|videos|visibilite|prive))?"
+    r"|clients/recherches(?:/[A-Za-z0-9_-]{1,64}(?:/biens)?)?)"
+)
 
 
 class GestionErreur(Exception):
@@ -37,7 +49,7 @@ class Gestion:
         `fichiers` : un formulaire multipart ; `brut` : (octets, type) envoyés tels quels (un PDF)."""
         if not compte:
             raise GestionErreur(403, "aucun compte de gestion pour cette personne")
-        if not chemin.startswith("/") or ".." in chemin:
+        if not CHEMIN.fullmatch(chemin):
             raise GestionErreur(400, "chemin de gestion")
         entetes = {"authorization": f"Bearer {self._cle}", "x-gestion-compte": compte}
         options: dict = {"params": params}
@@ -62,7 +74,7 @@ class Gestion:
 
     async def octets(self, compte: str, chemin: str, maximum: int = 15_000_000) -> bytes:
         """Un fichier du site lu sous la gestion (une photo : /gestion/images/<fichier>)."""
-        if not chemin.startswith("/gestion/") or ".." in chemin:
+        if not chemin.startswith("/gestion/") or ".." in chemin or re.search(r"[?#%\s\\]", chemin):
             raise GestionErreur(400, "chemin de fichier")
         try:
             async with httpx.AsyncClient(transport=self._transport, timeout=self._delai) as c:

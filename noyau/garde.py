@@ -19,9 +19,12 @@ _SECRETS = (
     re.compile(r"\bsk-[A-Za-z0-9_\-]{16,}"),
     re.compile(r"\bEAA[A-Za-z0-9]{30,}"),
     re.compile(r"\b(?:xi|sk|pk|rk)_[A-Za-z0-9]{20,}"),
-    # Une longue suite de lettres ET de chiffres, sans espace : un jeton, pas un mot ni un numéro.
-    re.compile(r"\b(?=[A-Za-z0-9_\-]*[A-Za-z])(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{40,}\b"),
 )
+# Une longue suite de lettres ET de chiffres, sans espace : un jeton, pas un mot ni un numéro.
+_JETON = re.compile(r"\b(?=[A-Za-z0-9_\-]*[A-Za-z])(?=[A-Za-z0-9_\-]*\d)[A-Za-z0-9_\-]{40,}\b")
+# L'adresse d'une page, jusqu'à ses paramètres : l'identifiant d'une annonce y est long, avec des chiffres
+# (« …/property/dubai-high-floor-2-br-apartment-… »), et n'est pas un jeton. Ses paramètres restent regardés.
+_ADRESSE = re.compile(r"https?://[^\s?#]+", re.I)
 
 
 def masquer_secrets(texte):
@@ -29,7 +32,12 @@ def masquer_secrets(texte):
         return texte
     for r in _SECRETS:
         texte = r.sub(MASQUE, texte)
-    return texte
+    # Le motif général, partout sauf dans le chemin d'une adresse.
+    morceaux, fin = [], 0
+    for m in _ADRESSE.finditer(texte):
+        morceaux += [_JETON.sub(MASQUE, texte[fin:m.start()]), m.group(0)]
+        fin = m.end()
+    return "".join([*morceaux, _JETON.sub(MASQUE, texte[fin:])])
 
 
 def crochet_secrets(run_output) -> None:
