@@ -6,7 +6,7 @@ Alix FSP (dépôt `megga/fourseasonsproperties`, Worker `fourseasons-alix`) comp
 |---|---|
 | **7.1 Fondations** (fait) | les rôles des personnes, les médias de WhatsApp, le branchement à la gestion du site, la configuration de Four Seasons |
 | **7.2 Annonces** (fait) | lire, chercher, brouillon puis création, modifier, retirer ; garde-fous et rédaction ; photos, vidéos, mots de passe, clients, carrousel, transfert, formulaire WhatsApp |
-| 7.3 Fiche PDF | gardée en JavaScript (pdf-lib), appelée comme un service ; choix des photos, photos tirées d'une plaquette |
+| **7.3 Fiche PDF** (fait) | gardée en JavaScript (pdf-lib), appelée comme un service ; choix des photos, photos tirées d'une plaquette |
 | 7.4 Partenaires et visiteurs | registre, vitrine, rapprochement, accueil, questions transmises au courtier, demandes du site, envoi à un contact, blocages |
 | 7.5 Marché | recherche sur les portails, veille, suivi de zones, carnet des prix |
 | 7.6 Comportements | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
@@ -45,7 +45,15 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
 - **Clients** : `recherche_client`, `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
 
-Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo dans un stockage que seul le site atteint ; par lien en attendant), les photos tirées d'une plaquette et la fiche PDF (7.3), l'envoi à un contact (7.4).
+Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo dans un stockage que seul le site atteint ; par lien en attendant), l'envoi à un contact (7.4).
+
+## 7.3 La fiche PDF
+
+**Le service de fiche** (`fiche/`) : la mise en page d'Alix FSP (pdf-lib), reprise sans rien réécrire, dans l'image elle-même. L'agent l'appelle comme un processus (`node fiche/src/composer.mjs` : une demande JSON en entrée, le PDF en sortie) ; rien ne sort du conteneur, et la même fiche marche chez Cloudflare comme chez le client. Le modèle de fiche d'un client (ses polices et son logo, `fiche/modeles/<modèle>/ressources.js`) se règle dans `gestion.fiche` ; le nom de la marque vient de `entreprise`. L'image embarque Node (étape `fiche` du Dockerfile, environ 120 Mo de plus).
+
+**Les outils** :
+- `fiche_pdf` : la fiche d'une annonce du site (par son identifiant ou sa référence) ou d'un bien qui n'y est pas (ses photos reçues et ce qu'en dit le courtier, les textes rédigés au besoin) ; anonyme par défaut (ni contact, ni référence, ni ligne qui nomme la marque), de marque sur demande, sans prix pour un partenaire, en français ou en anglais ; Claude choisit la couverture et les plus belles photos (`redaction.Choisisseuse`, à la place de Gemini), sauf s'il faut garder l'ordre. Le PDF part dans la conversation.
+- `photos_du_pdf` : les photos d'une plaquette PDF reçue (ni petites, ni allongées, ni grises, ni en double ; en JPEG tel quel ou en PNG refait), qui deviennent des médias comme des photos reçues (`pdf:<média du PDF>#<rang>`), reprises du PDF quand un outil s'en sert.
 
 ## Ce qui reste après le 7.1
 

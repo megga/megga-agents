@@ -24,7 +24,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: uv venv --python 3.12 && uv pip install -e ".[test]"
+      # Le service de fiche PDF (fiche/), que les essais du lot 7.3 appellent.
+      - run: cd fiche && npm ci && npm test
       - run: .venv/bin/python -m pytest -q
 
   porte:
@@ -74,6 +79,10 @@ jobs:
             sleep 1
           done
           docker logs atelier; exit 1
+      - name: Le service de fiche PDF tourne dans l'image
+        run: |
+          echo '{"modele":"four-seasons-properties","fiche":{"langue":"fr","titre":"Essai","adresse":"","prix":"","accroche":"","description":[],"chiffres":[],"details":[],"equipements":[],"photos":[],"contact":null},"photos":[]}' \
+            | docker run --rm -i megga-agents:essai node fiche/src/composer.mjs | head -c 5 | grep -q "%PDF-"
       - name: La même image en pilote, disque en lecture seule ; sans sa clé, il ne démarre pas
         run: |
           CONF=$(docker run --rm -i megga-agents:essai python -c "import sys,json,yaml;print(json.dumps(yaml.safe_load(sys.stdin)))" < clients/exemple.yaml)
