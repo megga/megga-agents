@@ -44,8 +44,9 @@ def famille_de(t) -> str:
 
 
 def meme_lieu(a, b) -> bool:
-    x, y = plat(a), plat(b)
-    return bool(x and y and (x == y or x in y or y in x))
+    """Le même lieu, mot pour mot : « Genève » et « Genève, Champel » oui ; « Ollon » et « Collonge-Bellerive » non."""
+    x, y = set(re.findall(r"[a-z0-9]+", plat(a))), set(re.findall(r"[a-z0-9]+", plat(b)))
+    return bool(x and y and (x <= y or y <= x))
 
 
 def montant(n: float, devise: str) -> str:
@@ -69,7 +70,9 @@ def statistiques(valeurs) -> dict:
     if len(v) >= POUR_CONCLURE:
         q1, q3 = _quantile(v, 0.25), _quantile(v, 0.75)
         e = (q3 - q1) * 1.5
-        gardees = [x for x in v if q1 - e <= x <= q3 + e]
+        # Des valeurs presque toutes égales (écart interquartile nul) : rien n'est écarté, la moindre différence n'est pas
+        # « hors norme ».
+        gardees = [x for x in v if q1 - e <= x <= q3 + e] if e > 0 else v
         ecartees, v = len(v) - len(gardees), gardees
     if not v:
         return {"n": 0, "ecartees": ecartees}

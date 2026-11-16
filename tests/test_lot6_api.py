@@ -215,9 +215,9 @@ def test_pas_de_rappels_par_api(tmp_path):
         user_id = "api:dossier:p1"
 
     with pytest.raises(ValueError, match="rappels"):
-        rappeler("2030-01-01T09:00", "appeler", run_context=Contexte())
+        asyncio.run(rappeler("2030-01-01T09:00", "appeler", run_context=Contexte()))
     with pytest.raises(ValueError, match="rappels"):
-        mes_rappels(run_context=Contexte())
+        asyncio.run(mes_rappels(run_context=Contexte()))
 
 
 # Les clés : routes internes (Cloudflare, par l'atelier) et commande (chez le client)

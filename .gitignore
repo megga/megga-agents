@@ -17,4 +17,6 @@ installation/compose/.env
 installation/compose/secrets.env
 installation/compose/client.yaml
 installation/compose/pilote.env
+installation/compose/.env.nouveau
+installation/compose/.mise-a-jour.verrou/
 noyau/cosign.pub
