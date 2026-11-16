@@ -29,6 +29,8 @@ import httpx
 
 from noyau import pilotage, stockage
 
+from .sonde import vivant
+
 DEPOT = "ghcr.io/megga/megga-agents"
 CLE_IMAGE = Path(pilotage.__file__).with_name("cosign.pub")
 EMPREINTE = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -224,14 +226,27 @@ def sauvegarder(url: str, dossier: str | Path, client: str, version: str, mainte
     quand = time.strftime("%Y%m%d-%H%M%S", time.gmtime(time.time() if maintenant is None else maintenant))
     final = dossier / f"megga-{client}-{quand}-avant-{version}.jsonl.gz"
     provisoire = dossier / f".{final.name}.partiel"  # ni vue ni gardée comme une sauvegarde tant qu'elle n'est pas finie
-    # La place d'abord : on ne garde que les plus récentes avant d'écrire la nouvelle.
+    # La place d'abord : on ne garde que les plus récentes avant d'écrire la nouvelle ; une sauvegarde interrompue
+    # (pilote tué en route) ne reste pas non plus (relecture du 16.11.2026, I20).
     for vieille in sauvegardes(dossier, client)[max(gardees - 1, 0):]:
         vieille.unlink(missing_ok=True)
+    for partielle in dossier.glob(f".megga-{client}-*.partiel"):
+        partielle.unlink(missing_ok=True)
+    retouche = None if sans_ordre is None else _sans(client, sans_ordre)
+    lignes = [0]
+
+    def en_vie(table: str, ligne: dict) -> dict | None:
+        """Le pilote dit qu'il vit pendant une longue sauvegarde : la sonde de Kubernetes ne le tue pas en route."""
+        lignes[0] += 1
+        if lignes[0] % 5000 == 0:
+            vivant()
+        return ligne if retouche is None else retouche(table, ligne)
+
     try:
         # Lisible par le seul pilote : la base entière, conversations comprises.
         provisoire.touch(mode=0o600)
         provisoire.chmod(0o600)
-        stockage.exporter(url, provisoire, gz=True, retouche=None if sans_ordre is None else _sans(client, sans_ordre))
+        stockage.exporter(url, provisoire, gz=True, retouche=en_vie)
         os.replace(provisoire, final)
     finally:
         provisoire.unlink(missing_ok=True)

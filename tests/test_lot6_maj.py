@@ -676,3 +676,160 @@ def test_une_reponse_illisible_du_registre_se_reessaie_avec_sa_cause():
 
     with pytest.raises(images.RegistreInjoignable, match="illisible"):
         images.verifier_signature(image(1), DEPOT, COSIGN_PUB, transport=httpx.MockTransport(proxy))
+
+
+# La relecture du 16.11.2026 (I17 à I20) : chaque faille prouvée alors, fermée maintenant.
+
+def test_une_ligne_ecrite_par_l_agent_ne_fait_rien_installer(canal, tmp_path):
+    """I17 : la mise à jour en cours est scellée par la clé du pilote ; l'agent, qui partage la base, ne peut pas en
+    écrire une : ni une image d'avant libre, ni une image non signée par MEGGA, ni une image que le client n'a pas acceptée."""
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    inst = p.installation
+    r = inst._maj()
+    assert inst.reglages.changer("mise_a_jour", r, {**r, "phase": "retour", "avant": image(77)})  # sans le sceau
+    assert hote(c, p, image(2)) == "rien" and inst._maj() is None and etat(p, numero) == "echec"
+    assert stockage.Journal(c.url).alertes(0)[0]["genre"] == "mise_a_jour_bloquee"
+
+    c.registre.signer(empreinte(4), AUTRE_COSIGN)  # pas signée par MEGGA
+    n4 = proposer(c, 4, "0.4.0")
+    c.tour(p)
+    assert inst.reglages.changer("mise_a_jour", inst._maj(), {"numero": n4, "version": "0.4.0", "image": image(4), "phase": "prete",
+                                                           "reference": image(4), "depuis": c.horloge()})
+    assert hote(c, p, image(1)) == "rien"
+
+
+def test_une_image_que_le_client_n_a_pas_acceptee_ne_part_pas(canal, tmp_path):
+    c = canal
+    p = preparer(c, tmp_path, accord="oui")
+    numero = proposer(c, 4, "0.4.0")
+    c.tour(p)
+    assert etat(p, numero) == "attente_accord"
+    assert p.installation.reglages.changer("mise_a_jour", None, {"numero": numero, "version": "0.4.0", "image": image(4), "phase": "lancee",
+                                                               "reference": image(4), "avant": image(1), "depuis": c.horloge(),
+                                                               "en_place": False, "saines": 0})
+    assert hote(c, p, image(1)) == "rien" and etat(p, numero) == "attente_accord"
+
+
+def test_une_ligne_changee_pendant_la_sauvegarde_n_est_pas_rendue(canal, tmp_path, monkeypatch):
+    c = canal
+    p = preparer(c, tmp_path, accord="non")
+    c.registre.signer(empreinte(2))
+    proposer(c, 2, "0.2.0")
+    c.tour(p), c.tour(p)
+    inst = p.installation
+    vraie = images.sauvegarder
+
+    def retouchee(*a, **k):
+        f = vraie(*a, **k)
+        r = inst._maj()
+        inst.reglages.changer("mise_a_jour", r, {**r, "phase": "lancee", "reference": "evil.example/x/y@" + empreinte(99), "avant": image(1)})
+        return f
+
+    monkeypatch.setattr(images, "sauvegarder", retouchee)
+    assert hote(c, p, image(1)) == "rien"
+
+
+class KubeRefuse(FauxKubernetes):
+    refuse = True
+
+    def __call__(self, q):
+        if q.method == "PATCH" and self.refuse:
+            return httpx.Response(403)
+        return super().__call__(q)
+
+
+def _sous_kube(c, tmp_path, kube):
+    return preparer(c, tmp_path, accord="non", PILOTAGE_DELAI="60", AGENT_DEPLOIEMENT="agent", PILOTE_DEPLOIEMENT="agent-pilote",
+                    KUBERNETES_SERVICE_HOST="10.0.0.1", POD_NAMESPACE="clients", _kube=httpx.MockTransport(kube))
+
+
+def test_sous_kubernetes_un_changement_refuse_finit_en_echec(canal, tmp_path):
+    """I18 : l'API refuse le changement d'image (droits, règle d'admission) : après le délai, l'ordre est en échec et
+    la mise à jour suivante peut partir, au lieu de rester bloquée sans alerte."""
+    c = canal
+    kube = KubeRefuse(image(1))
+    p = _sous_kube(c, tmp_path, kube)
+    c.registre.signer(empreinte(2))
+    numero = proposer(c, 2, "0.2.0")
+    for _ in range(3):
+        c.tour(p)
+    c.horloge.t += 120
+    c.tour(p), c.tour(p)
+    assert etat(p, numero) == "echec" and p.installation._maj() is None and kube.images["agent"] == image(1)
+
+
+def test_sous_kubernetes_un_retour_refuse_est_abandonne_et_dit(canal, tmp_path):
+    c = canal
+    kube = KubeRefuse(image(1))
+    kube.refuse = False
+    p = _sous_kube(c, tmp_path, kube)
+    c.registre.signer(empreinte(2))
+    numero = proposer(c, 2, "0.2.0")
+    for _ in range(3):
+        c.tour(p)
+    assert kube.images["agent"] == image(2)
+    c.sante.ok = False
+    c.horloge.t += 61
+    kube.refuse = True
+    c.tour(p)
+    assert etat(p, numero) == "echec" and p.installation._maj()["phase"] == "retour"
+    c.horloge.t += 120
+    c.tour(p)
+    assert p.installation._maj() is None
+    assert any(a["genre"] == "mise_a_jour_bloquee" for a in stockage.Journal(c.url).alertes(0))
+
+
+def test_une_panne_entre_deux_ecritures_ne_relance_pas_l_image(canal, tmp_path):
+    """I19 : l'état de l'ordre s'écrit avant la phase ; une panne entre les deux se rattrape au relevé suivant."""
+    c = canal
+    p, numero = lancee(c, tmp_path)
+    inst = p.installation
+    assert hote(c, p, image(2)) == "attendre"
+    c.sante.ok = None
+    c.horloge.t += 61
+    vraie = inst.ordres.changer
+
+    def panne(*a, **k):
+        inst.ordres.changer = vraie
+        raise RuntimeError("base coupée un instant")
+
+    inst.ordres.changer = panne
+    with pytest.raises(RuntimeError):
+        inst.suivre_image({"ok": False}, c.horloge())
+    assert inst._maj()["phase"] == "lancee"  # rien d'écrit : tout se refait
+    c.tour(p)
+    assert etat(p, numero) == "echec" and inst._maj()["phase"] == "retour"
+    assert hote(c, p, image(2)) == f"revenir {image(1)}" and hote(c, p, image(1)) == "rien"
+    c.tour(p), c.tour(p)
+    assert hote(c, p, image(1)) == "rien"
+
+
+def test_une_sauvegarde_interrompue_ne_reste_pas(canal, tmp_path):
+    """I20 : le fichier d'une sauvegarde tuée en route est effacé à la suivante."""
+    d = tmp_path / "s"
+    d.mkdir()
+    orphelin = d / ".megga-exemple-20250101-000000-avant-0.1.0.jsonl.gz.partiel"
+    orphelin.write_bytes(b"x" * 1000)
+    images.sauvegarder(canal.url, d, "exemple", "0.2.0")
+    assert not orphelin.exists() and len(images.sauvegardes(d, "exemple")) == 1
+
+
+def test_helm_couper_les_mises_a_jour_garde_l_image_en_place():
+    """I23 : l'image en place se relit dans le cluster quel que soit misesAJour ; seule une nouvelle empreinte dans les
+    valeurs l'emporte."""
+    aides = open("installation/helm/megga-agent/templates/_helpers.tpl").read()
+    bloc = aides[aides.index('define "megga-agent.image-en-place"'):]
+    bloc = bloc[:bloc.index("{{- end -}}\n\n")]
+    assert "lookup" in bloc and "misesAJour" not in bloc and "pilotage.mode" not in bloc
+
+
+def test_les_cles_publiques_sont_dans_l_image():
+    """I21 : sans noyau/licence.pub, aucune licence n'est acceptée et l'agent ne démarre pas chez un client."""
+    from noyau import licence
+
+    for f in ("noyau/licence.pub", "noyau/pilotage.pub", "socle/cosign.pub"):
+        assert os.path.getsize(f) > 0, f
+    licence.cle_publique()  # lisible
+    publier = open(".github/workflows/publier.yml").read()
+    assert "test -s noyau/licence.pub" in publier and "test -s noyau/pilotage.pub" in publier
