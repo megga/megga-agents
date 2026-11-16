@@ -30,7 +30,10 @@ export async function jetonInterne(admin, nom) {
   const sig = new Uint8Array(await crypto.subtle.sign("HMAC", k, enc.encode(`interne:${nom}`)));
   return [...sig].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-export const SECRETS_CLIENT = ["DATABASE_URL"];
+// Les secrets propres à un client, posés par la route d'administration : sa base (exigée), et pour un client
+// qui a des rôles et une gestion de site (lot 7.1) ses gestionnaires et la clé de sa gestion.
+export const SECRETS_CLIENT_REQUIS = ["DATABASE_URL"];
+export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 // L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
 const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
@@ -276,7 +279,7 @@ class AgentClient extends Conteneur {
     const client = await clientParId(this.env.ANNUAIRE, nom);
     if (!client) throw new Error("client inconnu ou inactif");
     const secrets = (await this.ctx.storage.get("secrets")) ?? {};
-    for (const k of SECRETS_CLIENT) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
+    for (const k of SECRETS_CLIENT_REQUIS) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
     const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await jetonInterne(this.env.ADMIN_TOKEN ?? "", nom) };
     for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
     // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.

@@ -24,7 +24,7 @@ from .garde import TROP, Debit, masquer_secrets
 from .oral import pour_la_voix
 from .typographie import nettoyer
 from .voix import a_ecrire, se_prete
-from .whatsapp import Entrant, fenetre_ouverte
+from .whatsapp import Entrant, decrire_media, fenetre_ouverte
 
 log = logging.getLogger("megga")
 
@@ -32,6 +32,9 @@ EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que p
 NON_COMPRIS = "Je n'ai pas pu écouter ce vocal. Pouvez-vous me l'écrire ?"
 REGARD = "\U0001F440"
 REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
+NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
+IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
+IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
 
 
 def en_echec(sortie) -> bool:
@@ -43,6 +46,7 @@ def en_echec(sortie) -> bool:
 class _Boite:
     messages: list[Entrant] = field(default_factory=list)
     tache: asyncio.Task | None = None
+    role: str = "public"
 
 
 class Conversations:
@@ -50,9 +54,13 @@ class Conversations:
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
-                 journal=None, fil=None, delai_api: float = DELAI_TOUR):
+                 journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None):
         self.conf = conf
+        # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
+        self.agents = agents or {}
+        # Les médias reçus, numérotés par personne (stockage.Medias) ; sans eux, numérotés dans le tour seulement.
+        self.medias = medias
         self.exp = expediteur
         self.voie = voie
         self.contacts = contacts
@@ -79,9 +87,10 @@ class Conversations:
         t.add_done_callback(self.taches.discard)
         return t
 
-    def recevoir(self, m: Entrant) -> None:
-        """Range le message ; le tour part après un court délai, avec ceux qui suivent."""
-        b = self._boites.setdefault(m.de, _Boite())
+    def recevoir(self, m: Entrant, role: str = "public") -> None:
+        """Range le message ; le tour part après un court délai, avec ceux qui suivent. `role` : celui de la
+        personne (noyau/roles.py), qui choisit l'agent qui lui répond."""
+        b = self._boites.setdefault(m.de, _Boite(role=role))
         b.messages.append(m)
         if b.tache is None:
             b.tache = self._lancer(self._attendre(m.de))
@@ -89,7 +98,10 @@ class Conversations:
     async def _attendre(self, personne: str) -> None:
         await asyncio.sleep(self.attente)
         b = self._boites.pop(personne)
-        await self._tour(personne, b.messages)
+        await self._tour(personne, b.messages, b.role)
+
+    def agent_du_role(self, role: str):
+        return self.agents.get(role, self.agent)
 
     @contextlib.asynccontextmanager
     async def _a_son_tour(self, personne: str):
@@ -105,7 +117,7 @@ class Conversations:
             if entree[1] == 0 and self._verrous.get(personne) is entree:
                 del self._verrous[personne]
 
-    async def _tour(self, personne: str, messages: list[Entrant]) -> None:
+    async def _tour(self, personne: str, messages: list[Entrant], role: str = "public") -> None:
         async with self._a_son_tour(personne):
             dernier = messages[-1]
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages)))
@@ -113,14 +125,14 @@ class Conversations:
             await self._sans_echec(self._rappels_differes(personne))
             if not self.debit.permis(personne):
                 for m in messages:  # reçus, mais sans tour
-                    self._noter_fil(personne, "recu", "vocal" if m.vocal else "texte", m.texte)
+                    self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
                 if self.debit.prevenir(personne):
                     await self._ecrire(personne, TROP)
                 return
             etat = {"pose": False}
             regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
             try:
-                await self._repondre(personne, messages)
+                await self._repondre(personne, messages, role)
             finally:
                 if regard:
                     regard.cancel()
@@ -132,8 +144,8 @@ class Conversations:
         await self._sans_echec(self.exp.reaction(personne, message_id, REGARD))
         etat["pose"] = True
 
-    async def _repondre(self, personne: str, messages: list[Entrant]) -> None:
-        parties, vocal, sourd = [], False, False
+    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public") -> None:
+        parties, vocal, sourd, images, rang = [], False, False, [], 0
         for m in messages:
             if m.vocal:
                 vocal = True
@@ -143,14 +155,24 @@ class Conversations:
                     parties.append(texte)
                 else:
                     sourd = True
+            elif m.media:
+                # La photo, la vidéo ou le document, numérotés : l'agent les voit, ses outils les retrouvent.
+                rang += 1
+                n = await self._numeroter(personne, m.media, rang)
+                parties.append(decrire_media(m.media, n) + (f"\n{m.texte}" if m.texte else ""))
+                self._noter_fil(personne, "recu", m.media.genre, (f"[média {n}] " + m.texte).strip())
+                if m.media.genre == "image" and len(images) < IMAGES_MAX:
+                    vue = await self._regarder(m.media)
+                    if vue is not None:
+                        images.append(vue)
             elif m.texte:
                 self._noter_fil(personne, "recu", "texte", m.texte)
                 parties.append(m.texte)
         entendu = "\n".join(parties).strip()
         if not entendu:
-            await self._ecrire(personne, NON_COMPRIS if sourd else "Je ne lis que les messages écrits et les vocaux pour le moment.")
+            await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
             return
-        reponse, _ = await self._executer(personne, entendu)
+        reponse, _ = await self._executer(personne, entendu, role, images)
         if not reponse.strip():
             return
         if vocal and self.voie is not None and self.voie.parle and se_prete(reponse) and reponse != EXCUSE:
@@ -160,10 +182,31 @@ class Conversations:
                 return
         await self._ecrire(personne, reponse)
 
-    async def _executer(self, personne: str, entendu: str) -> tuple[str, bool]:
+    async def _numeroter(self, personne: str, media, provisoire: int) -> int:
+        """Le numéro du média pour cette personne (stockage.Medias), ou son rang dans le tour sans base."""
+        if self.medias is None:
+            return provisoire
+        try:
+            return await asyncio.to_thread(self.medias.noter, personne, media.genre, media.id, media.type, media.nom)
+        except Exception as e:
+            log.warning("média non rangé : %s", str(e)[:200])
+            return provisoire
+
+    async def _regarder(self, media):
+        """Une photo reçue, pour que le modèle la voie (jamais gardée dans l'historique : store_media=False)."""
+        try:
+            from agno.media import Image
+
+            return Image(content=await self.exp.telecharger(media.id, IMAGE_MAX), mime_type=media.type or "image/jpeg")
+        except Exception as e:
+            log.warning("photo illisible (%s) : %s", self.conf.id, str(e)[:200])
+            return None
+
+    async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None) -> tuple[str, bool]:
         """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur."""
         try:
-            sortie = await self.agent.arun(entendu, user_id=personne, session_id=personne)
+            options = {"images": images} if images else {}
+            sortie = await self.agent_du_role(role).arun(entendu, user_id=personne, session_id=personne, **options)
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
                 self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
@@ -174,7 +217,7 @@ class Conversations:
             self.noter_journal("tour_echec", detail=type(e).__name__)
             return EXCUSE, True
 
-    async def repondre_api(self, personne: str, texte: str) -> tuple[str, bool] | None:
+    async def repondre_api(self, personne: str, texte: str, role: str = "public") -> tuple[str, bool] | None:
         """Un tour demandé par un logiciel (noyau/api.py) : la réponse est rendue, rien ne part sur WhatsApp.
 
         Pas de regroupement d'attente (le logiciel envoie un message entier), pas de rappels. Les tours d'une
@@ -191,7 +234,7 @@ class Conversations:
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
                 try:
-                    brute, echec = await asyncio.wait_for(self._executer(personne, texte), self.delai_api)
+                    brute, echec = await asyncio.wait_for(self._executer(personne, texte, role), self.delai_api)
                 except asyncio.TimeoutError:
                     log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
                     self.noter_journal("tour_echec", detail="delai")

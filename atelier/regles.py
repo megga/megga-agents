@@ -45,7 +45,7 @@ def catalogue() -> dict:
 # Les sous-objets de la configuration : un changement s'y fusionne clé par clé.
 # Partout ailleurs (modeles_meta, voix.par_langue, outils...), la valeur donnée remplace
 # l'ancienne en entier : c'est ainsi qu'on retire un modèle Meta ou une voix.
-SOUS_OBJETS = ("modeles", "voix", "whatsapp")
+SOUS_OBJETS = ("modeles", "voix", "whatsapp", "roles", "gestion")
 
 
 def fusionner(base: dict, changements: dict) -> dict:

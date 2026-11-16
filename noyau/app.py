@@ -65,6 +65,7 @@ from .agent import construire, modele
 from .environnement import charger
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
+from .roles import Personnes, lire_gestionnaires
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .whatsapp import Expediteur, SansWhatsApp, lire_entrants, signature_valide
@@ -91,10 +92,11 @@ class Deja:
         return True
 
 
-def outils_du_client(conf, rappels) -> list:
-    """Les outils du noyau (rappels) et ceux des packs que la configuration active."""
-    liste = outils_rappels(rappels, conf.fuseau)
-    if "immobilier" in conf.outils:
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None) -> list:
+    """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle."""
+    groupes = ("rappels", *conf.outils) if groupes is None else groupes
+    liste = outils_rappels(rappels, conf.fuseau) if "rappels" in groupes else []
+    if "immobilier" in groupes:
         from packs.immobilier import Catalogue, outils as outils_immobilier
 
         if not conf.catalogue:
@@ -122,7 +124,7 @@ def _reecriture(conf, cles):
 def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=None, contacts=None,
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
-          quitter=None, cles_api=None) -> FastAPI:
+          quitter=None, cles_api=None, agents=None, personnes=None, medias=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -153,7 +155,11 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     if agent is None:
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
-        agent = construire(conf, stockage.base_agno(env["DATABASE_URL"]), cles, outils=outils_du_client(conf, rappels))
+        base = stockage.base_agno(env["DATABASE_URL"])
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels))
+        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous.
+        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils), role=role, nom_role=nom)
+                            for nom, role in conf.les_roles().items()}
         reecrire = reecrire or _reecriture(conf, cles)
     if env.get("DATABASE_URL"):
         journal = journal or stockage.Journal(env["DATABASE_URL"])
@@ -161,13 +167,24 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         fil = fil or stockage.Fil(env["DATABASE_URL"])
         contacts = contacts or stockage.Contacts(env["DATABASE_URL"])
         cles_api = cles_api or stockage.ClesApi(env["DATABASE_URL"])
+        medias = medias or stockage.Medias(env["DATABASE_URL"])
+        if personnes is None:
+            try:
+                gestionnaires = lire_gestionnaires(env.get("GESTIONNAIRES"))
+            except ValueError as e:
+                raise RuntimeError(str(e)) from None
+            personnes = Personnes(conf, gestionnaires, stockage.Bloques(env["DATABASE_URL"]), stockage.Partenaires(env["DATABASE_URL"]))
+    if personnes is None:
+        personnes = Personnes(conf)
+    if conf.les_roles() and agents is None:
+        raise RuntimeError("des rôles sans agents")
     if expediteur is None:
         expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
                       if conf.whatsapp else SansWhatsApp())
     if voie is None and env.get("ELEVENLABS_API_KEY"):
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
-                                  journal=journal, fil=fil)
+                                  journal=journal, fil=fil, agents=agents, medias=medias)
     jeton_interne = env.get("INTERNE_TOKEN", "")
     secret = env.get("META_APP_SECRET")
     deja = Deja()
@@ -233,6 +250,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     app = FastAPI(title=f"megga-agents {conf.id}", docs_url=None, redoc_url=None, openapi_url=None, lifespan=vie)
     app.state.config = conf
     app.state.conversations = conversations
+    app.state.personnes = personnes
+    # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
+    app.state.gestion = None
+    if conf.gestion is not None and env.get("GESTION_CLE"):
+        from packs.immobilier.gestion import Gestion
+
+        app.state.gestion = Gestion(conf.gestion, env["GESTION_CLE"])
     app.state.taches = conversations.taches
 
     @app.get("/sante")
@@ -279,7 +303,15 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                 continue
             if not deja.nouveau(m.id):
                 continue
-            conversations.recevoir(m)
+            role = await asyncio.to_thread(personnes.role, m.de)
+            if role == "bloque":  # un numéro bloqué par le client : ni lu, ni répondu
+                continue
+            if role is None:  # aucun rôle ne sert cette personne : au plus un refus poli, une fois par jour
+                refus = personnes.refuser(m.de)
+                if refus:
+                    conversations._lancer(conversations._ecrire(m.de, refus))
+                continue
+            conversations.recevoir(m, role)
             lus += 1
         # Meta veut une réponse rapide : le tour se poursuit après.
         return Response(f"reçu {lus}", media_type="text/plain")
@@ -321,13 +353,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             conversations.noter_journal("api_debit", detail=cle["id"] if de == "clé" else "personne")
             return erreur(429, f"trop de messages pour cette {de}", attente=attente, entetes={"retry-after": str(attente)})
 
+        role = await asyncio.to_thread(personnes.role, qui)
+        if role is None:  # des rôles sans visiteurs : personne n'est servi par API
+            return erreur(403, "cet agent ne répond pas par API")
         # Les deux débits sont regardés avant d'en compter aucun : un refus n'use pas l'autre.
         if not debit_cles.libre(cle):
             return trop("clé", debit_cles.attente(cle))
         if not conversations.debit.libre(qui):
             return trop("personne", conversations.debit.attente(qui))
         debit_cles.permis(cle)
-        tour = await conversations.repondre_api(qui, texte.strip())
+        tour = await conversations.repondre_api(qui, texte.strip(), role)
         if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue
             debit_cles.rendre(cle)
             return trop("personne", conversations.debit.attente(qui))

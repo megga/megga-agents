@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterator
 
-from sqlalchemy import (Column, Float, Integer, MetaData, String, Table, Text, and_, create_engine, delete, func, insert,
+from sqlalchemy import (Column, Float, Integer, MetaData, String, Table, Text, UniqueConstraint, and_, create_engine, delete, func, insert,
                         or_, select, text, update)
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -223,6 +223,9 @@ def preparer(url: str) -> None:
     Journal(url)
     Fil(url)
     ClesApi(url)
+    Bloques(url)
+    Partenaires(url)
+    Medias(url)
     Ordres(url)
     JournalPilotage(url)
     Reglages(url)
@@ -441,6 +444,127 @@ class ClesApi:
         t = self._t
         with self._e.begin() as c:
             return c.execute(update(t).where(t.c.id == ident, t.c.retiree.is_(None)).values(retiree=quand or time.time())).rowcount > 0
+
+
+class Bloques:
+    """Les numéros que le client a bloqués (table megga_bloques) : jamais lus, jamais répondus (noyau/roles.py)."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_bloques",
+            Column("personne", String(PERSONNE), primary_key=True),
+            Column("quand", Float, nullable=False),
+            Column("par", String(PERSONNE), nullable=False, default=""),
+        )
+
+    def bloquer(self, personne: str, par: str = "", quand: float | None = None) -> bool:
+        """Faux s'il l'était déjà."""
+        try:
+            with self._e.begin() as c:
+                c.execute(insert(self._t).values(personne=personne, quand=quand or time.time(), par=par))
+            return True
+        except IntegrityError:
+            return False
+
+    def debloquer(self, personne: str) -> bool:
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount > 0
+
+    def bloque(self, personne: str) -> bool:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.personne).where(self._t.c.personne == personne)).first() is not None
+
+    def lister(self) -> list[dict]:
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(self._t).order_by(self._t.c.quand))]
+
+
+class Partenaires:
+    """Les partenaires inscrits par le client (table megga_partenaires) : une agence, un indépendant.
+
+    Lot 7.1 : l'inscription et la reconnaissance ; ce qu'un partenaire peut demander vient avec ses outils.
+    """
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_partenaires",
+            Column("personne", String(PERSONNE), primary_key=True),
+            Column("nom", String(120), nullable=False, default=""),
+            Column("ajoute", Float, nullable=False),
+            Column("par", String(PERSONNE), nullable=False, default=""),
+        )
+
+    def inscrire(self, personne: str, nom: str = "", par: str = "", quand: float | None = None) -> bool:
+        """Faux s'il l'était déjà (son nom est alors mis à jour)."""
+        t = self._t
+        with self._e.begin() as c:
+            if c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is not None:
+                if nom:
+                    c.execute(update(t).where(t.c.personne == personne).values(nom=nom[:120]))
+                return False
+            c.execute(insert(t).values(personne=personne, nom=nom[:120], ajoute=quand or time.time(), par=par))
+            return True
+
+    def retirer(self, personne: str) -> bool:
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount > 0
+
+    def inscrit(self, personne: str) -> bool:
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.personne).where(self._t.c.personne == personne)).first() is not None
+
+    def lister(self) -> list[dict]:
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(self._t).order_by(self._t.c.ajoute))]
+
+
+class Medias:
+    """Les médias reçus de chaque personne (table megga_medias), numérotés dans l'ordre d'arrivée : « média 3 »
+    dans la conversation désigne le même fichier pour l'agent et ses outils. Seul l'identifiant chez Meta est
+    gardé, jamais le fichier : un outil le télécharge s'il en a besoin."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_medias",
+            Column("id", String(32), primary_key=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("n", Integer, nullable=False),
+            Column("genre", String(12), nullable=False),  # image, video, document
+            Column("media_id", String(80), nullable=False),
+            Column("type", String(80), nullable=False, default=""),
+            Column("nom", String(120), nullable=False, default=""),
+            Column("quand", Float, nullable=False),
+            UniqueConstraint("personne", "n", name="megga_medias_personne_n"),
+        )
+
+    def noter(self, personne: str, genre: str, media_id: str, type_: str = "", nom: str = "", quand: float | None = None) -> int:
+        """Range un média et rend son numéro pour cette personne (1, 2, 3…)."""
+        t = self._t
+        for _ in range(3):
+            with self._e.begin() as c:
+                n = (c.execute(select(func.max(t.c.n)).where(t.c.personne == personne)).scalar() or 0) + 1
+                try:
+                    c.execute(insert(t).values(id=uuid.uuid4().hex, personne=personne, n=n, genre=genre[:12], media_id=media_id[:80],
+                                               type=type_[:80], nom=nom[:120], quand=quand or time.time()))
+                    return n
+                except IntegrityError:
+                    continue
+        raise RuntimeError("média non rangé")
+
+    def lire(self, personne: str, n: int) -> dict | None:
+        t = self._t
+        with self._e.connect() as c:
+            l = c.execute(select(t).where(t.c.personne == personne, t.c.n == n)).first()
+        return dict(l._mapping) if l else None
+
+    def derniers(self, personne: str, limite: int = 20) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = list(c.execute(select(t).where(t.c.personne == personne).order_by(t.c.n.desc()).limit(limite)))
+        return [dict(l._mapping) for l in reversed(lignes)]
 
 
 class Journal:
