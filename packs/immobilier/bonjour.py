@@ -164,8 +164,11 @@ class Bonjour:
         await asyncio.to_thread(s.etats.ecrire, numero, "bonjour_jour", self.jour(maintenant))
         if s.conversations is not None:
             async with s.conversations.entre_les_tours(numero):
-                await s.conversations.envoyer_de_soi_meme(numero, [{"texte": texte}], "bonjour", ["un petit mot pour bien commencer la journée"],
-                                                          garder=False)
+                # Hors des 24 heures, le modèle fsp_agent_bonjour porte le mot lui-même : « … demandé : {{1}}. Belle
+                # journée à vous. » (sans retour à la ligne ni point final, que le modèle ajoute).
+                # Le modèle dit déjà « Bonjour » : le mot commence après le sien.
+                variable = re.sub(r"^bonjour\W*", "", " ".join(texte.split()), flags=re.I).rstrip(" .")[:900] or texte[:900]
+                await s.conversations.envoyer_de_soi_meme(numero, [{"texte": texte}], "bonjour", [variable], garder=False)
         else:
             await s.exp.texte(numero, texte)
         return texte

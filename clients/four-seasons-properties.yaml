@@ -114,3 +114,5 @@ modeles_meta:
   suivi_visiteur_en: {nom: fsp_agent_suivi, langue: en}
   ouverture: {nom: fsp_agent_ouverture}
   ouverture_en: {nom: fsp_agent_ouverture, langue: en}
+  # Le mot du matin (16.11.2026), déclaré marketing : il ne part hors des 24 heures que par lui.
+  bonjour: {nom: fsp_agent_bonjour}

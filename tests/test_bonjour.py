@@ -158,3 +158,19 @@ def test_le_mot_tient_a_la_consigne():
     assert propre("Voici ton mot du jour : belle journée à toi, pleine de joie.") is None
     assert propre("Bonjour aux courtier·ère·s, belle journée pleine de joie.") is None
     assert propre("Bonjour ! Belle journée à toi, pleine de joie et de beaux projets ☀️")
+
+
+def test_hors_des_24_heures_le_modele_porte_le_mot(monde):
+    b, s, exp = monde
+    s.conversations = Conversations(dernier=None, modele=True)
+    vus = []
+
+    async def envoyer(personne, messages, usage, variables=None, langue="", garder=True):
+        vus.append((usage, variables, garder))
+        return "modele"
+
+    s.conversations.envoyer_de_soi_meme = envoyer
+    run(b.envoyer(GREG, heure(16, 8)))
+    (usage, variables, garder), = vus
+    assert usage == "bonjour" and garder is False and variables[0].startswith("Belle journée de lundi") and not variables[0].endswith(".")
+    assert CONF.modeles_meta["bonjour"].nom == "fsp_agent_bonjour"
