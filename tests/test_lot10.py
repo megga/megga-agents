@@ -202,3 +202,17 @@ def test_l_immobilier_garde_son_pack_et_le_garage_le_retire():
     r = gabarits.reglages_pour("garage", base)
     assert r["outils"] == ["connaissances", "leads"]
     configuration.lire({**base, **r})
+
+
+def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
+    from test_lot5 import FauxModele
+    from test_lot9_2 import FauxVectoriseur
+
+    from noyau import banc
+
+    conf = configuration.lire({**CONF, "outils": ["connaissances", "leads"]})
+    agent = banc.agent_d_essai({}, principal=FauxModele(), vectoriseur=FauxVectoriseur())(
+        conf, tmp_path / "cas", [{"titre": "Horaires", "texte": "Ouvert du lundi au vendredi, de 8 h à 18 h."}])
+    noms = {getattr(o, "__name__", getattr(o, "name", "")) for o in agent.tools}
+    assert {"chercher_dans_les_documents", "enregistrer_lead"} <= noms
+    assert [d["titre"] for d in stockage.Connaissances(f"sqlite:///{tmp_path / 'cas'}/banc.db").documents()] == ["Horaires"]

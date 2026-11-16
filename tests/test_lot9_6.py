@@ -35,7 +35,7 @@ CAS = [{"id": "T01", "titre": "un rappel", "etapes": [{"texte": "Rappelle-moi de
 # Les scénarios
 
 
-@pytest.mark.parametrize("metier", ["general", "immobilier"])
+@pytest.mark.parametrize("metier", configuration.NOMS_METIERS)
 def test_les_scenarios_sont_bien_formes(metier):
     cas = banc.scenarios(metier)
     assert len({c["id"] for c in cas}) == len(cas) and len(cas) >= 8
@@ -47,6 +47,8 @@ def test_les_scenarios_sont_bien_formes(metier):
                 banc.automatique(critere, trace)  # un critère automatique connu, qui ne lève pas
         if c.get("config"):  # ses réglages font une configuration valide
             configuration.lire({**CONF.model_dump(mode="json"), **c["config"]})
+        if "documents" in c:  # les documents rangés avant le cas : des titres et des textes
+            assert c["documents"] and all(d.get("titre") and d.get("texte") for d in c["documents"]), c["id"]
     assert ("I01" in {c["id"] for c in cas}) == (metier == "immobilier")
 
 

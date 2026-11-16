@@ -7,7 +7,8 @@ WhatsApp). Un essai réussit si tous ses critères tiennent ; un cas compte dans
 k essais (pass^k, comme τ-bench). Le score de la version : la part de ses cas tenus à chaque fois.
 
 Les scénarios (`noyau/banc/<métier>.json`, généralisés du banc de parité d'Alix, `parite/`) :
-  {"id", "titre", "etapes": [{"texte"}], "faits", "config"?: {réglages ajoutés pour ce cas}, "criteres": [...]}
+  {"id", "titre", "etapes": [{"texte"}], "faits", "config"?: {réglages ajoutés pour ce cas},
+   "documents"?: [{"titre", "texte"}] (rangés dans la base d'essai avant le cas), "criteres": [...]}
 Un critère est vérifié sur la trace (« outil », « pas_outil », « motifs », « pas_motif ») ou lu par un juge (« juge »),
 un second modèle qui voit la conversation, les outils appelés et les faits du cas.
 
@@ -138,7 +139,8 @@ async def noter(cas: dict, trace: dict, juger) -> dict:
 async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | None = None) -> dict:
     """Le banc d'une configuration : chaque cas k fois, une personne neuve à chaque fois.
 
-    `construire_agent(conf, dossier)` rend l'agent à essayer (dans une base d'essai à part, sous `dossier`) ;
+    `construire_agent(conf, dossier)` rend l'agent à essayer (dans une base d'essai à part, sous `dossier`) ; si le
+    cas porte des `documents`, `construire_agent(conf, dossier, documents)` les range avant l'essai ;
     `juger(cas, trace, criteres)` rend [{ok, raison}] pour les critères « juge »."""
     from . import config as configuration
 
@@ -149,7 +151,8 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
     with tempfile.TemporaryDirectory() as dossier:
         for i, c in enumerate(cas):
             conf_du_cas = configuration.lire({**conf.model_dump(mode="json"), **c["config"]}) if c.get("config") else conf
-            agent = construire_agent(conf_du_cas, Path(dossier) / f"cas-{i}")
+            place = Path(dossier) / f"cas-{i}"
+            agent = construire_agent(conf_du_cas, place, c["documents"]) if c.get("documents") else construire_agent(conf_du_cas, place)
             essais = []
             for n in range(int(k)):
                 trace = await jouer(c, agent, f"banc-{c['id']}-{n}")
@@ -162,17 +165,26 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
             "resultats": resultats}
 
 
-def agent_d_essai(cles: dict, principal=None):
-    """Construit l'agent d'une version comme en service, dans une base d'essai à part (comme l'essai de l'atelier)."""
+def agent_d_essai(cles: dict, principal=None, vectoriseur=None):
+    """Construit l'agent d'une version comme en service, dans une base d'essai à part (comme l'essai de l'atelier).
 
-    def construire_agent(conf, dossier: Path):
-        from . import stockage
+    Il a les documents du cas (rangés dans la base d'essai) et les demandes (leads), sans webhook ni alerte."""
+
+    def construire_agent(conf, dossier: Path, documents=None):
+        from . import connaissances as savoir, connecteurs, stockage
         from .agent import construire
         from .app import outils_du_client
 
         dossier.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{dossier}/banc.db"
-        outils = outils_du_client(conf, stockage.Rappels(url))
+        base = leads = None
+        if "connaissances" in conf.outils:
+            base = savoir.Base(stockage.Connaissances(url), vectoriseur)
+            for d in documents or []:
+                base.ajouter(d["titre"], d["texte"].encode(), "texte")
+        if "leads" in conf.outils:
+            leads = connecteurs.Leads(stockage.Leads(url))
+        outils = outils_du_client(conf, stockage.Rappels(url), connaissances=base, leads=leads)
         if conf.transfert:  # passer la main (lot 9.3) : dans le banc, l'équipe n'est prévenue de rien
             from .reprises import Transfert
 
