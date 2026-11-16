@@ -74,7 +74,7 @@ from .roles import Personnes, lire_gestionnaires
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .approbations import Gardien
-from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, chiffres, lire_echecs, lire_entrants, signature_valide
+from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, lire_echecs, lire_entrants, signature_valide
 
 log = logging.getLogger("megga")
 
@@ -322,7 +322,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     async def prevenir_equipe(demande: dict) -> None:
         """Une action attend un accord : chaque gestionnaire reçoit la demande, avec Accepter et Refuser, une fois
         fini le tour de la personne qui l'a faite (sa réponse part d'abord)."""
-        numeros = [chiffres(n) for n in (personnes.gestionnaires or {})]
+        numeros = approbations.equipe(personnes.gestionnaires)
         qui = demande["personne"]
         corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui if qui.startswith('api:') else '+' + qui} : "
                  f"{demande['outil']}.\n{approbations.apercu(demande['arguments'])}")

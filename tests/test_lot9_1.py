@@ -80,6 +80,12 @@ def test_les_regles_se_reglent_par_outil_et_par_role():
             configuration.lire({**CONF, "approbations": mauvais})
 
 
+def test_l_equipe_est_nommee_comme_ses_conversations():
+    # « +41… », comme un message WhatsApp entrant : sinon sa fenêtre de 24 heures ne se retrouve pas
+    assert approbations.equipe({"+41 79 000 00 99": "claire", "41790000098": "marc"}) == ["+41790000099", "+41790000098"]
+    assert approbations.equipe(None) == []
+
+
 def test_le_client_regle_ses_approbations():
     from atelier import regles
 
