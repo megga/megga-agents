@@ -144,6 +144,8 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 
 **La bascule** : les scénarios de test d'Alix (`test/simulation-*.js`) passent sur les deux ; puis un numéro de test FSP sur le socle ; puis, sur accord, `fourseasons-alix` transmet au socle au lieu de répondre (changement dans le dépôt FSP, routeur intact). Souvenirs, partenaires et rappels sont copiés dans la base du client FSP. Retour arrière : une variable.
 
+**Le numéro de test FSP** (Julien, 16.11.2026) : créé dans le portefeuille Meta de Four Seasons Properties, sous le nom « Four Seasons Properties », puis son compte WhatsApp partagé avec MEGGA, pour que le socle y réponde. Pourquoi : chez Meta, le nom affiché doit avoir un lien visible avec l'entreprise qui possède le numéro (un portefeuille MEGGA qui affiche « Four Seasons Properties » est refusé, d'où le numéro +1 650-710-7070 resté « Megga ») ; un nom approuvé reste attaché à son numéro ; un numéro ne change jamais de portefeuille, et le nouveau modèle de comptes ne migre plus de numéro entre comptes ni entre prestataires. À la bascule, rien ne migre : Greg garde son numéro, son nom, ses modèles et sa qualité ; soit `fourseasons-alix` transmet au socle, soit Four Seasons partage aussi le compte du numéro de Greg. Prérequis : un portefeuille Meta de Four Seasons où créer le numéro (aucun n'est visible depuis les accès de MEGGA aujourd'hui).
+
 ## Les lots, une branche et une PR chacun
 
 1. **Socle** : dépôt, image Agno unique, Worker d'entrée, un conteneur par client, base, secrets, journaux. Les trois points d'échange (entrée, base, fichiers) sont posés dès ici, pour que le mode 2 ne soit pas une réécriture. La zone est dans la configuration dès ce lot. Un agent d'essai répond par écrit sur WhatsApp ; aucun client ni agence de démo dans ce lot.
@@ -152,7 +154,7 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
 4. **Pack immobilier**, puis l'agence de démo MEGGA Estates (faux biens, son propre numéro), quand Julien le décide.
 5. **Console** : un espace par client (état, conversations, coûts, alertes), sur le design que Julien construit dans Claude Design.
 6. **Installation chez le client et zone suisse** : Docker Compose et chart Helm, conteneur pilote, canal de pilotage, mises à jour signées, guide, puis la zone suisse chez Exoscale et l'entrée par API. Avancé dès qu'un client suisse signe.
-7. **Alix FSP sur le socle** : parité, essai, bascule sur accord.
+7. **Alix FSP sur le socle** : parité, essai sur un numéro de test au nom de Four Seasons Properties, partagé avec MEGGA, bascule sur accord.
 
 ## Décidé
 
