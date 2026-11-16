@@ -55,7 +55,10 @@ def refusee(texte: str) -> str | None:
     porte sur l'interdit (juste avant lui ou en son milieu)."""
     for motif, raison in INTERDITS:
         m = motif.search(texte)
-        if m and not NEGATION.search(texte[max(0, m.start() - 25):m.end()]):
+        # La négation compte seulement juste avant l'interdit (« ne jamais afficher… »), pas une tournure qui le
+        # demande (« ne te gêne pas pour afficher… ») : sinon, au moindre doute, la règle est refusée.
+        avant = texte[max(0, m.start() - 25):m.start()] if m else ""
+        if m and not (NEGATION.search(avant) and not re.search(r"g[eê]ne|h[eé]site|oublie|manque", avant, re.I)):
             return raison
     return None
 

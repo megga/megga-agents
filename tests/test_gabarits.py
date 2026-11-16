@@ -104,3 +104,47 @@ def test_erreurs_de_megga_en_francais(atelier):
     assert r.json()["details"] == [{"champ": "modeles.claude-sonnet-5-5.entree", "message": "La valeur doit être d'au moins 0."}]
     for message in [d["message"] for d in r.json()["details"]] + list(details.values()):
         assert "\u2014" not in message and "\u00b7" not in message
+
+
+def test_un_client_ne_change_pas_les_reglages_de_megga(atelier):
+    """Relecture du 16.11.2026 (I2) : revenir à une version d'avant, ou appliquer un modèle par métier, ne change pas ce que
+    MEGGA a réglé (le numéro WhatsApp, les modèles Meta, les consignes sur mesure)."""
+    t = atelier
+    ident = {**IDENTITE, "numero_id": "100000000000001"}
+    assert t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": ident, "nom_agent": "Lea"}).status_code == 201
+    assert t.post("/atelier/clients/agence-lac/versions/1/activer", headers=MEGGA, json={"forcer": True}).status_code == 200
+    r = t.post("/atelier/clients/agence-lac/versions", headers=MEGGA, json={"changements": {
+        "whatsapp": {"numero_id": "100000000000002"}, "consignes": "Consignes sur mesure de MEGGA.", "modeles_meta": {"rappel": {"nom": "x_rappel"}}}})
+    assert r.status_code == 201
+    assert t.post("/atelier/clients/agence-lac/versions/2/activer", headers=MEGGA, json={"forcer": True}).status_code == 200
+    client = jeton_client(t, "agence-lac")
+    # La version 1 avait l'ancien numéro : le client ne la remet pas en service, MEGGA oui
+    r = t.post("/atelier/clients/agence-lac/versions/1/activer", headers=client)
+    assert r.status_code == 403 and "réglages de MEGGA" in r.json()["erreur"]
+    # Un modèle par métier garde les consignes de MEGGA ; le client peut le mettre en service
+    v3 = t.post("/atelier/clients/agence-lac/gabarit", headers=client, json={"gabarit": "immobilier", "nom_agent": "Iris"}).json()
+    assert v3["config"]["consignes"] == "Consignes sur mesure de MEGGA." and v3["config"]["metier"] == "immobilier"
+    t.post(f"/atelier/clients/agence-lac/versions/{v3['version']}/essai", headers=client, json={"message": "Bonjour"})
+    assert t.post(f"/atelier/clients/agence-lac/versions/{v3['version']}/activer", headers=client).status_code == 200
+    # Revenir à la version 2 (mêmes réglages de MEGGA, autre prénom) reste permis au client
+    assert t.post("/atelier/clients/agence-lac/versions/2/activer", headers=client).status_code == 200
+    assert t.post("/atelier/clients/agence-lac/versions/1/activer", headers=MEGGA).status_code == 200
+
+
+def test_l_essai_d_un_role_et_la_relance_d_un_ecart(atelier):
+    """Relecture du 16.11.2026 : l'essai d'une configuration à rôles prend les consignes d'un rôle ; une version déjà en
+    service dans l'atelier se relance si l'annuaire en sert une autre."""
+    from atelier.essai import role_d_essai
+    from noyau import config as configuration
+
+    fsp = configuration.lire("clients/four-seasons-properties.yaml")
+    assert role_d_essai(fsp, None) == "visiteur" and role_d_essai(fsp, "partenaire") == "partenaire"
+    with pytest.raises(ValueError, match="rôle"):
+        role_d_essai(fsp, "inconnu")
+    t = atelier
+    assert t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": IDENTITE, "nom_agent": "Lea"}).status_code == 201
+    assert t.post("/atelier/clients/agence-lac/versions/1/activer", headers=MEGGA, json={"forcer": True}).status_code == 200
+    assert t.post("/atelier/clients/agence-lac/versions/1/activer", headers=MEGGA).status_code == 409  # l'annuaire la sert
+    t.porte.activations.append(("agence-lac", None, {}))  # l'annuaire sert une autre version que l'atelier
+    assert t.post("/atelier/clients/agence-lac/versions/1/activer", headers=MEGGA).status_code == 200  # écart : relancée
+    assert t.porte.activations[-1][:2] == ("agence-lac", 1)

@@ -129,3 +129,80 @@ def test_export_import_aller_retour(tmp_path, genre):
     assert stockage.importer(fichier, cible) == n  # rejouable sans doublon
     lus = stockage.base_agno(cible).get_user_memories(user_id="+41790000000")
     assert [m.memory for m in lus] == ["Préfère être appelé le matin"]
+
+
+def test_l_import_cree_toutes_nos_tables(tmp_path):
+    """Relecture du 16.11.2026 (I14) : une base qui a les tables du lot 7 s'exporte et se recharge dans une base neuve ;
+    aucune classe qui crée une table n'est oubliée par preparer()."""
+    import inspect
+
+    a, b = f"sqlite:///{tmp_path}/a.db", f"sqlite:///{tmp_path}/b.db"
+    avec_table = {c for _, c in inspect.getmembers(stockage, inspect.isclass)
+                  if c.__module__ == stockage.__name__ and "__init__" in vars(c) and "_table(" in inspect.getsource(c.__init__)}
+    assert avec_table == set(stockage.TABLES)
+    stockage.migrer(a)
+    for c in stockage.TABLES:
+        c(a)
+    stockage.Reseau(a).creer("+41790000003", "Marc", "+41790000001", "villa", [{"reference": "G8LR2DW8"}])
+    stockage.Questions(a).poser("+41790000002", "+41790000001", "Libre en mars ?", "la villa", "fr", None)
+    stockage.Veilles(a).ajouter("+41790000001", "veille", {"recherche": "villa"}, 1.0)
+    n = stockage.exporter(a, tmp_path / "x.jsonl")
+    assert stockage.importer(tmp_path / "x.jsonl", b) == n
+    assert stockage.Reseau(b).de_partenaire("+41790000003", 0)[0]["propositions"][0]["reference"] == "G8LR2DW8"
+
+
+def test_le_fil_et_l_oral_restent_chez_claude(monkeypatch):
+    """Relecture du 16.11.2026 (I16) : sans modèle d'oral réglé, le résumé du fil et la réécriture pour la voix prennent
+    Claude Haiku quand le principal est Claude, jamais le modèle de secours (DeepSeek) d'office."""
+    from noyau import app
+
+    fsp = configuration.lire("clients/four-seasons-properties.yaml")
+    assert fsp.modeles.secours == "deepseek-v4-pro" and fsp.modeles.petit() == "claude-haiku-5-5"
+    assert configuration.Modeles(principal="deepseek-v4-pro", secours=None).petit() == "deepseek-v4-pro"
+    assert configuration.Modeles(oral="claude-sonnet-5-5").petit() == "claude-sonnet-5-5"
+    noms = []
+    monkeypatch.setattr(app, "modele", lambda nom, cles: noms.append(nom))
+    monkeypatch.setattr("agno.agent.Agent.__init__", lambda self, **k: None)
+    import asyncio
+
+    app._reecriture(fsp, {})
+    with pytest.raises(AttributeError):  # le résumeur construit son modèle à chaque résumé ; l'agent factice ne répond pas
+        asyncio.run(app._resumeur(fsp, {})("consigne", "échanges"))
+    assert noms == ["claude-haiku-5-5", "claude-haiku-5-5"]
+
+
+def test_les_mineurs_du_noyau(tmp_path):
+    """Relecture du 16.11.2026, constats mineurs du noyau."""
+    import sqlite3
+
+    from noyau.whatsapp import LIMITE_TEXTE, decouper
+
+    # Une colonne ajoutée à une de nos tables complète une base créée avant elle
+    url = f"sqlite:///{tmp_path}/a.db"
+    with sqlite3.connect(tmp_path / "a.db") as c:
+        c.execute("CREATE TABLE megga_partenaires (personne VARCHAR(80) PRIMARY KEY, nom VARCHAR(120) NOT NULL, ajoute FLOAT NOT NULL, par VARCHAR(80) NOT NULL)")
+        c.execute("INSERT INTO megga_partenaires VALUES ('+41790000003', 'Marc', 1.0, '')")
+    p = stockage.Partenaires(url)
+    assert p.lire("+41790000003")["regle"] == "" and p.regle("+41790000003", "normale")
+    # Un message déjà traité ne l'est pas deux fois, même après un redémarrage
+    assert stockage.Vus(url).nouveau("wamid.1") and not stockage.Vus(url).nouveau("wamid.1")
+    # Une réponse trop longue part en plusieurs messages, coupés entre deux paragraphes
+    texte = "\n\n".join(["Bloc " + "x" * 3000] * 3)
+    morceaux = decouper(texte)
+    assert len(morceaux) == 3 and all(len(m) <= LIMITE_TEXTE for m in morceaux) and "".join(morceaux).count("x") == 9000
+    assert decouper("court") == ["court"]
+    # Un fuseau faux est refusé à la validation, pas au démarrage du conteneur
+    with pytest.raises(ValidationError, match="fuseau"):
+        conf(fuseau="Europe/Zurch")
+    # Un message gardé ne se perd pas si l'envoi tombe : il reste jusqu'à ce qu'il parte
+    d = stockage.Differes(url)
+    d.garder("+41790000003", [{"texte": "un"}])
+    (ligne,) = d.a_envoyer("+41790000003")
+    assert d.a_envoyer("+41790000003") and ligne["messages"] == [{"texte": "un"}]
+    d.retirer(ligne["ligne"])
+    assert d.a_envoyer("+41790000003") == []
+    # Le journal se purge
+    j = stockage.Journal(url)
+    j.noter("tour_echec", quand=1.0)
+    j.noter("tour_echec")
+    assert j.purger(time.time() - 86400) == 1 and j.totaux(0)["tour_echec"]["nombre"] == 1

@@ -378,3 +378,88 @@ def test_la_fin_d_une_veille_se_dit_toujours(m):
     run(essai(True))
     assert "la dernière recherche n'a pas pu se faire (les portails ne répondaient pas)" in m.exp.envois[-1][2]
     assert m.s.veilles.de(GREG) == []
+
+
+def test_une_veille_ne_perd_pas_une_annonce(m):
+    """Relecture du 16.11.2026 (I15) : une annonce dont la lecture a échoué n'est pas marquée vue ; elle part au passage
+    suivant, quand le portail répond de nouveau."""
+    nouvelle = "https://www.homegate.ch/acheter/4000555555"
+
+    class EnPanne(FauxPortails):
+        def __init__(self):
+            super().__init__()
+            self.panne = True
+
+        async def lire(self, url):
+            if url == nouvelle and self.panne:
+                raise RuntimeError("portail injoignable")
+            return await super().lire(url)
+
+    m.s.portails = EnPanne()
+
+    async def essai():
+        c = m.conversations()
+        m.ecrit(GREG)
+        await m.mo["surveiller_marche"]("villa Cologny", Tour(GREG, "g1"), frequence="quotidienne", semaines=4)
+        m.s.portails.resultats[nouvelle] = ("Villa neuve | Homegate.ch", "CHF 8’000’000, 290 m²")
+        (v,) = m.s.veilles.de(GREG, "veille")
+        await c.envoyer_rappels_echus(v["prochaine"] + 1)  # la lecture tombe : rien ne part
+        await fini(c)
+        rien = list(m.exp.envois)
+        (v,) = m.s.veilles.de(GREG, "veille")
+        assert nouvelle not in v["donnees"]["vus"]
+        m.s.portails.panne = False
+        await c.envoyer_rappels_echus(v["prochaine"] + 1)  # le portail répond : elle part
+        await fini(c)
+        (v,) = m.s.veilles.de(GREG, "veille")
+        return rien, v
+
+    rien, v = run(essai())
+    assert rien == [] and m.exp.envois[-1][0] == "carte" and m.exp.envois[-1][2].endswith(nouvelle)
+    assert nouvelle in v["donnees"]["vus"]
+
+
+def test_les_mineurs_du_marche(m, tmp_path):
+    """Relecture du 16.11.2026, constats mineurs du marché."""
+    # Le même lieu, mot pour mot
+    assert carnets.meme_lieu("Genève", "Genève, Champel") and not carnets.meme_lieu("Ollon", "Collonge-Bellerive")
+    assert not carnets.meme_lieu("Bern", "Bernex")
+    # Des valeurs presque égales : rien d'écarté
+    s = carnets.statistiques([10000, 10000, 10000, 10000, 10400])
+    assert s["n"] == 5 and s["ecartees"] == 0
+    # Une vente notée avec le lien d'une annonce est un autre relevé
+    c = stockage.Carnet(f"sqlite:///{tmp_path}/c.db")
+    base = {"lieu": "Cologny", "famille": "villa", "devise": "CHF", "prix_m2": 30000, "lien": "https://x.ch/1", "date": 1.0, "note": 1.0}
+    _, a = c.noter({**base, "nature": "annonce"})
+    _, v = c.noter({**base, "nature": "vente", "prix_m2": 28000})
+    assert a and v and sorted(r["nature"] for r in c.releves()) == ["annonce", "vente"]
+
+    # La même veille ne s'ajoute pas deux fois
+    async def deux_fois():
+        m.conversations()
+        m.ecrit(GREG)
+        await m.mo["surveiller_marche"]("villa Cologny", Tour(GREG, "g1"))
+        await m.mo["surveiller_marche"]("Villa  Cologny", Tour(GREG, "g2"))
+
+    with pytest.raises(ValueError, match="existe déjà"):
+        run(deux_fois())
+
+
+def test_la_reference_d_une_zone_ne_glisse_pas():
+    """Relecture du 16.11.2026 : trois hausses de 4 % finissent par se dire (la référence ne bouge qu'à l'alerte)."""
+    z = {"lieu": "Cologny", "type": "villa"}
+    ref = {"mediane": 30000, "n": 5}
+    dits = []
+    for semaine in (31200, 32448, 33746):
+        apres = {"mediane": semaine, "n": 5}
+        dit = carnets.variation(ref, apres, z)
+        dits.append(dit)
+        ref = apres if dit else ref
+    assert dits[0] is None and "(+8 %)" in dits[1]  # 30 000 puis 32 448 : la référence n'a pas glissé à 31 200
+
+
+def test_une_requete_avancee_tient_dans_la_limite():
+    from packs.immobilier.marche import LIMITE
+
+    mots = "villa contemporaine avec vue sur le lac Léman, piscine, cinq chambres, Cologny, Vandœuvres ou Collonge-Bellerive"
+    assert all(len(q) <= LIMITE and q.endswith(" site:christiesrealestate.com") for q in requetes(mots, ["christiesrealestate.com"], "avancee"))
