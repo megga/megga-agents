@@ -8,7 +8,7 @@ Alix FSP (dépôt `megga/fourseasonsproperties`, Worker `fourseasons-alix`) comp
 | **7.2 Annonces** (fait) | lire, chercher, brouillon puis création, modifier, retirer ; garde-fous et rédaction ; photos, vidéos, mots de passe, clients, carrousel, transfert, formulaire WhatsApp |
 | **7.3 Fiche PDF** (fait) | gardée en JavaScript (pdf-lib), appelée comme un service ; choix des photos, photos tirées d'une plaquette |
 | **7.4 Partenaires et visiteurs** (fait) | registre, vitrine, rapprochement, accueil, questions transmises au courtier, demandes du site, envoi à un contact, blocages |
-| 7.5 Marché | recherche sur les portails, veille, suivi de zones, carnet des prix |
+| **7.5 Marché** (fait) | recherche sur les portails, veille, suivi de zones, carnet des prix |
 | 7.6 Comportements | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
 | 7.7 Parité et bascule | les scénarios d'Alix en scénarios neutres, joués sur les deux (sur le socle par l'entrée par API), la copie des données, le numéro de test, la bascule sur accord |
 
@@ -79,9 +79,22 @@ Quatre groupes d'outils de plus, par rôle (`Role.outils`) ; ceux qui agissent a
 
 **Four Seasons** : `clients/four-seasons-properties.yaml` donne les groupes à ses trois rôles, ses consignes (Greg, l'ordre des destinations, les devises, les marchés), l'accueil de Greg mot pour mot et ses sites publics (Marbella, Dubaï). Rien de Four Seasons dans le noyau ni dans le pack (un essai le vérifie).
 
+## 7.5 Le marché
+
+Un groupe d'outils de plus, `marche`, pour les gestionnaires seulement (`packs/immobilier/marche.py`, `carnet.py`). Les régions et leurs portails viennent de la configuration (`Config.marche` : pour chaque région, les grands portails de la recherche simple, puis les autres) ; rien d'une agence dans le pack.
+- **Les portails** : `chercher_marche` (mode simple : les grands portails, requêtes groupées par « OR », 128 caractères au plus ; avancée : une requête par portail, puis la lecture des cinq meilleures annonces), par région ou sur les sites nommés. La recherche passe par l'outil de recherche web de DeepSeek (`/v1/tools/search` et `/v1/tools/fetch`, la clé du modèle de secours), comme dans Alix : ce n'est pas le portail en direct. Ne restent que les pages d'une annonce (un identifiant dans le chemin), sur les sites demandés.
+- **Sans lien pour le modèle** : les résultats sont numérotés ; `montrer_annonces` ouvre chaque annonce choisie, écarte celle qui n'est plus en ligne, et l'envoie dans sa carte (titre, prix, pièces ou chambres, surface, portail, lien exact avec aperçu). `lire_annonce_marche` la lit en entier.
+- **La veille**, seulement à la demande : `surveiller_marche` (chaque jour ou chaque semaine, 4 semaines par défaut, 12 au plus, 10 veilles par courtier), `annuler_veille`. Seules les nouvelles annonces partent, triées par Claude puis vérifiées. **Le suivi d'une zone** : `suivre_zone` (une recherche approfondie par semaine, 12 semaines au plus, 5 zones), `arreter_zone` ; il ne prévient que si la médiane des prix demandés bouge de 5 % ou plus, sur cinq relevés au moins, et dit quand il s'arrête. Veilles et zones (`megga_veilles`) passent à l'heure dite comme le suivi des visiteurs (`Conversations.echeances`) ; leur passage est réservé avant d'être fait, deux réveils ne le font pas deux fois. Hors des 24 heures, ce qu'elles trouvent attend le prochain message (modèles Meta `veille` et `zone` s'ils sont réglés).
+- **Le carnet des prix au m²** (`megga_releves`, 2 000 relevés, partagé par les gestionnaires) : `noter_marche` (vente réalisée, avis en fourchette, annonce avec son lien ; un prix au m² hors des bornes plausibles est refusé, souvent le terrain pris pour l'habitable), `releves_marche`, `retirer_releve`. Les annonces lues sur les portails y entrent d'elles-mêmes quand Claude y lit clairement un prix de vente et une surface habitable (`redaction.Assistante.lire_fiches`). `analyser_marche` et `comparer_bien` rendent des chiffres calculés dans le code (médiane, quartiles, valeurs hors norme écartées), par source, avec la période ; jamais par le modèle.
+- **`clients_pour_bien`** : les clients que le courtier a en mémoire dont les critères collent à un bien (le nôtre, ou décrit), triés par Claude.
+
+**Four Seasons** : ses cinq régions (Suisse par défaut, prestige international, Espagne pour Marbella, France voisine, Dubaï) et leurs portails dans `clients/four-seasons-properties.yaml`, le groupe `marche` pour ses gestionnaires.
+
+**Choix à valider** : la recherche reste chez DeepSeek, comme dans Alix (0,75 $ les 1 000 recherches). L'autre voie serait l'outil de recherche web de Claude, plus cher ; la décision du 16.11.2026 ne visait que Gemini.
+
 ## Ce qui reste après le 7.4
 
-- Les modèles Meta (accord, livraison, demande, suivi, ouverture) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.
+- Les modèles Meta (accord, livraison, demande, suivi, ouverture, veille, zone) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.
 - Le blocage chez Meta en plus de notre liste (Alix le fait quand Meta le permet) ; la vidéo reçue en fichier (7.2).
 - Le site de Four Seasons qui appelle la porte (`/site/…`) au lieu d'Alix : à la bascule (7.7), avec Julien.
 - Les réactions et le vocal propres aux visiteurs et aux partenaires sont ceux du noyau (le 👀, un vocal pour un vocal) ; l'humeur d'un vocal n'est pas reprise (décision du 16.11.2026).

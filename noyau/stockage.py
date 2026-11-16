@@ -851,6 +851,135 @@ class Differes:
             return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount
 
 
+RELEVES_MAX = 2000  # relevés du carnet du marché, par client
+
+
+class Carnet:
+    """Le carnet du marché du client (table megga_releves) : des prix au m², chacun avec sa source (packs/immobilier/
+    carnet.py) ; partagé par ses gestionnaires. Une annonce déjà notée (même lien) est mise à jour ; plein, les plus
+    anciennes annonces s'en vont d'abord."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_releves",
+            Column("id", Integer, primary_key=True, autoincrement=True),
+            Column("nature", String(10), nullable=False),
+            Column("lieu", String(80), nullable=False),
+            Column("quartier", String(80), nullable=True),
+            Column("famille", String(12), nullable=False),
+            Column("devise", String(3), nullable=False),
+            Column("prix", Float, nullable=True),
+            Column("surface", Float, nullable=True),
+            Column("prix_m2", Float, nullable=False),
+            Column("bas", Float, nullable=True),
+            Column("haut", Float, nullable=True),
+            Column("texte", String(300), nullable=True),
+            Column("lien", String(300), nullable=True, index=True),
+            Column("date", Float, nullable=False),
+            Column("note", Float, nullable=False),
+            Column("par", String(PERSONNE), nullable=True),
+        )
+
+    CHAMPS = ("nature", "lieu", "quartier", "famille", "devise", "prix", "surface", "prix_m2", "bas", "haut", "texte", "lien", "date", "note")
+
+    def noter(self, r: dict, par: str | None = None) -> tuple[int, bool]:
+        """(numéro du relevé, nouveau ?)."""
+        t = self._t
+        valeurs = {k: r.get(k) for k in self.CHAMPS}
+        with self._e.begin() as c:
+            if r.get("lien"):
+                deja = c.execute(select(t.c.id).where(t.c.lien == r["lien"])).scalar()
+                if deja is not None:
+                    c.execute(update(t).where(t.c.id == deja).values(**{k: v for k, v in valeurs.items() if k not in ("nature", "bas", "haut", "texte", "lien")}))
+                    return int(deja), False
+            if (c.execute(select(func.count()).select_from(t)).scalar() or 0) >= RELEVES_MAX:
+                annonces = c.execute(select(func.count()).where(t.c.nature == "annonce")).scalar() or 0
+                vieux = select(t.c.id).where(t.c.nature == "annonce") if annonces else select(t.c.id)
+                ids = [x[0] for x in c.execute(vieux.order_by(t.c.date).limit(50))]
+                c.execute(delete(t).where(t.c.id.in_(ids)))
+            ident = c.execute(insert(t).values(**valeurs, par=par)).inserted_primary_key[0]
+        return int(ident), True
+
+    def releves(self) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            return [dict(l._mapping) for l in c.execute(select(t).order_by(t.c.date.desc(), t.c.id.desc()))]
+
+    def retirer(self, ident: int) -> dict | None:
+        t = self._t
+        with self._e.begin() as c:
+            l = c.execute(select(t).where(t.c.id == int(ident))).first()
+            if l is None:
+                return None
+            c.execute(delete(t).where(t.c.id == int(ident)))
+        return dict(l._mapping)
+
+
+class Veilles:
+    """Ce qui se refait à l'heure dite pour une personne (table megga_veilles) : une veille du marché (une recherche
+    relancée chaque jour ou chaque semaine) ou le suivi d'une zone (chaque semaine). `donnees` : en JSON ;
+    `prochaine` : l'heure du prochain passage, réservée avant de le faire (deux réveils ne le font pas deux fois)."""
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_veilles",
+            Column("id", String(16), primary_key=True),
+            Column("personne", String(PERSONNE), nullable=False, index=True),
+            Column("genre", String(8), nullable=False),  # veille, zone
+            Column("donnees", Text, nullable=False),
+            Column("prochaine", Float, nullable=False, index=True),
+            Column("cree", Float, nullable=False),
+        )
+
+    def ajouter(self, personne: str, genre: str, donnees: dict, prochaine: float) -> str:
+        ident = f"{genre[0]}{_ident(6)}"
+        with self._e.begin() as c:
+            c.execute(insert(self._t).values(id=ident, personne=personne, genre=genre, donnees=_json(donnees), prochaine=prochaine,
+                                             cree=time.time()))
+        return ident
+
+    def _lignes(self, condition) -> list[dict]:
+        t = self._t
+        with self._e.connect() as c:
+            lignes = [dict(l._mapping) for l in c.execute(select(t).where(condition).order_by(t.c.prochaine))]
+        for l in lignes:
+            l["donnees"] = _de_json(l["donnees"]) or {}
+        return lignes
+
+    def de(self, personne: str, genre: str | None = None) -> list[dict]:
+        t = self._t
+        return self._lignes(and_(t.c.personne == personne, t.c.genre == genre) if genre else t.c.personne == personne)
+
+    def echues(self, maintenant: float) -> list[dict]:
+        return self._lignes(self._t.c.prochaine <= maintenant)
+
+    def reserver(self, ident: str, avant: float, prochaine: float) -> bool:
+        """Repousse le passage à `prochaine` s'il était encore à `avant` : faux si un autre réveil l'a déjà pris."""
+        t = self._t
+        with self._e.begin() as c:
+            return c.execute(update(t).where(t.c.id == ident, t.c.prochaine == avant).values(prochaine=prochaine)).rowcount > 0
+
+    def mettre(self, ident: str, donnees: dict) -> None:
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.id == ident).values(donnees=_json(donnees)))
+
+    def retirer(self, ident: str, personne: str | None = None) -> dict | None:
+        t = self._t
+        condition = t.c.id == ident if personne is None else and_(t.c.id == ident, t.c.personne == personne)
+        lignes = self._lignes(condition)
+        if not lignes:
+            return None
+        with self._e.begin() as c:
+            c.execute(delete(t).where(t.c.id == ident))
+        return lignes[0]
+
+    def prochaine(self) -> float | None:
+        with self._e.connect() as c:
+            return c.execute(select(func.min(self._t.c.prochaine))).scalar()
+
+
 class Medias:
     """Les médias reçus de chaque personne (table megga_medias), numérotés dans l'ordre d'arrivée : « média 3 »
     dans la conversation désigne le même fichier pour l'agent et ses outils. Seul l'identifiant chez Meta est

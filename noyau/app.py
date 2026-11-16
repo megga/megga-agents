@@ -108,7 +108,7 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         from packs.immobilier.annonces import outils as outils_annonces
 
         liste += outils_annonces(services)
-    if set(groupes) & {"partenaires", "visiteurs", "vitrine", "accueil"}:
+    if set(groupes) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche"}:
         if relations is None:
             raise RuntimeError("outils de partenaires et de visiteurs sans gestion du site (Config.gestion et GESTION_CLE)")
         liste += relations.outils(groupes)
@@ -221,8 +221,13 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                 conf.gestion.fiche, conf.entreprise, personnes.partenaires or stockage.Partenaires(url),
                                 stockage.Reseau(url), personnes.bloques or stockage.Bloques(url), stockage.Questions(url),
                                 fuseau=conf.fuseau, memoires=memoires, assistante=Assistante(cle, conf.entreprise) if cle else None,
-                                a_whatsapp=conf.whatsapp is not None)
-            if relations is None and any(set(r.outils) & {"partenaires", "visiteurs", "vitrine", "accueil"} for r in conf.les_roles().values()):
+                                a_whatsapp=conf.whatsapp is not None, carnet=stockage.Carnet(url), veilles=stockage.Veilles(url),
+                                reglage_marche=conf.marche)
+            if conf.marche is not None:
+                from packs.immobilier.marche import Portails
+
+                services.portails = Portails(cles.get("DEEPSEEK_API_KEY", ""))
+            if relations is None and any(set(r.outils) & {"partenaires", "visiteurs", "vitrine", "accueil", "marche"} for r in conf.les_roles().values()):
                 from packs.immobilier.relations import Relations
 
                 relations = Relations(services)

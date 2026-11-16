@@ -79,6 +79,11 @@ class Services:
     memoires: object | None = None  # async f(personne) -> [souvenirs]
     assistante: object | None = None  # redaction.Assistante
     a_whatsapp: bool = True
+    # Lot 7.5 (marche.py) : le carnet des prix, les veilles et les zones suivies, les portails, les régions.
+    carnet: object | None = None  # stockage.Carnet
+    veilles: object | None = None  # stockage.Veilles
+    portails: object | None = None  # marche.Portails
+    reglage_marche: object | None = None  # Config.marche
 
 
 async def fiche_du_site(s: Services, compte: str, slug: str, version: str, langue: str, sans_prix: bool, maximum: int = 11,

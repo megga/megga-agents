@@ -162,12 +162,13 @@ class Expediteur:
             raise RuntimeError(f"Meta {r.status_code} {r.text[:300]}")
         return r.json() if r.content else {}
 
-    async def texte(self, vers: str, texte: str) -> dict:
+    async def texte(self, vers: str, texte: str, apercu: bool = False) -> dict:
+        """`apercu` : WhatsApp montre l'aperçu du lien (la carte d'une annonce)."""
         return await self._envoyer({
             "recipient_type": "individual",
             "to": chiffres(vers),
             "type": "text",
-            "text": {"preview_url": False, "body": str(texte)[:LIMITE_TEXTE]},
+            "text": {"preview_url": bool(apercu), "body": str(texte)[:LIMITE_TEXTE]},
         })
 
     async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:
@@ -320,7 +321,7 @@ class SansWhatsApp:
     def _refus():
         raise RuntimeError("cet agent n'a pas de numéro WhatsApp")
 
-    async def texte(self, vers: str, texte: str) -> dict:
+    async def texte(self, vers: str, texte: str, apercu: bool = False) -> dict:
         self._refus()
 
     async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:

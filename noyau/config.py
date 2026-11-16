@@ -24,11 +24,11 @@ ZONES = ("suisse", "europe", "etats-unis", "client")
 METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
 OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                                                "vitrine", "accueil")}
+                                                                                "vitrine", "accueil", "marche")}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
-OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs")
+OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
-OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil")
+OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche")
 
 
 class Strict(BaseModel):
@@ -89,7 +89,8 @@ class WhatsApp(Strict):
 #   visiteurs    les réponses aux visiteurs, l'envoi à un contact, les numéros bloqués (lot 7.4), pour un gestionnaire
 #   vitrine      chercher dans la vitrine, sans prix ni adresse : l'outil d'un partenaire
 #   accueil      chercher les biens publics, transmettre un contact, poser une question au courtier : ceux d'un visiteur
-GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil")
+#   marche       les portails, la veille, le carnet des prix au m², le suivi des zones (lot 7.5), pour un gestionnaire
+GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche")
 
 
 class Role(Strict):
@@ -99,7 +100,7 @@ class Role(Strict):
     envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
 
     @field_validator("consignes")
@@ -167,6 +168,39 @@ class Gestion(Strict):
         return self
 
 
+DOMAINE = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}")
+
+
+class Region(Strict):
+    """Les portails d'une région : les grands (la recherche simple), puis les autres (la recherche avancée)."""
+
+    nom: str = Field(min_length=1, max_length=60)
+    simple: tuple[str, ...] = Field(min_length=1, max_length=6)
+    autres: tuple[str, ...] = Field(default=(), max_length=10)
+
+    @field_validator("simple", "autres")
+    @classmethod
+    def domaines(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not DOMAINE.fullmatch(d) for d in v):
+            raise ValueError("des domaines de portails (homegate.ch)")
+        return v
+
+
+class Marche(Strict):
+    """Le marché du client (lot 7.5) : ses régions et leurs portails, celle par défaut."""
+
+    regions: dict[str, Region] = Field(min_length=1)
+    defaut: str
+
+    @model_validator(mode="after")
+    def defaut_connu(self):
+        if any(not re.fullmatch(r"[a-z0-9-]{1,30}", k) for k in self.regions):
+            raise ValueError("regions : {identifiant: région}")
+        if self.defaut not in self.regions:
+            raise ValueError("defaut : une des régions")
+        return self
+
+
 class Config(Strict):
     version: int = VERSION
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
@@ -196,6 +230,8 @@ class Config(Strict):
     roles: Roles | None = None
     # La gestion du site du client, pour les outils qui agissent en son nom.
     gestion: Gestion | None = None
+    # Les portails de son marché (outils du marché).
+    marche: Marche | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -246,6 +282,8 @@ def manques(conf: Config) -> list[str]:
         m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
     if any(o in OUTILS_GESTION for r in conf.les_roles().values() for o in r.outils) and conf.gestion is None:
         m.append("les outils d'annonces, de partenaires et de visiteurs attendent la gestion du site (réglage de MEGGA)")
+    if any("marche" in r.outils for r in conf.les_roles().values()) and conf.marche is None:
+        m.append("les outils du marché attendent les portails de ses régions (réglage de MEGGA)")
     return m
 
 

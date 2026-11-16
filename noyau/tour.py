@@ -401,7 +401,7 @@ class Conversations:
     async def envoyer_de_soi_meme(self, personne: str, messages: list[dict], usage: str, variables: list[str] | None = None,
                                   langue: str = "", garder: bool = True) -> str:
         """Des messages que l'agent envoie de lui-même à une personne (une demande pour un gestionnaire, une fiche
-        pour un partenaire, une réponse pour un visiteur). `messages` : {"texte"}, {"document", "nom", "legende"}
+        pour un partenaire, une réponse pour un visiteur). `messages` : {"texte", "apercu"?}, {"document", "nom", "legende"}
         (un identifiant chez Meta) ou {"liste": {corps, bouton, section, lignes}}.
 
         Dans les 24 heures, ils partent. Au-delà, ils sont gardés pour son prochain message (stockage.Differes, sauf `garder` faux),
@@ -445,7 +445,10 @@ class Conversations:
                 await self.exp.liste(personne, nettoyer(l["corps"]), l["bouton"], l["section"], l["lignes"])
                 self._noter_fil(personne, "envoye", "liste", nettoyer(l["corps"]))
             elif m.get("texte"):
-                await self.exp.texte(personne, nettoyer(m["texte"]))
+                if m.get("apercu"):  # la carte d'une annonce : son lien avec son aperçu
+                    await self.exp.texte(personne, nettoyer(m["texte"]), apercu=True)
+                else:
+                    await self.exp.texte(personne, nettoyer(m["texte"]))
                 self._noter_fil(personne, "envoye", usage, nettoyer(m["texte"]))
 
     async def _rappels_differes(self, personne: str) -> None:
