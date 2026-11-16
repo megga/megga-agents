@@ -360,6 +360,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         restantes = await finir_les_tours(delai_vider)
         if restantes:
             log.warning("arrêt avec %d tour(s) inachevé(s)", restantes)
+        # Les lignes du journal d'audit de ces tours, écrites en arrière-plan (noyau/approbations.py)
+        if restantes := await gardien.vider(delai_vider):
+            log.warning("arrêt avec %d ligne(s) du journal d'audit non écrite(s)", restantes)
 
     def a_relire() -> bool:
         """Une autre configuration est à servir : poussée et acceptée, retirée par le client, ou la précédente

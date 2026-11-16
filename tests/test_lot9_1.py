@@ -286,14 +286,38 @@ def test_avec_un_vrai_agent_agno(url, regle):
     conf = configuration.lire({**CONF, "approbations": {"envoyer_fiche": regle} if regle != "auto" else {}})
     modele = ModeleOutil()
     agent = construire(conf, None, {}, principal=modele, outils=o.outils(), gardien=g)
-    sortie = asyncio.run(agent.arun("Envoie la fiche à Mme Dupont", user_id="41790000001", session_id="41790000001"))
-    asyncio.run(journal_ecrit(g))
+
+    async def tour():  # le journal s'attend dans la boucle du tour : à sa fermeture, une écriture en file serait annulée
+        sortie = await agent.arun("Envoie la fiche à Mme Dupont", user_id="41790000001", session_id="41790000001")
+        assert await g.vider(5) == 0
+        return sortie
+
+    sortie = asyncio.run(tour())
     if regle == "approbation":
         assert o.faits == [] and "attend l'accord" in modele.vus[0]
         assert stockage.Approbations(url).lister("attente")[0]["arguments"] == {"contact": "Mme Dupont"}
     else:
         assert o.faits == [("envoyer_fiche", "Mme Dupont", "41790000001")]
         assert "fiche envoyée" in sortie.content
+    assert [l["outil"] for l in stockage.Audit(url).lire()] == ["envoyer_fiche"]
+
+
+def test_le_journal_s_ecrit_meme_sur_une_machine_chargee(url):
+    """Les fils occupés, l'écriture du journal attend dans leur file : vider() l'attend avant que la boucle se ferme
+    (l'arrêt du service), sinon elle serait annulée sans être faite."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    g = gardien(url)
+
+    async def tour():
+        boucle = asyncio.get_running_loop()
+        boucle.set_default_executor(ThreadPoolExecutor(1))
+        boucle.run_in_executor(None, time.sleep, 0.2)  # le seul fil, pris
+        await appeler(g, {}, Outils().outils()[0], {"contact": "Mme Dupont"})
+        assert len(g._taches) == 1  # l'écriture attend son fil
+        assert await g.vider(5) == 0
+
+    asyncio.run(tour())
     assert [l["outil"] for l in stockage.Audit(url).lire()] == ["envoyer_fiche"]
 
 
