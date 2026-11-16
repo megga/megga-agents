@@ -37,6 +37,8 @@ def _version(v: dict, avec_config: bool = True) -> dict:
         "auteur": n.get("auteur"),
         "base": n.get("base"),
         "essais": n.get("essais", 0),
+        # le dernier banc d'essai (lot 9.6, noyau/banc.py) : {k, cas, tenus, score, pass_1, quand}
+        "banc": n.get("banc"),
         "cree_le": v.get("created_at"),
     }
     if avec_config:
@@ -125,6 +127,16 @@ class Versions:
             n = _notes(v.get("notes"))
             n["essais"] = int(n.get("essais", 0)) + 1
             self.db.upsert_config(ident, version=numero, notes=json.dumps(n))
+
+    def noter_banc(self, ident: str, numero: int, resume: dict) -> bool:
+        """Le dernier banc d'essai d'un brouillon (lot 9.6), gardé avec lui ; une version publiée ne change plus."""
+        v = self.db.get_config(ident, version=numero)
+        if not v or v.get("stage") == "published":
+            return False
+        n = _notes(v.get("notes"))
+        n["banc"] = resume
+        self.db.upsert_config(ident, version=numero, notes=json.dumps(n))
+        return True
 
     def mettre_en_service(self, ident: str, numero: int, avant: int | None) -> None:
         """Publie un brouillon (il devient courant) ou rend courante une version publiée.
