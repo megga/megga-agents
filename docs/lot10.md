@@ -45,7 +45,7 @@ Quelques choix écrits dans les consignes, à garder en tête en les relisant :
 
 ## La licence
 
-`atelier/gabarits/LICENCE-agency-agents.txt` reprend le texte MIT d'agency-agents, exigé pour toute partie substantielle reprise. Les sept modèles tirés du dépôt (tous sauf `fiduciaire` et `garage`) nomment leurs sources dans `source` : le dépôt, les chemins des agents, le commit `8ae6164602c95ca78828b148b9052460ee426885` (lu le 8.11.2026) et la licence. `lister()` rend `source` (la console pourra l'afficher) ; `a_valider` reste dans le fichier.
+`atelier/gabarits/LICENCE-agency-agents.txt` reprend le texte MIT d'agency-agents, exigé pour toute partie substantielle reprise. Les six modèles tirés du dépôt (tous sauf `fiduciaire` et `garage`) nomment leurs sources dans `source` : le dépôt, les chemins des agents, le commit `8ae6164602c95ca78828b148b9052460ee426885` (lu le 8.11.2026) et la licence. `lister()` rend `source` (la console pourra l'afficher) ; `a_valider` reste dans le fichier.
 
 ## Les métiers et la garde des installations
 
