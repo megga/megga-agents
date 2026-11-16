@@ -32,7 +32,7 @@ Le client règle lui-même les approbations de son agent (`approbations` est un 
 
 **L'action accordée** est faite au nom de la personne qui l'a demandée (son `run_context`), avec les arguments gardés, par l'outil du même nom de son rôle. La personne reçoit un court message (« l'équipe a validé votre demande, c'est fait », en français ou en anglais selon la langue de l'agent ; modèle Meta `approbation_reponse` hors des 24 heures), et son agent en connaît le détail à son tour suivant (le Contexte, entre balises `<approbations>`, dit une seule fois).
 
-**Le journal d'audit** (`megga_audit`) : chaque appel d'outil, accordé ou pas, avec l'outil, la personne, la règle, l'issue (`fait`, `erreur`, `refuse`, `attente`) et la durée ; jamais ses arguments ni son résultat (ce qu'une action a fait se lit dans la conversation, ou dans sa demande d'accord). Écrit en arrière-plan, il ne retarde ni ne fait échouer un tour. Gardé trois mois.
+**Le journal d'audit** (`megga_audit`) : chaque appel d'outil, accordé ou pas, avec l'outil, la personne, la règle, l'issue (`fait`, `erreur`, `refuse`, `attente`) et la durée ; jamais ses arguments ni son résultat (ce qu'une action a fait se lit dans la conversation, ou dans sa demande d'accord). Écrit en arrière-plan, il ne retarde ni ne fait échouer un tour ; à l'arrêt du service, les lignes encore en route sont attendues avec les tours. Gardé trois mois.
 
 **Les routes.**
 
