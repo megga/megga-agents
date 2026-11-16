@@ -571,9 +571,13 @@ def test_un_rappel_en_echec_est_retente_dans_5_minutes(sqlite):
     app = creer({"CLIENT_CONFIG": json.dumps(CONF), "DATABASE_URL": sqlite, "INTERNE_TOKEN": "interne"}, agent=agent,
                 expediteur=EnPanne(), rappels=stockage.Rappels(sqlite), contacts=stockage.Contacts(sqlite))
     stockage.Contacts(sqlite).noter("41790000000", time.time())  # dans les 24 heures
-    stockage.Rappels(sqlite).ajouter("41790000000", 1.0, "appeler")
+    stockage.Rappels(sqlite).ajouter("41790000000", time.time() - 60, "appeler")
     r = TestClient(app).post("/interne/rappels", headers={"x-megga-interne": "interne"}).json()
     assert r["echec"] == 1 and r["prochain"] >= time.time() + 290
+    # Encore en échec un jour après son heure : abandonné, plus retenté (relecture du 16.11.2026, I10)
+    ancien = stockage.Rappels(sqlite).ajouter("41790000000", time.time() - 25 * 3600, "rappeler")
+    TestClient(app).post("/interne/rappels", headers={"x-megga-interne": "interne"})
+    assert [l["id"] for l in stockage.Rappels(sqlite).lister("41790000000") if l["id"] == ancien] == []
 
 
 def test_la_commande_ne_montre_pas_une_cle_non_enregistree(sqlite, monkeypatch):
