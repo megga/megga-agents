@@ -8,6 +8,7 @@ from .annonces import CONSIGNES as CONSIGNES_ANNONCES
 from .annonces import Services
 from .marche import CONSIGNES as CONSIGNES_MARCHE
 from .marche import Marche
+from .recherches import SuiviRecherches
 from .reseau import CONSIGNES_PARTENAIRES, CONSIGNES_VITRINE, PREFIXE_CHOIX, Reseau
 from .travail import CONSIGNES as CONSIGNES_TRAVAIL
 from .travail import REGLE_AFFICHAGE, Travail, capacites
@@ -36,7 +37,9 @@ class Relations:
         self.marche = Marche(s) if s.reglage_marche is not None else None
         self.travail = Travail(s) if s.regles is not None else None
         self.choix = {PREFIXE_CHOIX: self.reseau.choisir}
-        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else [])]
+        # Les recherches des clients de la gestion, rapprochées le matin et le soir (demande d'un courtier, 16.11.2026).
+        self.recherches = SuiviRecherches(s)
+        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else []), self.recherches.echeance]
 
     def outils(self, groupes) -> list:
         par_groupe = {"partenaires": self.reseau.outils_gestionnaire, "visiteurs": self.visiteurs.outils_gestionnaire,

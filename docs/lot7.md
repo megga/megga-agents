@@ -43,7 +43,7 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 - **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
 - **Vidéos** : `ajouter_video` (par lien), `envoyer_video`, `retirer_video`.
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
-- **Clients** : `recherche_client`, `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
+- **Clients** : `recherche_client` (critères : transaction, communes, types dont immeuble, budget, chambres, surface, salles de bains, terrain, piscine, vue, mitoyen ; appel du 16.11.2026), `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
 
 Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo dans un stockage que seul le site atteint ; par lien en attendant). L'envoi à un contact est venu au 7.4.
 
@@ -53,7 +53,12 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 
 **Les outils** :
 - `fiche_pdf` : la fiche d'une annonce du site (par son identifiant ou sa référence) ou d'un bien qui n'y est pas (ses photos reçues et ce qu'en dit le courtier, les textes rédigés au besoin) ; anonyme par défaut (ni contact, ni référence, ni ligne qui nomme la marque), de marque sur demande, sans prix pour un partenaire (aucun montant nulle part, « 4.5 M CHF » et « 4’500’000 » compris, et l'adresse réduite à la commune), en français ou en anglais ; Claude choisit la couverture et les plus belles photos (`redaction.Choisisseuse`, à la place de Gemini), sauf s'il faut garder l'ordre. Le PDF part dans la conversation.
+- `lire_pdf` : le texte d'une plaquette PDF reçue, lu par Claude (texte, pages scannées) : la description entière puis les faits ; l'agent s'en sert avant de rien redemander (appel du 16.11.2026 : il ne voyait que « PDF reçu »).
 - `photos_du_pdf` : les photos d'une plaquette PDF reçue (ni petites, ni allongées, ni grises, ni en double ; en JPEG tel quel ou en PNG refait), qui deviennent des médias comme des photos reçues (`pdf:<média du PDF>#<rang>`), reprises du PDF quand un outil s'en sert.
+
+## Le rapprochement des recherches clients (16.11.2026)
+
+`packs/immobilier/recherches.py` : à 8 h et 18 h (heure de l'agence), une échéance relit les recherches de la gestion (`GET /clients`) ; les biens nouveaux depuis le passage précédent sont signalés au courtier de la recherche, en un message (usage `rapprochement`, modèle `fsp_agent_suivi_maj` hors des 24 heures). Une recherche jamais vue ne prévient pas ; celles d'un autre courtier non plus.
 
 ## 7.4 Les partenaires et les visiteurs
 
