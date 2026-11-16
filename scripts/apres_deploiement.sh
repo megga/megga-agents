@@ -14,6 +14,7 @@ for i in $(seq 1 60); do
   sleep 20
 done
 admin=$(security find-generic-password -a megga-agents -s megga-agents-admin -w)
-curl -sS --fail-with-body -X POST "$porte/admin/redemarrer" -H "authorization: Bearer $admin"
+# L'en-tête par un fichier de configuration de curl (printf est interne au shell) : jamais dans ps.
+curl -sS --fail-with-body -X POST "$porte/admin/redemarrer" -K <(printf 'header = "authorization: Bearer %s"\n' "$admin")
 echo
 unset admin

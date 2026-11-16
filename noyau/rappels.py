@@ -9,6 +9,7 @@ dans les 24 heures de WhatsApp, un message libre ; au-delà, le modèle Meta
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import time
 from zoneinfo import ZoneInfo
@@ -49,7 +50,7 @@ def outils(rappels, fuseau: str):
             raise ValueError("les rappels ne sont pas disponibles dans cette conversation : dis-le simplement")
         return run_context.user_id
 
-    def rappeler(quand: str, quoi: str, run_context: RunContext) -> str:
+    async def rappeler(quand: str, quoi: str, run_context: RunContext) -> str:
         """Programme un rappel demandé par la personne.
 
         Args:
@@ -60,29 +61,29 @@ def outils(rappels, fuseau: str):
         texte = " ".join(str(quoi).split())[:MAX_TEXTE]
         if not texte:
             raise ValueError("rien à rappeler")
-        if len(rappels.lister(personne)) >= MAX_PAR_PERSONNE:
+        if len(await asyncio.to_thread(rappels.lister, personne)) >= MAX_PAR_PERSONNE:
             raise ValueError("trop de rappels en attente : annule-en d'abord")
         t = lire_quand(quand, fuseau)
-        ident = rappels.ajouter(personne, t, texte)
+        ident = await asyncio.to_thread(rappels.ajouter, personne, t, texte)
         heure = dt.datetime.fromtimestamp(t, tz).strftime("%d.%m.%Y à %H:%M")
         return f"Rappel {ident} programmé le {heure} : {texte}"
 
-    def mes_rappels(run_context: RunContext) -> str:
+    async def mes_rappels(run_context: RunContext) -> str:
         """Liste les rappels en attente de la personne."""
-        lignes = rappels.lister(_qui(run_context))
+        lignes = await asyncio.to_thread(rappels.lister, _qui(run_context))
         if not lignes:
             return "Aucun rappel en attente."
         return "\n".join(
             f"{l['id']} : {dt.datetime.fromtimestamp(l['quand'], tz).strftime('%d.%m.%Y à %H:%M')}, {l['texte']}" for l in lignes
         )
 
-    def annuler_rappel(identifiant: str, run_context: RunContext) -> str:
+    async def annuler_rappel(identifiant: str, run_context: RunContext) -> str:
         """Annule un rappel de la personne, d'après son identifiant (donné par mes_rappels).
 
         Args:
             identifiant: l'identifiant du rappel.
         """
-        if rappels.annuler(_qui(run_context), str(identifiant).strip()):
+        if await asyncio.to_thread(rappels.annuler, _qui(run_context), str(identifiant).strip()):
             return "Rappel annulé."
         return "Aucun rappel en attente avec cet identifiant."
 

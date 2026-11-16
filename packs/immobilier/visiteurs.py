@@ -505,6 +505,11 @@ class Visiteurs:
                 return texte
             if s.personnes.compte(numero):
                 raise ValueError("ce numéro est celui d'un gestionnaire : il ne se bloque pas")
+            # Bloquer vient du message du courtier lui-même : le numéro ou le nom y est écrit (relecture du 16.11.2026).
+            dit = s.conversations.entendu(moi) if s.conversations is not None else ""
+            mots_dits = set(re.findall(r"[a-z0-9]+", plat(dit)))
+            if dit and chiffres(numero)[-7:] not in chiffres(dit) and not ({m for m in plat(qui).split() if len(m) >= 3} & mots_dits):
+                raise ValueError("ce numéro n'est pas dans le dernier message du courtier : demande-lui de l'écrire lui-même")
             etait = await asyncio.to_thread(s.partenaires.lire, numero)
             nouveau = await asyncio.to_thread(s.bloques.bloquer, numero, moi, None, court(nom or connu or (etait or {}).get("nom", ""), 60))
             if etait:
@@ -611,6 +616,12 @@ class Visiteurs:
         d = lire_demande(corps)
         if d is None:
             raise ValueError("demande illisible")
+        # Le site qui réessaie (délai dépassé, réseau) n'envoie pas deux fois la même demande au courtier.
+        cle = "|".join([d["email"].lower(), d["chemin"], d["recue"]])
+        vues = [x for x in await asyncio.to_thread(s.etats.lire, "_site", "demandes_vues") or [] if time.time() - x[1] < JOUR]
+        if any(x[0] == cle for x in vues):
+            return 0
+        await asyncio.to_thread(s.etats.ecrire, "_site", "demandes_vues", [*vues, [cle, time.time()]][-200:])
         _, compte = self.reseau.premier_gestionnaire()
         r = await s.gestion.appel(compte, "GET", "/resume")
         slug = slug_de_chemin(d["chemin"])

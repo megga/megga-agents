@@ -127,8 +127,10 @@ def main(argv: list[str], env: dict[str, str] | None = None, ecrire=print, cle_m
     if commande == "image" and (env.get("PILOTAGE") or "non").strip().lower() not in ("suivi", "complet"):
         ecrire("rien")
         return 0
+    # La clé du pilote scelle la mise à jour en cours : la commande du script de l'hôte la lit comme le pilote.
     inst = Installation(env["DATABASE_URL"], configuration.lire(source_config(env)), cle_megga,
-                        maj=MisesAJour.depuis(env), delai=delai(env))
+                        maj=MisesAJour.depuis(env), delai=delai(env),
+                        cle_installation=pilotage.cle_privee(env["PILOTE_CLE"]) if env.get("PILOTE_CLE") else None)
     if not inst.prete():
         ecrire("La base n'est pas encore prête : l'agent a-t-il démarré ?")
         return 1

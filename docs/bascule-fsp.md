@@ -37,7 +37,7 @@ Un numéro au nom de Four Seasons Properties, dans le portefeuille WhatsApp Busi
 | `rappel` | un rappel demandé | le texte du rappel |
 | `partenaire` | une demande de partenaire pour le courtier | le partenaire, les références |
 | `livraison` | ce que le courtier fait envoyer à un partenaire | la référence |
-| `demande` | une demande d'information du site, un contact, une question | le bien, le nom, l'e-mail, le téléphone |
+| `demande` | une demande d'information du site, un contact, une question | l'objet, le nom, le contact (e-mail et téléphone) |
 | `reponse_visiteur` | la réponse du courtier à un visiteur | le message |
 | `suivi_visiteur` (`_en`) | le courtier a bien reçu la demande | le sujet |
 | `ouverture` | un message du courtier pour un contact | le nom, le sujet |

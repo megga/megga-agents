@@ -87,7 +87,7 @@ services:
     stop_grace_period: 30s
 
   base:
-    image: postgres:17
+    image: postgres:17@sha256:0d938e975177bef9f1f61f3f9dbcf2e0aa0a139568f66d3415ed8892eb97f6ac
     restart: unless-stopped
     environment:
       POSTGRES_USER: megga
@@ -103,7 +103,7 @@ services:
 
   entree:
     # HTTPS avec un certificat Let's Encrypt pour DOMAINE, renouvelé seul.
-    image: caddy:2
+    image: caddy:2@sha256:4e2425f6009577e7c651010f16679c28f7d12df3e7b1914f941a7a3370746b3c
     restart: unless-stopped
     environment:
       DOMAINE: ${DOMAINE:?le nom de domaine public du webhook}

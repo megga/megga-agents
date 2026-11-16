@@ -148,3 +148,26 @@ def numero(valeur: Any, nom: str) -> int | None:
     if isinstance(valeur, bool) or not isinstance(valeur, int) or valeur < 1:
         raise Refus(400, f"{nom} : un numéro de version")
     return valeur
+
+
+def consignes_de_gabarit(consignes: str) -> bool:
+    """Des consignes vides ou celles d'un modèle par métier : un client peut les remplacer par celles d'un autre modèle.
+    Les consignes écrites sur mesure par MEGGA, non."""
+    from .gabarits import GABARITS
+
+    return not (consignes or "").strip() or consignes in {g["reglages"]["consignes"] for g in GABARITS.values()}
+
+
+def reglages_de_megga(config: dict) -> dict:
+    """Ce qu'un client ne règle pas lui-même dans une configuration : tout sauf CHAMPS_CLIENT (la voix choisie, pas ses
+    autres réglages), et les consignes si MEGGA les a écrites sur mesure. Comparé avant qu'un client ne mette une version
+    en service (relecture du 16.11.2026, I2) : revenir à une version d'avant ne doit pas changer le numéro WhatsApp, les
+    modèles Meta, la gestion du site ni les consignes de MEGGA."""
+    c = valider(config).model_dump(mode="json")
+    sortie = {k: v for k, v in c.items() if k not in CHAMPS_CLIENT and k != "consignes"}
+    sortie["voix"] = {k: v for k, v in c["voix"].items() if k != "voix"}
+    # Le principal et le secours sont au client (lot 9.5) ; le modèle de l'oral et du fil reste à MEGGA.
+    sortie["modeles"] = {k: v for k, v in c["modeles"].items() if k not in ("principal", "secours")}
+    if not consignes_de_gabarit(c.get("consignes", "")):
+        sortie["consignes"] = c["consignes"]
+    return sortie
