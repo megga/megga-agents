@@ -25,6 +25,10 @@ gestion:
   sites:
     marbella: https://fspmarbella.com
     dubai: https://fspdubai.com
+  # Le site de Genève s'ouvre au public et se referme comme les deux autres (Greg, 16.11.2026) ; fermé, il demande le
+  # mot de passe du site. Ce nom n'est le préfixe d'aucun bien.
+  principal:
+    geneve: https://fspgeneva.com
   # Jamais dans le texte d'une annonce (le 12.11.2026, un titre est parti en ligne avec deux prénoms).
   noms_interdits: [Greg, Grégory, Gregory, Julien, Alix]
   fiche: four-seasons-properties

@@ -164,19 +164,24 @@ class Gestion(Strict):
     # Les sites (préfixes de `sites`) dont les biens sont publics : un visiteur en voit le prix et le lien. Ceux
     # du site principal et des autres sites se présentent en une ligne, sans prix ni lien (lot 7.4).
     publics: tuple[str, ...] = ()
+    # Le site principal, s'il s'ouvre au public et se referme comme les autres (porte_site) : {nom: adresse publique}.
+    # Son nom n'est le préfixe d'aucun bien (Greg, 16.11.2026 : « geneve », fspgeneva.com).
+    principal: dict[str, str] = Field(default={}, max_length=1)
 
-    @field_validator("sites")
+    @field_validator("sites", "principal")
     @classmethod
     def adresses(cls, v: dict[str, str]) -> dict[str, str]:
         for prefixe, url in v.items():
             if not re.fullmatch(r"[a-z0-9-]{1,40}", prefixe) or not re.fullmatch(r"https://[a-z0-9.-]+", url):
-                raise ValueError("sites : {préfixe de l'identifiant d'un bien: adresse https du site}")
+                raise ValueError("sites, principal : {nom du site: adresse https du site}")
         return v
 
     @model_validator(mode="after")
     def publics_connus(self):
         if inconnus := [p for p in self.publics if p not in self.sites]:
             raise ValueError(f"publics : des préfixes de sites, inconnus : {', '.join(inconnus)}")
+        if communs := set(self.principal) & set(self.sites):
+            raise ValueError(f"principal : un nom déjà pris par sites : {', '.join(communs)}")
         return self
 
 
