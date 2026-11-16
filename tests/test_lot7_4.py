@@ -654,6 +654,8 @@ def test_une_demande_du_site(monde):
     assert "Demandes d'information du site reçues ces derniers jours" in run(monde.relations.visiteurs.contexte_gestionnaire(GREG))
     with pytest.raises(ValueError):
         run(monde.relations.visiteurs.demande_du_site({"nom": ""}))
+    # Le site qui réessaie la même demande : elle ne part pas deux fois (relecture du 16.11.2026)
+    assert run(monde.relations.visiteurs.demande_du_site(d)) == 0 and len(monde.exp.pour(GREG, "texte")) == 2
 
 
 # Le noyau : l'accueil, les choix touchés, les messages gardés, les routes du site

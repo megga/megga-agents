@@ -169,3 +169,40 @@ def test_le_fil_et_l_oral_restent_chez_claude(monkeypatch):
     with pytest.raises(AttributeError):  # le résumeur construit son modèle à chaque résumé ; l'agent factice ne répond pas
         asyncio.run(app._resumeur(fsp, {})("consigne", "échanges"))
     assert noms == ["claude-haiku-5-5", "claude-haiku-5-5"]
+
+
+def test_les_mineurs_du_noyau(tmp_path):
+    """Relecture du 16.11.2026, constats mineurs du noyau."""
+    import sqlite3
+
+    from noyau.whatsapp import LIMITE_TEXTE, decouper
+
+    # Une colonne ajoutée à une de nos tables complète une base créée avant elle
+    url = f"sqlite:///{tmp_path}/a.db"
+    with sqlite3.connect(tmp_path / "a.db") as c:
+        c.execute("CREATE TABLE megga_partenaires (personne VARCHAR(80) PRIMARY KEY, nom VARCHAR(120) NOT NULL, ajoute FLOAT NOT NULL, par VARCHAR(80) NOT NULL)")
+        c.execute("INSERT INTO megga_partenaires VALUES ('+41790000003', 'Marc', 1.0, '')")
+    p = stockage.Partenaires(url)
+    assert p.lire("+41790000003")["regle"] == "" and p.regle("+41790000003", "normale")
+    # Un message déjà traité ne l'est pas deux fois, même après un redémarrage
+    assert stockage.Vus(url).nouveau("wamid.1") and not stockage.Vus(url).nouveau("wamid.1")
+    # Une réponse trop longue part en plusieurs messages, coupés entre deux paragraphes
+    texte = "\n\n".join(["Bloc " + "x" * 3000] * 3)
+    morceaux = decouper(texte)
+    assert len(morceaux) == 3 and all(len(m) <= LIMITE_TEXTE for m in morceaux) and "".join(morceaux).count("x") == 9000
+    assert decouper("court") == ["court"]
+    # Un fuseau faux est refusé à la validation, pas au démarrage du conteneur
+    with pytest.raises(ValidationError, match="fuseau"):
+        conf(fuseau="Europe/Zurch")
+    # Un message gardé ne se perd pas si l'envoi tombe : il reste jusqu'à ce qu'il parte
+    d = stockage.Differes(url)
+    d.garder("+41790000003", [{"texte": "un"}])
+    (ligne,) = d.a_envoyer("+41790000003")
+    assert d.a_envoyer("+41790000003") and ligne["messages"] == [{"texte": "un"}]
+    d.retirer(ligne["ligne"])
+    assert d.a_envoyer("+41790000003") == []
+    # Le journal se purge
+    j = stockage.Journal(url)
+    j.noter("tour_echec", quand=1.0)
+    j.noter("tour_echec")
+    assert j.purger(time.time() - 86400) == 1 and j.totaux(0)["tour_echec"]["nombre"] == 1

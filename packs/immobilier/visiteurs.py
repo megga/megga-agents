@@ -611,6 +611,12 @@ class Visiteurs:
         d = lire_demande(corps)
         if d is None:
             raise ValueError("demande illisible")
+        # Le site qui réessaie (délai dépassé, réseau) n'envoie pas deux fois la même demande au courtier.
+        cle = "|".join([d["email"].lower(), d["chemin"], d["recue"]])
+        vues = [x for x in await asyncio.to_thread(s.etats.lire, "_site", "demandes_vues") or [] if time.time() - x[1] < JOUR]
+        if any(x[0] == cle for x in vues):
+            return 0
+        await asyncio.to_thread(s.etats.ecrire, "_site", "demandes_vues", [*vues, [cle, time.time()]][-200:])
         _, compte = self.reseau.premier_gestionnaire()
         r = await s.gestion.appel(compte, "GET", "/resume")
         slug = slug_de_chemin(d["chemin"])

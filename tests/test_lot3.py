@@ -57,7 +57,10 @@ def test_quand():
 
 
 def test_outils_par_personne(rappels):
-    rappeler, mes_rappels, annuler = outils(rappels, FUSEAU)
+    def synchrone(f):  # les outils sont asynchrones : la base se lit hors de la boucle (relecture du 16.11.2026)
+        return lambda *a, **k: asyncio.run(f(*a, **k))
+
+    rappeler, mes_rappels, annuler = map(synchrone, outils(rappels, FUSEAU))
     reponse = rappeler(demain(), "relancer M. Exemple", run_context=ctx(MOI))
     ident = reponse.split()[1]
     assert "relancer M. Exemple" in mes_rappels(run_context=ctx(MOI))
