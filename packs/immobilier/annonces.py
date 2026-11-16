@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 import secrets
+import time
 import unicodedata
 from dataclasses import dataclass
 
@@ -38,6 +39,9 @@ PDF_MAX = 30_000_000
 PHOTOS_REDACTION = 6
 LISTE_MAX = 25
 RECHERCHE_MAX = 15
+# Une action préparée (suppression, mot de passe, réécriture) ou un brouillon prêt ne se confirme que dans ce délai :
+# un oui d'il y a une heure, ou une action abandonnée, ne se rejoue pas (relecture du 16.11.2026, I3).
+VALIDITE = 15 * 60
 
 CONSIGNES = """Les annonces du site (outils d'annonces) :
 - N'invente jamais un prix, une surface, une adresse ni un équipement.
@@ -188,7 +192,7 @@ def outils(s: Services) -> list:
         return await g(compte, "GET", f"/annonces/{slug}")
 
     def preparer(personne: str, rc: RunContext, action: dict) -> None:
-        s.etats.ecrire(personne, "a_confirmer", {**action, "tour": tour(rc)})
+        s.etats.ecrire(personne, "a_confirmer", {**action, "tour": tour(rc), "quand": time.time()})
 
     async def octets_media(m: dict, maximum: int = PHOTO_MAX) -> bytes:
         """Un média reçu : chez Meta, ou une photo tirée d'un PDF reçu (« pdf:<média du PDF>#<rang> »)."""
@@ -418,7 +422,7 @@ def outils(s: Services) -> list:
             champs.setdefault("adresse_en", redige.get("adresse_en") or champs["adresse"])
         champs.setdefault("adresse_en", champs["adresse"].replace("Genève", "Geneva"))
         garde.verifier(champs, s.noms_interdits)
-        s.etats.ecrire(personne, "brouillon", {"champs": champs, "tour": tour(run_context), "pret": True})
+        s.etats.ecrire(personne, "brouillon", {"champs": champs, "tour": tour(run_context), "pret": True, "quand": time.time()})
         chiffres = ", ".join(x for x in (
             f"{champs['surface']} m²" if champs.get("surface") else "", f"terrain {champs['terrain']} m²" if champs.get("terrain") else "",
             f"{champs['chambres']} chambres" if champs.get("chambres") else "", f"{champs['pieces']} pièces" if champs.get("pieces") else "") if x)
@@ -439,6 +443,10 @@ def outils(s: Services) -> list:
             raise ValueError("aucun brouillon complet : prépare-le d'abord avec preparer_annonce")
         if b.get("tour") == tour(run_context):
             raise ValueError("la personne n'a pas encore vu le brouillon : montre-le et attends son oui")
+        if time.time() - float(b.get("quand") or 0) > VALIDITE:
+            s.etats.ecrire(personne, "brouillon", {**b, "pret": False})
+            raise ValueError("le brouillon a été montré il y a plus de 15 minutes : refais preparer_annonce pour le remontrer, "
+                             "puis attends un nouveau oui")
         c = b["champs"]
         photos = await photos_des_medias(personne, c.get("medias") or [])
         pdf = pdf_du_media(personne, c["pdf"]) if c.get("pdf") else None
@@ -547,6 +555,9 @@ def outils(s: Services) -> list:
         if attente.get("tour") == tour(run_context):
             raise ValueError("la personne n'a pas encore répondu : montre ce qui va se faire et attends son oui")
         s.etats.ecrire(personne, "a_confirmer", None)
+        if time.time() - float(attente.get("quand") or 0) > VALIDITE:
+            raise ValueError("cette action a été préparée il y a plus de 15 minutes et n'est plus valable : rien n'est fait. "
+                             "Prépare-la de nouveau si la personne le veut toujours, et attends un nouveau oui")
         action = attente["action"]
         if attente.get("acces"):
             return await faire_acces(personne, compte, slug, attente["acces"])

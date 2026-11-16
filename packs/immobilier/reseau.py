@@ -555,6 +555,18 @@ class Reseau:
                 raise ValueError("ces outils sont ceux des gestionnaires")
             return personne
 
+        def dit_par_lui(personne: str, *, chiffres_de: str = "", mots_de: str = "") -> None:
+            """Ce qui change le registre vient du message du courtier lui-même : le numéro qu'il y a écrit, ou le nom du
+            partenaire qu'il y a nommé. Un texte lu ailleurs (une question de visiteur, une page, une fiche) ne suffit pas
+            (relecture du 16.11.2026, I1)."""
+            dit = s.conversations.entendu(personne) if s.conversations is not None else ""
+            if not dit:
+                return
+            if chiffres_de and chiffres(chiffres_de)[-7:] not in chiffres(dit):
+                raise ValueError("ce numéro n'est pas dans le dernier message du courtier : demande-lui de l'écrire lui-même")
+            if mots_de and not ({m for m in plat(mots_de).split() if len(m) >= 3} & set(re.findall(r"[a-z0-9]+", plat(dit)))):
+                raise ValueError("ce partenaire n'est pas nommé dans le dernier message du courtier : demande-lui lequel")
+
         def trouver(designation: str) -> tuple[dict | None, str]:
             tous = s.partenaires.lister()
             numero = numero_international(designation)
@@ -579,6 +591,7 @@ class Reseau:
             tel = numero_international(numero)
             if not tel:
                 raise ValueError("numéro illisible : il le faut en entier, avec l'indicatif (+41…)")
+            dit_par_lui(par, chiffres_de=tel)
             if self.compte_de(tel):
                 raise ValueError("ce numéro est celui d'un gestionnaire : il ne peut pas être partenaire")
             if s.bloques is not None and await asyncio.to_thread(s.bloques.bloque, tel):
@@ -622,9 +635,10 @@ class Reseau:
                 qui: son nom ou son numéro.
                 regle: partenaire (fiche sans prix et anonyme), normale (fiche avec prix et coordonnées), lignes (quelques lignes), rien (ne jamais rien lui envoyer) ou demander (demander chaque fois).
             """
-            gestionnaire(run_context)
+            moi = gestionnaire(run_context)
             if regle not in (*OPTIONS, "demander"):
                 raise ValueError("règle : partenaire, normale, lignes, rien ou demander")
+            dit_par_lui(moi, **({"chiffres_de": numero_international(qui)} if numero_international(qui) else {"mots_de": qui}))
             p, texte = await asyncio.to_thread(trouver, qui)
             if p is None:
                 return texte
