@@ -30,7 +30,8 @@ GREG = "+41790000001"
 JULIEN = "+41790000009"
 MARC = "+41790000003"
 VISITEUR = "+41790000002"
-CONF = configuration.lire("clients/four-seasons-properties.yaml")
+# Sans ses modèles Meta : chaque test règle ceux qu'il essaie (les modèles réels sont dans docs/modeles-fsp.md).
+CONF = configuration.lire("clients/four-seasons-properties.yaml").model_copy(update={"modeles_meta": {}})
 CONF_WA = configuration.Config.model_validate({**CONF.model_dump(mode="json"), "whatsapp": {"numero_id": "100000000000042"}})
 
 

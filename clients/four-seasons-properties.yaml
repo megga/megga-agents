@@ -92,3 +92,18 @@ roles:
         I'd be delighted to help you explore our property collection or connect you directly with Greg for a personal consultation.
 
         Are you looking to buy, rent or sell?
+# Les modèles Meta du socle (docs/modeles-fsp.md), sur le compte WhatsApp « FSP ».
+modeles_meta:
+  message: {nom: fsp_socle_message}
+  rappel: {nom: fsp_socle_rappel}
+  demande: {nom: fsp_socle_demande}
+  partenaire: {nom: fsp_socle_partenaire}
+  veille: {nom: fsp_socle_nouveau}
+  zone: {nom: fsp_socle_nouveau}
+  rapprochement: {nom: fsp_socle_nouveau}
+  livraison: {nom: fsp_socle_livraison}
+  reponse_visiteur: {nom: fsp_socle_reponse}
+  suivi_visiteur: {nom: fsp_socle_suivi}
+  suivi_visiteur_en: {nom: fsp_socle_suivi, langue: en}
+  ouverture: {nom: fsp_socle_ouverture}
+  ouverture_en: {nom: fsp_socle_ouverture, langue: en}

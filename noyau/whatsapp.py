@@ -30,6 +30,11 @@ def chiffres(n) -> str:
     return re.sub(r"\D", "", str(n or ""))
 
 
+def en_ligne(v) -> str:
+    """Une variable de modèle Meta : sur une ligne (Meta refuse les retours à la ligne, les tabulations et plus de quatre espaces)."""
+    return re.sub(r"\s+", " ", str(v)).strip()
+
+
 def signature_valide(corps: bytes, entete: str | None, secret: str | None) -> bool:
     """Meta signe le corps brut en HMAC-SHA256 : « X-Hub-Signature-256: sha256=<hex> »."""
     algo, _, h = str(entete or "").partition("=")
@@ -180,7 +185,7 @@ class Expediteur:
             "template": {
                 "name": nom,
                 "language": {"code": langue},
-                "components": [{"type": "body", "parameters": [{"type": "text", "text": str(v)} for v in variables]}],
+                "components": [{"type": "body", "parameters": [{"type": "text", "text": en_ligne(v)} for v in variables]}],
             },
         })
 

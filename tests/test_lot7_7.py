@@ -95,3 +95,9 @@ def test_la_notation_automatique():
     assert a({"champ": "dernier_pour_greg", "motifs": ["(?i)attique", r"\b4\b", r"\b3\b"]})
     assert not a(noter.TYPO)  # le tiret long envoyé au visiteur
     assert a({"champ": "pour_greg", "pas_motif": "15550000004"})
+
+
+def test_variables_des_modeles_sur_une_ligne():
+    from noyau.whatsapp import en_ligne
+
+    assert en_ligne("Prix en hausse.\nLe suivi s'arrête.\t  Fin") == "Prix en hausse. Le suivi s'arrête. Fin"

@@ -397,8 +397,9 @@ class Conversations:
         if self.contacts is not None and quand:
             await asyncio.to_thread(self.contacts.noter, personne, quand)
 
-    async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str) -> str:
-        """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance).
+    async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str, variable: str | None = None) -> str:
+        """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance). Hors des 24 heures, le modèle
+        Meta de cet usage reçoit `variable` (le texte lui-même, sans elle).
 
         Rend « libre » (dans les 24 heures), « modele » (par le modèle Meta de cet
         usage) ou « attente » (ni l'un ni l'autre : à remettre au prochain message).
@@ -410,7 +411,7 @@ class Conversations:
             return "libre"
         modele = self.conf.modeles_meta.get(usage)
         if modele:
-            await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(texte)[:1000]])
+            await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
             self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
             return "modele"
         # Sans modèle de cet usage : le modèle « message » annonce que quelque chose attend (le rappel part au message suivant).
@@ -532,7 +533,7 @@ class Conversations:
                 bilan["echec"] += 1
                 continue
             try:
-                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel")
+                voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel", str(r["texte"]).strip().rstrip("."))
                 await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
                 bilan[voie] += 1
             except Exception as e:

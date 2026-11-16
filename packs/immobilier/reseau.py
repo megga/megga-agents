@@ -766,7 +766,8 @@ class Reseau:
                  + "\n".join(f"- {c['pourquoi'] or souvenirs[c['id'] - 1]}" for c in choisis)
                  + f"\nJe {'leur' if len(choisis) > 1 else 'lui'} prépare un message ?")
         async with self.entre_les_tours(numero):
-            await self.ecrire(numero, [{"texte": texte}], "rapprochement", [court(a.get("titre"), 120)])
+            await self.ecrire(numero, [{"texte": texte}], "rapprochement",
+                              [f"le bien « {court(a.get('titre'), 100)} » pourrait intéresser {'des clients' if len(choisis) > 1 else 'un client'}"])
         initiatives = [i for i in await asyncio.to_thread(s.etats.lire, numero, "initiatives") or [] if time.time() - i["quand"] < 3 * JOUR]
         await asyncio.to_thread(s.etats.ecrire, numero, "initiatives", [*initiatives, {"texte": texte, "quand": time.time()}][-20:])
         return texte
