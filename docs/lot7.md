@@ -12,7 +12,7 @@ Alix FSP (dépôt `megga/fourseasonsproperties`, Worker `fourseasons-alix`) comp
 | 7.6 Comportements | règles apprises, fil, capacités, règles d'affichage, messages hors des 24 heures |
 | 7.7 Parité et bascule | les scénarios d'Alix en scénarios neutres, joués sur les deux (sur le socle par l'entrée par API), la copie des données, le numéro de test, la bascule sur accord |
 
-Décidé par Julien (16.11.2026) : Claude à la place de Gemini pour rédiger les annonces et regarder les photos (l'humeur d'un vocal, qui demandait Gemini, n'est pas reprise) ; ElevenLabs seul pour écouter et parler (ni Whisper ni Telnyx).
+Décidé par Julien (16.11.2026) : Claude à la place de Gemini pour rédiger les annonces et regarder les photos (l'humeur d'un vocal, qui demandait Gemini, n'est pas reprise) ; ElevenLabs seul pour écouter et parler (ni Whisper ni Telnyx) ; la recherche sur les portails reste chez DeepSeek (7.5).
 
 ## 7.1 Les fondations
 
@@ -90,7 +90,7 @@ Un groupe d'outils de plus, `marche`, pour les gestionnaires seulement (`packs/i
 
 **Four Seasons** : ses cinq régions (Suisse par défaut, prestige international, Espagne pour Marbella, France voisine, Dubaï) et leurs portails dans `clients/four-seasons-properties.yaml`, le groupe `marche` pour ses gestionnaires.
 
-**Choix à valider** : la recherche reste chez DeepSeek, comme dans Alix (0,75 $ les 1 000 recherches). L'autre voie serait l'outil de recherche web de Claude, plus cher ; la décision du 16.11.2026 ne visait que Gemini.
+**Décidé par Julien (16.11.2026)** : la recherche sur les portails reste chez DeepSeek, comme dans Alix (0,75 $ les 1 000 recherches), plutôt que la recherche web de Claude.
 
 ## Ce qui reste après le 7.4
 
