@@ -124,6 +124,7 @@ Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{i
 **Les leads** (groupe d'outils `leads`). L'outil `enregistrer_lead(besoin, score, budget, delai, lieu, nom)` et sa consigne : dès qu'une personne a un vrai besoin, l'agent en fait une fiche, notée de 1 (curieux) à 5 (prêt à décider).
 - Gardée dans la base du client (`megga_leads`), avec la personne (son numéro, ou l'identifiant de son logiciel).
 - Envoyée en arrière-plan au webhook https du client (`Config.leads.webhook`, qu'il règle lui-même : son CRM, un tableur, Zapier), en JSON `{client, agent, lead: {id, besoin, score, budget, delai, lieu, nom, contact, quand}}`, signée par le secret `LEADS_SECRET` s'il est posé (`x-megga-signature: sha256=<HMAC-SHA256 du corps>`). Retentée une fois ; l'issue (`garde`, `envoye`, `echec` et la raison) se lit dans la console.
+- Complétée par la même personne dans les 30 minutes, la fiche repart au webhook sous le même `id` (lot 10, `docs/lot10.md`) : le logiciel met à jour la fiche de cet `id` plutôt que d'en créer une autre.
 
 **Les connecteurs** (groupe d'outils `connecteurs`). Les serveurs MCP du client (`Config.mcp`, réglage de MEGGA) : `{nom, url (https), outils, jeton}`.
 - `outils` : ceux qu'on propose à l'agent (vide : tous, à éviter) ; ils sont préfixés du nom du serveur (`crm_creer_contact`).
