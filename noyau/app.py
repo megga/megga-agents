@@ -32,6 +32,7 @@ Routes :
   POST /api/messages  un logiciel parle à l'agent (clé du logiciel, noyau/api.py et docs/api.md)
   POST /site/bien      le site signale un bien entré en ligne {reference} : rapprochement et réseau (clé SITE_CLE)
   POST /site/demande   une demande d'information laissée sur une fiche du site (clé SITE_CLE)
+  GET  /site/journal   qui a écrit à l'agent, pour la page « Alix » de la gestion ([?jours=], clé SITE_CLE)
   GET  /interne/cles             les clés des logiciels, sans empreinte (jeton INTERNE_TOKEN)
   POST /interne/cles             {id, logiciel, empreinte, par_minute} une clé créée par l'atelier
   DELETE /interne/cles/{id}      retire une clé
@@ -551,6 +552,21 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         except GestionErreur:
             return erreur(502, "gestion du site injoignable")
         return JSONResponse({"transmise": n}, status_code=202)
+
+    @app.get("/site/journal")
+    async def site_journal(requete: Request, jours: int = 1):
+        """Le journal des conversations, pour la page « Alix » de la gestion du site (16.11.2026) : qui a écrit, son nom
+        WhatsApp, son numéro, ce qu'il a écrit. La clé du site, comme /site/bien ; rien n'est écrit."""
+        if relations is None or len(cle_site) < 32:
+            return erreur(404, "introuvable")
+        jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(jeton.encode(), cle_site.encode()):
+            return erreur(401, "clé refusée")
+        # Ni nom ni numéro dans l'adresse : elle finit dans les journaux de Cloudflare (relecture du 16.11.2026).
+        j = await relations.visiteurs.journal(jours, maximum=200)
+        if j is None:
+            return erreur(503, "journal hors service")
+        return JSONResponse(j, headers={"cache-control": "no-store"})
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")

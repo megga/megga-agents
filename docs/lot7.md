@@ -37,13 +37,14 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 `packs/immobilier/annonces.py` : 32 outils, pour le rôle qui a le groupe `annonces` (les gestionnaires), tous au nom du compte de la personne dans la gestion du site. Ce qu'un outil garde d'un tour à l'autre (le brouillon, l'action à confirmer) est dans la base du client (`megga_etats`), pas en mémoire : un conteneur endormi ne perd rien.
 - **Lire** : `lister_annonces`, `voir_annonce`, `chercher_biens` (budget, chambres, surface, communes, type, équipements, mots).
 - **Créer** : `preparer_annonce` rassemble les faits (ce qui est déjà dit est gardé), fait rédiger les textes par Claude d'après les mots du courtier et ses photos (`redaction.py`), et montre le brouillon ; `creer_annonce` ne le crée qu'au message suivant, puis range les photos et la plaquette PDF.
-- **Modifier** : `modifier_annonce`, `reecrire_annonce` (à confirmer) ; `masquer_annonce`, `supprimer_annonce`, toujours à confirmer : `confirmer_action` refuse dans le tour même qui a préparé, et au-delà de 15 minutes (une action abandonnée ne se rejoue pas ; de même un brouillon prêt et un envoi à un contact).
+- **Modifier** : `modifier_annonce` et `reecrire_annonce`, à confirmer (l'outil dit ce qui va changer, prix compris) ; `masquer_annonce`, `supprimer_annonce`, toujours à confirmer : `confirmer_action` refuse dans le tour même qui a préparé, et au-delà de 15 minutes (une action abandonnée ne se rejoue pas ; de même un brouillon prêt et un envoi à un contact).
 - **Garde-fous** (`garde.py`) : ni tiret long ni point médian ; jamais un nom de `gestion.noms_interdits` ni une consigne (« PDF », « brouillon ») dans un texte ; un titre ni trop court ni une liste de mots.
 - **Photos et documents** : `ajouter_photos`, `couverture_photo`, `ordonner_photos`, `retirer_photos`, `ajouter_document`, d'après les médias reçus (« média 3 ») et les numéros de `voir_annonce`.
 - **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
-- **Vidéos** : `ajouter_video` (par lien), `envoyer_video`, `retirer_video`.
+- **Vidéos** : `ajouter_video` (par lien) et `retirer_video`, à confirmer ; `envoyer_video`.
+- **À confirmer aussi** (décidé par Julien, 16.11.2026) : `retirer_photos`, et `supprimer_recherche_client` (`confirmer_action` avec « recherche-<id> », le nom du client montré). Une seule action attend à la fois : une autre préparée dans le même tour est refusée. Le oui part avec la version de l'annonce que le courtier a vue : si elle a changé entre-temps, rien n'est écrasé. Restent d'un seul appel, parce qu'ils ajoutent sans rien retirer ni changer de texte public : ranger des photos ou un document reçus, changer la couverture ou l'ordre des photos, une recherche de client, le propriétaire et le partage d'un bien privé.
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
-- **Clients** : `recherche_client`, `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
+- **Clients** : `recherche_client` (critères : transaction, communes, types dont immeuble, budget, chambres, surface, salles de bains, terrain, piscine, vue, mitoyen ; appel du 16.11.2026), `lister_recherches_clients`, `biens_pour_recherche`, `supprimer_recherche_client`, `lire_bien_prive`, `proprietaire_bien`, `partage_bien`.
 
 Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo dans un stockage que seul le site atteint ; par lien en attendant). L'envoi à un contact est venu au 7.4.
 
@@ -53,7 +54,16 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 
 **Les outils** :
 - `fiche_pdf` : la fiche d'une annonce du site (par son identifiant ou sa référence) ou d'un bien qui n'y est pas (ses photos reçues et ce qu'en dit le courtier, les textes rédigés au besoin) ; anonyme par défaut (ni contact, ni référence, ni ligne qui nomme la marque), de marque sur demande, sans prix pour un partenaire (aucun montant nulle part, « 4.5 M CHF » et « 4’500’000 » compris, et l'adresse réduite à la commune), en français ou en anglais ; Claude choisit la couverture et les plus belles photos (`redaction.Choisisseuse`, à la place de Gemini), sauf s'il faut garder l'ordre. Le PDF part dans la conversation.
+- `lire_pdf` : le texte d'une plaquette PDF reçue, lu par Claude (texte, pages scannées) : la description entière puis les faits ; l'agent s'en sert avant de rien redemander (appel du 16.11.2026 : il ne voyait que « PDF reçu »).
 - `photos_du_pdf` : les photos d'une plaquette PDF reçue (ni petites, ni allongées, ni grises, ni en double ; en JPEG tel quel ou en PNG refait), qui deviennent des médias comme des photos reçues (`pdf:<média du PDF>#<rang>`), reprises du PDF quand un outil s'en sert.
+
+## Le rapprochement des recherches clients (16.11.2026)
+
+`packs/immobilier/recherches.py` : à 8 h et 18 h (heure de l'agence), une échéance relit les recherches de la gestion (`GET /clients`) ; les biens nouveaux depuis le passage précédent sont signalés au courtier de la recherche, en un message (usage `rapprochement`, modèle `fsp_agent_suivi_maj` hors des 24 heures). Une recherche jamais vue ne prévient pas ; celles d'un autre courtier non plus.
+
+## Le journal des conversations (16.11.2026)
+
+Le courtier demande « avec qui as-tu parlé aujourd'hui ? » : l'outil `activite` (groupe visiteurs) liste les personnes qui ont écrit (la table `megga_contacts`, qui garde désormais leur nom WhatsApp, colonne `nom` ajoutée d'elle-même), avec leur numéro, leur rôle et ce qu'elles ont écrit (le fil, `megga_fil`) ; `qui` donne le détail d'une personne. Ni les gestionnaires, ni les logiciels par API. La page « Alix » de la gestion reste à faire : elle lira la même chose par une route du socle.
 
 ## 7.4 Les partenaires et les visiteurs
 

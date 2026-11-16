@@ -83,7 +83,7 @@ def capacites(conf, role) -> str:
     if "annonces" in g:
         themes.append("Les annonces du site : créer une annonce écrite ou dictée, avec ses photos, textes rédigés en français et en anglais"
                       + (", ou par le formulaire WhatsApp « Nouvelle annonce »" if conf.gestion and conf.gestion.formulaire_annonce else "")
-                      + " ; modifier, masquer, supprimer ; photos, vidéos, documents ; la fiche PDF, à ses couleurs ou anonyme et sans prix ; "
+                      + " ; modifier, masquer, supprimer ; photos, vidéos, documents ; lire une plaquette PDF reçue (sa description entière, ses chiffres, ses photos) ; la fiche PDF, à ses couleurs ou anonyme et sans prix ; "
                       "un message prêt à transférer à un client ; les mots de passe des biens, toujours après un oui.")
         themes.append("Trouver : les biens de l'agence qui correspondent à un client ; les recherches des clients gardées dans la gestion.")
     if "marche" in g:
@@ -96,7 +96,7 @@ def capacites(conf, role) -> str:
                       + ("." if whatsapp and "partenaire" in roles else " (ils pourront écrire quand le numéro WhatsApp de l'agence sera en service)."))
     if "visiteurs" in g:
         themes.append("Les personnes qui écrivent (clients, propriétaires, agents) : je les accueille, je t'envoie leur fiche et mes questions, "
-                      "je leur relaie tes réponses ; envoyer une annonce ou un message à un contact, après ton oui ; bloquer ou débloquer un numéro"
+                      "je leur relaie tes réponses ; te dire qui m'a écrit, avec son nom et son numéro ; envoyer une annonce ou un message à un contact, après ton oui ; bloquer ou débloquer un numéro"
                       + ("." if "visiteur" in roles else " (les visiteurs ne sont pas encore servis)."))
     themes.append("Retenir et organiser : les clients, leurs critères, les affaires en cours" + (", la suite d'une conversation même reprise des jours après" if conf.fil else "")
                   + (" ; tes façons de travailler, apprises quand tu me corriges, que tu peux lister ou retirer ; le point quand tu le demandes" if "travail" in g else "")

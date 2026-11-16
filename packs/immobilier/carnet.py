@@ -18,7 +18,7 @@ import unicodedata
 from zoneinfo import ZoneInfo
 
 NATURES = ("vente", "avis", "annonce")
-FAMILLES = ("maison", "appartement", "terrain", "autre")
+FAMILLES = ("maison", "appartement", "immeuble", "terrain", "autre")
 DEVISES = ("CHF", "EUR", "AED")
 BORNES = {"CHF": (1000, 150000), "EUR": (1000, 150000), "AED": (2000, 200000)}  # prix au m² plausibles
 POUR_CONCLURE = 5  # en deçà, trop peu pour une médiane
@@ -27,6 +27,7 @@ VARIATION = 0.05  # un suivi de zone ne prévient qu'au-delà
 CATEGORIES = {
     "maison": ("villa", "maison", "maison individuelle", "maison de ville", "chateau", "propriete", "propriete de campagne"),
     "appartement": ("appartement", "appartement terrasse", "duplex", "studio", "attique", "duplex en attique", "penthouse", "loft"),
+    "immeuble": ("immeuble", "immeuble de rapport", "immeuble locatif"),
     "terrain": ("terrain",),
 }
 NOMS = {"vente": "vente réalisée", "avis": "avis du courtier", "annonce": "prix demandé d'une annonce"}

@@ -30,7 +30,7 @@ function liaison(journal, reponse = () => Response.json({ reponse: "Bonjour !" }
     jurisdiction: (j) => ({
       getByName: (nom) => ({
         fetch: async (r) => {
-          journal.push({ j, nom, chemin: new URL(r.url).pathname, auth: r.headers.get("authorization"), corps: await r.text() });
+          journal.push({ j, nom, chemin: new URL(r.url).pathname + new URL(r.url).search, auth: r.headers.get("authorization"), corps: await r.text() });
           return reponse(r);
         },
         cles: async (methode, chemin, corps) => {
@@ -259,5 +259,27 @@ test("le site d'un client : transmis tel quel, refusé sans réveiller le conten
   // Sur l'hôte de l'API, rien d'autre que /api/…
   const hote = await recevoir(new Request("https://api.megga.ai/site/cabinet/bien", { method: "POST", body: "{}", headers: { authorization: `Bearer ${CLE_SITE}`, "content-length": "2" } }), e);
   assert.equal(hote.status, 404);
+  assert.deepEqual(journal, []);
+});
+
+test("le journal des conversations, pour la gestion du site : lu, jamais gardé", async () => {
+  const journal = [];
+  const e = await env(journal, () => Response.json({ total: 1, personnes: [] }));
+  const lire = (chemin, cle = CLE_SITE, methode = "GET") =>
+    recevoir(new Request(`https://porte${chemin}`, { method: methode, headers: { authorization: `Bearer ${cle}` } }), e);
+  const r = await lire("/site/cabinet/journal?jours=7&qui=Marion"); // qui : jamais transmis
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await r.json(), { total: 1, personnes: [] });
+  assert.equal(journal.length, 1);
+  assert.equal(journal[0].chemin, "/site/journal?jours=7");
+  assert.equal(journal[0].auth, `Bearer ${CLE_SITE}`);
+  journal.length = 0;
+  assert.equal((await lire("/site/cabinet/journal?jours=abc")).status, 200);
+  assert.equal(journal[0].chemin, "/site/journal?jours=1");
+  journal.length = 0;
+  assert.equal((await lire("/site/cabinet/journal", "court")).status, 401);
+  assert.equal((await lire("/site/cabinet/journal", CLE_SITE, "POST")).status, 405);
+  assert.equal((await lire("/site/inconnu/journal")).status, 404);
   assert.deepEqual(journal, []);
 });

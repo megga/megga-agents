@@ -416,7 +416,7 @@ class Marche:
             Args:
                 lieu: la commune (ou la ville).
                 quartier: le quartier, s'il est dit.
-                type: maison, appartement, terrain ou autre ; vide pour tous.
+                type: maison, appartement, immeuble, terrain ou autre ; vide pour tous.
             """
             _, compte = gestionnaire(run_context)
             releves = await asyncio.to_thread(s.carnet.releves)

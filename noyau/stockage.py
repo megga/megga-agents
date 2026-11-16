@@ -300,7 +300,9 @@ def importer(fichier: str | Path, url: str) -> int:
 class Contacts:
     """Nos propres tables, à côté de celles d'Agno (même schéma, préfixe megga_) :
     pour chaque personne, l'heure de son dernier message, qui ouvre la fenêtre de
-    24 heures de WhatsApp. Elle doit survivre au sommeil du conteneur.
+    24 heures de WhatsApp. Elle doit survivre au sommeil du conteneur. Et le nom
+    qu'elle s'est donné sur WhatsApp, pour le journal des conversations (le
+    courtier veut savoir qui a écrit, 16.11.2026).
     """
 
     def __init__(self, url: str):
@@ -309,15 +311,29 @@ class Contacts:
             "megga_contacts",
             Column("personne", String(PERSONNE), primary_key=True),
             Column("dernier_entrant", Float, nullable=False),
+            Column("nom", String(80), nullable=True),
         )
 
-    def noter(self, personne: str, quand: float) -> None:
-        """Retient le message le plus récent de la personne."""
+    def noter(self, personne: str, quand: float, nom: str = "") -> None:
+        """Retient le message le plus récent de la personne, et son nom WhatsApp s'il est donné."""
+        nom = " ".join(str(nom or "").split())[:80]
         with self._e.begin() as c:
             t = self._t
-            r = c.execute(update(t).where(t.c.personne == personne, t.c.dernier_entrant < quand).values(dernier_entrant=quand))
-            if r.rowcount == 0 and c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is None:
-                c.execute(insert(t).values(personne=personne, dernier_entrant=quand))
+            r = c.execute(update(t).where(t.c.personne == personne, t.c.dernier_entrant < quand)
+                          .values(dernier_entrant=quand, **({"nom": nom} if nom else {})))
+            if r.rowcount == 0:
+                if c.execute(select(t.c.personne).where(t.c.personne == personne)).first() is None:
+                    c.execute(insert(t).values(personne=personne, dernier_entrant=quand, nom=nom or None))
+                elif nom:
+                    c.execute(update(t).where(t.c.personne == personne).values(nom=nom))
+
+    def depuis(self, quand: float, limite: int = 200) -> list[dict]:
+        """Les personnes qui ont écrit depuis `quand`, la plus récente d'abord : {personne, dernier_entrant, nom}."""
+        t = self._t
+        with self._e.connect() as c:
+            lignes = c.execute(select(t.c.personne, t.c.dernier_entrant, t.c.nom).where(t.c.dernier_entrant >= quand)
+                               .order_by(t.c.dernier_entrant.desc()).limit(limite))
+            return [dict(l._mapping) for l in lignes]
 
     def dernier(self, personne: str) -> float | None:
         with self._e.connect() as c:
