@@ -259,7 +259,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         from .reprises import Transfert
 
         transfert = Transfert(stockage.Reprises(env["DATABASE_URL"]), fil, approbations.equipe(personnes.gestionnaires),
-                              conf.nom_agent)
+                              conf.nom_agent, conf.langue)
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
@@ -356,6 +356,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if transfert is not None:  # l'équipe répond par les conversations ; un tour s'arrête si elle a la main
         transfert.conversations = conversations
         conversations.reprise = transfert.garde
+        conversations.echeances.append(transfert.echeance)  # les conversations oubliées, à l'heure dite
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")

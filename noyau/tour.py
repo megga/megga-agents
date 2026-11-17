@@ -561,7 +561,7 @@ class Conversations:
                 rates = []
                 for m in ligne["messages"]:
                     try:
-                        await self._envoyer_messages(personne, [m], "differe")
+                        await self._envoyer_messages(personne, [m], m.get("usage") or "differe")  # « reprise » : noyau/reprises.py
                         livres["n"] += 1
                     except Exception as e:
                         # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.

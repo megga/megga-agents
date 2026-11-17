@@ -1315,13 +1315,14 @@ class Connaissances:
 
 REPRISE_OUVERTE_S = 24 * 3600  # une conversation transmise que personne ne prend revient à l'agent
 REPRISE_PRISE_S = 72 * 3600  # une conversation prise, sans message de l'équipe depuis, aussi
+RELIRE_S = 24 * 3600  # l'agent relit ce que l'équipe a dit pendant le jour qui suit la fin
 
 
 class Reprises:
     """Les conversations confiées à l'équipe (table megga_reprises, noyau/reprises.py) : ouverte (personne ne l'a prise),
     prise (par un gestionnaire, ou « console »), puis rendue à l'agent, ou expiree. Une seule en cours par personne.
-    `prevenue` : la personne a reçu, une fois, « un membre de l'équipe vous répond » ; `relue` : l'agent a lu, au tour
-    qui suit la fin, ce que l'équipe a dit."""
+    `prevenue` : la personne a reçu, une fois, « un membre de l'équipe vous répond » (1), puis, à l'expiration, le mot
+    d'excuse (2) ; `relue` : l'agent a lu, au tour qui suit la fin, pourquoi elle lui revient."""
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1341,11 +1342,30 @@ class Reprises:
             Column("relue", Integer, nullable=False, default=0),
         )
 
-    def _expirer(self, c, maintenant: float) -> None:
+    def _oubliees(self, maintenant: float):
         t = self._t
-        c.execute(update(t).where(or_(and_(t.c.etat == "ouverte", t.c.cree < maintenant - REPRISE_OUVERTE_S),
-                                      and_(t.c.etat == "prise", t.c.dernier < maintenant - REPRISE_PRISE_S)))
-                  .values(etat="expiree", fin=maintenant))
+        return or_(and_(t.c.etat == "ouverte", t.c.cree < maintenant - REPRISE_OUVERTE_S),
+                   and_(t.c.etat == "prise", t.c.dernier < maintenant - REPRISE_PRISE_S))
+
+    def _expirer(self, c, maintenant: float) -> None:
+        c.execute(update(self._t).where(self._oubliees(maintenant)).values(etat="expiree", fin=maintenant))
+
+    def expirer(self, maintenant: float) -> list[dict]:
+        """À l'échéance : les conversations oubliées, rendues à l'agent (« expiree ») ; la personne reçoit le mot d'excuse."""
+        t = self._t
+        with self._e.begin() as c:
+            ids = [l.id for l in c.execute(select(t.c.id).where(self._oubliees(maintenant)))]
+            if ids:
+                c.execute(update(t).where(t.c.id.in_(ids)).values(etat="expiree", fin=maintenant, prevenue=2))
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.id.in_(ids)))] if ids else []
+
+    def prochaine(self) -> float | None:
+        """L'heure de la prochaine expiration, ou None."""
+        t = self._t
+        with self._e.connect() as c:
+            ouverte = c.execute(select(func.min(t.c.cree)).where(t.c.etat == "ouverte")).scalar()
+            prise = c.execute(select(func.min(t.c.dernier)).where(t.c.etat == "prise")).scalar()
+        return min([h for h in (ouverte and ouverte + REPRISE_OUVERTE_S, prise and prise + REPRISE_PRISE_S) if h], default=None)
 
     def ouvrir(self, personne: str, role: str, motif: str, resume: str) -> tuple[int, bool]:
         """(identifiant, nouvelle) : celle déjà en cours pour cette personne, sinon une nouvelle."""
@@ -1390,14 +1410,18 @@ class Reprises:
             l = c.execute(select(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")))).first()
             if l is None:
                 return None
-            c.execute(update(t).where(t.c.id == l.id).values(etat="prise", par=l.par or str(par)[:PERSONNE], dernier=maintenant))
+            if not c.execute(update(t).where(t.c.id == l.id, t.c.etat.in_(("ouverte", "prise")))
+                             .values(etat="prise", par=l.par or str(par)[:PERSONNE], dernier=maintenant)).rowcount:
+                return None
             return dict(c.execute(select(t).where(t.c.id == l.id)).first()._mapping)
 
-    def rendre(self, ident: int) -> dict | None:
-        """Rendue à l'agent si elle était en cours ; None sinon."""
+    def rendre(self, ident: int, par: str | None = None) -> dict | None:
+        """Rendue à l'agent si elle était en cours ; None sinon. Avec `par`, une conversation prise ne se rend que par
+        celui qui l'a prise."""
         t, maintenant = self._t, time.time()
+        qui = or_(t.c.etat == "ouverte", t.c.par == par) if par is not None else t.c.id == int(ident)
         with self._e.begin() as c:
-            if not c.execute(update(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")))
+            if not c.execute(update(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")), qui)
                              .values(etat="rendue", fin=maintenant)).rowcount:
                 return None
             return dict(c.execute(select(t).where(t.c.id == int(ident))).first()._mapping)
@@ -1407,16 +1431,17 @@ class Reprises:
         with self._e.begin() as c:
             return c.execute(update(self._t).where(self._t.c.id == int(ident), self._t.c.prevenue == 0).values(prevenue=1)).rowcount > 0
 
-    def a_relire(self, personne: str) -> list[dict]:
-        """Les reprises finies de cette personne que l'agent n'a pas encore lues ; marquées lues."""
-        t = self._t
+    def a_relire(self, personne: str) -> dict | None:
+        """La dernière reprise de cette personne finie depuis moins d'un jour (RELIRE_S), telle qu'avant d'être lue
+        (`relue`) ; marquée lue."""
+        t, maintenant = self._t, time.time()
         with self._e.begin() as c:
-            self._expirer(c, time.time())
-            lignes = [dict(l._mapping) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relue == 0,
-                                                                         t.c.etat.in_(("rendue", "expiree"))).order_by(t.c.id))]
-            if lignes:
-                c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relue=1))
-        return lignes
+            self._expirer(c, maintenant)
+            l = c.execute(select(t).where(t.c.personne == personne, t.c.etat.in_(("rendue", "expiree")),
+                                          t.c.fin >= maintenant - RELIRE_S).order_by(t.c.id.desc())).first()
+            if l is not None and not l.relue:
+                c.execute(update(t).where(t.c.id == l.id).values(relue=1))
+        return dict(l._mapping) if l else None
 
     def lister(self, etat: str | None = None, limite: int = 100) -> list[dict]:
         t = self._t
