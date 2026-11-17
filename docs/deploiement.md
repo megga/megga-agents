@@ -122,7 +122,7 @@ cd porte && npx wrangler deploy --tag "$(git rev-parse --short=12 HEAD)"
 
 ### Après un déploiement chez Cloudflare
 
-Un conteneur déjà allumé garde l'ancienne image jusqu'à son sommeil (15 minutes sans message), et les applications de conteneurs se provisionnent quelques minutes après un `wrangler deploy` (un conteneur qui démarre pendant ce temps répond « aucune instance disponible »). Une fois le déploiement fini :
+Un conteneur déjà allumé garde l'ancienne image jusqu'à son redémarrage (il ne dort plus : la veille le garde éveillé), et les applications de conteneurs se provisionnent quelques minutes après un `wrangler deploy` (un conteneur qui démarre pendant ce temps répond « aucune instance disponible »). Une fois le déploiement fini :
 
 ```bash
 scripts/apres_deploiement.sh https://megga-agents.api-963.workers.dev

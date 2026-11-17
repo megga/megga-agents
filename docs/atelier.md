@@ -82,7 +82,7 @@ Un client peut n'avoir que cette entrée : sa configuration n'a alors pas de `wh
 
 ## Le suivi
 
-Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client, qui lit sa propre base. Un conteneur réveillé seulement pour être lu se rendort au bout de 2 minutes (15 après un vrai message) ; la porte garde une lecture récente en mémoire, jamais rangée (5 minutes pour l'activité et les alertes, 1 minute pour les conversations).
+Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l'atelier demande à la porte, qui demande au conteneur du client, qui lit sa propre base. Un conteneur ne dort plus (17.11.2026) : l'alarme de la porte passe toutes les 4 minutes, le relance s'il s'est arrêté et repousse son sommeil ; la porte garde une lecture récente en mémoire, jamais rangée (5 minutes pour l'activité et les alertes, 1 minute pour les conversations).
 
 | Route | Rôle | Effet |
 |---|---|---|

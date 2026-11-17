@@ -56,7 +56,7 @@ Tarifs Cloudflare lus le 15.11.2026, hors modèles, voix et Meta, qui resteront 
 | Le même, allumé jour et nuit | environ 7,5 $ |
 | Conteneur « standard-1 » (1/2 vCPU, 4 Gio), jour et nuit | environ 27 $ |
 
-Plus 5 $ par mois pour le compte (Workers Paid). Un conteneur endormi ne coûte rien ; il se rendort après 15 minutes sans message et se réveille en 1 à 3 secondes. La mémoire nécessaire à Agno n'est pas documentée : à mesurer au lot 1 avant de choisir la taille.
+Plus 5 $ par mois pour le compte (Workers Paid). Un conteneur ne dort plus depuis le 17.11.2026 : son réveil prenait une à deux minutes (un vocal de Julien attendu 2 minutes), il reste éveillé, environ 7 $ par mois et par client (mémoire et disque d'une instance « basic »). La mémoire nécessaire à Agno n'est pas documentée : à mesurer au lot 1 avant de choisir la taille.
 
 ## Le branchement WhatsApp
 

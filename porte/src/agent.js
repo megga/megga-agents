@@ -16,11 +16,9 @@ const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes
 const VERIFICATION_MS = 90 * 1000;
 // Avant un redémarrage, le conteneur a ce temps pour finir les tours en cours.
 const VIDER_MS = 120 * 1000;
-// Le suivi : une lecture récente est rendue telle quelle (en mémoire seulement, jamais rangée),
-// et un conteneur réveillé seulement pour être lu se rendort vite.
+// Le suivi : une lecture récente est rendue telle quelle (en mémoire seulement, jamais rangée).
 const CACHE_SUIVI_MS = 5 * 60 * 1000;
 const CACHE_CONVERSATIONS_MS = 60 * 1000;
-const SOMMEIL_SUIVI_MS = 2 * 60 * 1000;
 const ALERTES_MAX = 10;
 // Une alarme en échec (base ou conteneur indisponible) se repose elle-même, de plus en plus tard, sans jamais
 // s'arrêter : Cloudflare ne la retente que six fois, puis l'oublie (relecture du 16.11.2026, I8).
@@ -29,7 +27,15 @@ const REESSAIS_ALARME_MS = [60_000, 120_000, 300_000, 600_000, 900_000];
 // pas plus vieux qu'un jour : Meta ne le renvoie pas, la porte lui a déjà répondu (I9).
 const GARDES_MAX = 200;
 const GARDE_MS = 24 * 3600 * 1000;
-const REJOUER_MS = 60_000;
+const REJOUER_MS = 5_000;
+// Un client ne dort jamais (Julien, 17.11.2026 : un vocal attendait 2 minutes, le conteneur réveillé à froid ; l'ancien
+// Worker d'Alix ne dormait pas). L'alarme passe toutes les 4 minutes : elle relance le conteneur s'il s'est arrêté
+// (déploiement, panne, Cloudflare qui le déplace) et repousse son sommeil de 15 minutes. Environ 7 dollars par mois
+// et par client (mémoire et disque d'une instance « basic » ; le processeur ne compte que quand il travaille).
+const VEILLE_MS = 4 * 60 * 1000;
+// Le temps laissé au conteneur pour démarrer à froid : il en met une à deux minutes (alertes du 17.11.2026). La
+// porte abandonnait après une vingtaine de secondes, et le message attendait une minute de plus pour être rejoué.
+const DEMARRAGE_MS = 180 * 1000;
 
 /** Le jeton des routes internes d'un client : HMAC du jeton d'administration et de son nom. */
 export async function jetonInterne(admin, nom) {
@@ -161,7 +167,7 @@ class Conteneur extends DurableObject {
     await c.setInactivityTimeout(INACTIVITE_MS);
     const port = c.getTcpPort(PORT);
     let derniere;
-    for (let i = 0; i < 100; i++) {
+    for (const fin = Date.now() + DEMARRAGE_MS; Date.now() < fin; ) {
       try {
         const r = await port.fetch("http://container/sante", { signal: AbortSignal.timeout(1000) });
         await r.body?.cancel();
@@ -194,6 +200,14 @@ class AgentClient extends Conteneur {
     if (new URL(requete.url).pathname !== "/whatsapp" || requete.method !== "POST") return super.fetch(requete);
     const corps = await requete.text();
     const signature = requete.headers.get("x-hub-signature-256") ?? "";
+    await this.veiller();
+    if (!this.ctx.container?.running) {
+      // Endormi ou arrêté : le réveil prend une à deux minutes, plus que ce que la porte peut attendre. Le message est
+      // gardé, et l'alarme, tout de suite, réveille le conteneur et le lui rejoue dès qu'il répond.
+      this.activite = Date.now();
+      await this.garderWebhook(corps, signature, Date.now());
+      return new Response("gardé", { status: 202 });
+    }
     try {
       return await super.fetch(new Request(requete.url, { method: "POST", body: corps, headers: requete.headers }));
     } catch (e) {
@@ -202,11 +216,10 @@ class AgentClient extends Conteneur {
     }
   }
 
-  async garderWebhook(corps, signature) {
+  async garderWebhook(corps, signature, t = Date.now() + REJOUER_MS) {
     const gardes = (await this.ctx.storage.get("webhooks").catch(() => null)) ?? [];
     gardes.push({ quand: Date.now(), corps, signature });
     await this.ctx.storage.put("webhooks", gardes.slice(-GARDES_MAX));
-    const t = Date.now() + REJOUER_MS;
     const a = await this.ctx.storage.getAlarm();
     if (!a || a > t) await this.ctx.storage.setAlarm(t);
   }
@@ -239,6 +252,12 @@ class AgentClient extends Conteneur {
     if (chemin === "/whatsapp") await this.verifierBientot();
   }
 
+  /** La veille : une alarme est toujours posée, au plus tard dans 4 minutes (VEILLE_MS). */
+  async veiller(maintenant = Date.now()) {
+    const a = await this.ctx.storage.getAlarm();
+    if (!a || a > maintenant + VEILLE_MS) await this.ctx.storage.setAlarm(maintenant + VEILLE_MS);
+  }
+
   /** Une vérification des rappels sous peu, sauf si une alarme plus proche est déjà posée. */
   async verifierBientot(maintenant = Date.now()) {
     const t = maintenant + VERIFICATION_MS;
@@ -266,8 +285,6 @@ class AgentClient extends Conteneur {
     this.cacheSuivi ??= new Map();
     const garde = this.cacheSuivi.get(cle);
     if (garde && Date.now() - garde.quand < duree) return { statut: 200, donnees: garde.donnees };
-    const debut = Date.now();
-    const dormait = !this.ctx.container?.running;
     try {
       await this.pret();
     } catch (e) {
@@ -289,15 +306,13 @@ class AgentClient extends Conteneur {
       for (const [k, v] of this.cacheSuivi) if (Date.now() - v.quand >= CACHE_SUIVI_MS) this.cacheSuivi.delete(k);
       this.cacheSuivi.set(cle, { quand: Date.now(), donnees });
     }
-    // Réveillé seulement pour être lu : il se rendort vite, sauf si une vraie requête est arrivée entre-temps.
-    if (dormait && !((this.activite ?? 0) >= debut)) await this.ctx.container.setInactivityTimeout(SOMMEIL_SUIVI_MS).catch(() => {});
+    await this.veiller().catch(() => {});
     return { statut: r.status, donnees };
   }
 
   /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
   async cles(methode, chemin = "", corps = null) {
     if (!/^(\/[0-9a-f]{12})?$/.test(chemin)) throw new Error("chemin de clé");
-    const dormait = !this.ctx.container?.running;
     try {
       await this.pret();
     } catch (e) {
@@ -318,7 +333,7 @@ class AgentClient extends Conteneur {
     } catch {
       donnees = { erreur: texte.slice(0, 200) };
     }
-    if (dormait) await this.ctx.container.setInactivityTimeout(SOMMEIL_SUIVI_MS).catch(() => {});
+    await this.veiller().catch(() => {});
     return { statut: r.status, donnees };
   }
 
@@ -370,7 +385,9 @@ class AgentClient extends Conteneur {
     });
     if (!r.ok) throw new Error(`rappels ${r.status}`); // l'alarme est retentée par la plateforme
     const { prochain } = await r.json();
-    if (prochain) await this.ctx.storage.setAlarm(Math.max(Math.round(prochain * 1000), Date.now() + 5000));
+    // Le prochain rappel, ou la veille si elle vient avant : le conteneur ne s'endort pas entre les deux.
+    const veille = Date.now() + VEILLE_MS;
+    await this.ctx.storage.setAlarm(prochain ? Math.min(Math.max(Math.round(prochain * 1000), Date.now() + 5000), veille) : veille);
     if (rejeu) throw rejeu;
   }
 

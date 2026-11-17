@@ -64,13 +64,38 @@ test("à l'alarme : rappels envoyés avec le jeton, puis le prochain est program
   const appel = journal.find((j) => j[0] === "conteneur");
   assert.equal(appel[1], "/interne/rappels");
   assert.equal(appel[2], await jetonInterne("admin", "essai"));
-  assert.equal(alarme(), Math.round(dans1h * 1000));
+  // Le rappel est dans une heure : la veille passe avant, dans 4 minutes, et le conteneur ne s'endort pas.
+  assert.ok(alarme() >= Date.now() + 230_000 && alarme() <= Date.now() + 240_000);
 });
 
-test("sans rappel à venir, aucune alarme", async () => {
+test("un rappel plus proche que la veille garde son heure", async () => {
+  const dans2min = Date.now() / 1000 + 120;
+  const { a, alarme } = objet({ prochain: dans2min });
+  await a.alarm();
+  assert.equal(alarme(), Math.round(dans2min * 1000));
+});
+
+test("sans rappel à venir, la veille : une alarme dans 4 minutes", async () => {
   const { a, alarme } = objet({ prochain: null });
   await a.alarm();
-  assert.equal(alarme(), null);
+  assert.ok(alarme() >= Date.now() + 230_000 && alarme() <= Date.now() + 240_000);
+});
+
+test("un message pour un conteneur endormi : gardé, et l'alarme le réveille tout de suite", async () => {
+  const { a, journal, alarme, ctx, stock } = objet();
+  ctx.container.running = false;
+  const avant = Date.now();
+  const r = await a.fetch(new Request("http://agent/whatsapp", { method: "POST", body: '{"x":1}', headers: { "x-hub-signature-256": "sha256=ab" } }));
+  assert.equal(r.status, 202);
+  assert.equal(journal.filter((j) => j[0] === "conteneur").length, 0); // la porte n'attend pas le réveil
+  assert.deepEqual(stock.get("webhooks").map((w) => [w.corps, w.signature]), [['{"x":1}', "sha256=ab"]]);
+  assert.ok(alarme() >= avant && alarme() <= Date.now());
+});
+
+test("un message pour un conteneur éveillé pose aussi la veille", async () => {
+  const { a, alarme } = objet();
+  await a.fetch(new Request("http://agent/whatsapp", { method: "POST", body: "{}" }));
+  assert.ok(alarme() <= Date.now() + 240_000);
 });
 
 test("redémarrage en douceur : à l'alarme, le conteneur finit ses tours, s'arrête, puis repart", async () => {
@@ -97,7 +122,8 @@ test("redémarrage en douceur : à l'alarme, le conteneur finit ses tours, s'arr
     ["conteneur", "/interne/rappels", jeton],
   ]);
   assert.equal(stock.has("a_redemarrer"), false);
-  assert.equal(alarme(), Math.round(dans1h * 1000)); // les rappels gardent leur heure
+  // Le rappel dans une heure garde son heure chez le conteneur ; la veille repasse avant, dans 4 minutes.
+  assert.ok(alarme() >= Date.now() + 230_000 && alarme() <= Date.now() + 240_000);
 });
 
 test("redémarrer un conteneur endormi : rien à faire", async () => {
