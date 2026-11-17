@@ -673,7 +673,7 @@ CLE_SITE = "s" * 40
 
 def serveur(tmp_path, agents=None, relations=None, site=True):
     url = f"sqlite:///{tmp_path}/a.db"
-    agents = agents or {n: FauxAgent(f"réponse de {n}") for n in ("gestionnaire", "partenaire", "visiteur")}
+    agents = agents or {n: FauxAgent(f"réponse de {n}.") for n in ("gestionnaire", "partenaire", "visiteur")}
     exp = FauxExp()
     env = {"CLIENT_CONFIG": json.dumps(CONF_WA.model_dump(mode="json")), "DATABASE_URL": url, "META_APP_SECRET": SECRET,
            "INTERNE_TOKEN": "interne", "GESTIONNAIRES": json.dumps({GREG: "greg@agence.ch"})}
@@ -763,7 +763,7 @@ def test_les_messages_gardes_partent_au_prochain_message(tmp_path):
         poster(t, message(GREG, "Salut", "w1"))
         t.portal.call(attendre(app))
     assert [e[0] for e in exp.envois] == ["texte", "document", "texte"] and exp.envois[0][2] == "Marc cherche une villa."
-    assert exp.envois[2][2] == "réponse de gestionnaire"
+    assert exp.envois[2][2] == "réponse de gestionnaire."
     # Une personne venue par API ne reçoit rien sur WhatsApp
     assert asyncio.run(c.envoyer_de_soi_meme("api:site:x", [{"texte": "x"}], "demande")) == "aucune"
 

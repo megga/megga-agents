@@ -139,7 +139,7 @@ class Role(Strict):
     envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "memoire", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
     # Les phrases fixes du noyau (excuse, vocal non compris, trop de messages, rappel) au tutoiement (M4).
     tutoiement: bool = False
@@ -418,7 +418,7 @@ class Config(Strict):
     def outils_du_metier(self):
         hors = [o for o in self.outils if o not in METIERS[self.metier]]
         for r in self.les_roles().values():
-            hors += [o for o in r.outils if o != "rappels" and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
+            hors += [o for o in r.outils if o not in ("rappels", "memoire") and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
         if hors:
             raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
         # Les outils qui agissent au nom d'un compte de gestion ne vont qu'aux gestionnaires.

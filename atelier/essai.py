@@ -40,7 +40,7 @@ async def essayer(conf: Config, version: int, message: str, conversation: str, c
     url = f"sqlite:///{dossier / conf.id}.db"
     nom_role = role_d_essai(conf, role)
     r = conf.les_roles().get(nom_role) if nom_role else None
-    groupes = tuple(g for g in r.outils if g == "rappels") if r is not None else None
+    groupes = tuple(g for g in r.outils if g in ("rappels", "memoire")) if r is not None else None
     agent = construire(conf, stockage.base_agno(url), cles, principal=principal, role=r, nom_role=nom_role,
                        outils=outils_du_client(conf, stockage.Rappels(url), groupes))
     personne = f"essai-v{version}-{nom_role + '-' if nom_role else ''}{conversation}"

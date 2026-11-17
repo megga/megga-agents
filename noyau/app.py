@@ -107,9 +107,11 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
     """Les outils du noyau (rappels, et la mémoire si Memoire.outils) et ceux des packs que la configuration active ;
     `groupes` : ceux d'un rôle. `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py),
     s'ils sont branchés ; `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
+    du_role = groupes is not None
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
     liste = outils_rappels(rappels, conf.fuseau, conf.rappels.heure) if "rappels" in groupes else []
-    if memoire is not None:
+    # Avec des rôles, la mémoire ne va qu'à ceux qui ont le groupe « memoire » (noyau/agent.py, memoire_du_role).
+    if memoire is not None and (not du_role or "memoire" in groupes):
         liste += memoire.outils()
     if "annonces" in groupes:
         if services is None:

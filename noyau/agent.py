@@ -44,6 +44,12 @@ def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool =
     raise ValueError(f"modèle inconnu : {nom}")
 
 
+def memoire_du_role(config: Config, role: Role | None = None) -> bool:
+    """La mémoire par ses outils (retenir, oublier, souvenirs) : sans rôles, pour tous ; avec des rôles, pour ceux qui ont
+    le groupe « memoire » seulement (dans l'ancienne Alix, Greg et Julien, jamais un partenaire ni un visiteur)."""
+    return bool(config.memoire.outils) and (role is None or "memoire" in role.outils)
+
+
 def consignes(config: Config, role: Role | None = None) -> list[str]:
     base = [
         f"Tu es {config.nom_agent}, et tu travailles pour {config.entreprise}.",
@@ -54,11 +60,11 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         base.append(config.consignes.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
-    if config.memoire.outils:  # la mémoire par ses outils (noyau/memoire.py)
+    if memoire_du_role(config, role):  # la mémoire par ses outils (noyau/memoire.py)
         from .memoire import CONSIGNES as CONSIGNES_MEMOIRE
 
         base.append(CONSIGNES_MEMOIRE)
-    if role is not None and set(role.outils) - {"rappels", "immobilier"}:  # la façon de se servir des outils du pack
+    if role is not None and set(role.outils) - {"rappels", "memoire", "immobilier"}:  # la façon de se servir des outils du pack
         from packs.immobilier.relations import consignes_des_groupes
 
         base += consignes_des_groupes(role.outils, config, role)

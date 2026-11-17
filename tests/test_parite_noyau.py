@@ -500,3 +500,23 @@ def test_route_vocal(tmp_path):
         assert t.post("/vocal", json={"numero": "+41799999999", "texte": "x"}, headers=h).status_code == 400  # pas un gestionnaire
         r = t.post("/vocal", json={"numero": GREG, "texte": "La villa est vendue."}, headers=h)
         assert r.status_code == 200 and r.json() == {"etat": "parti"}
+
+
+def test_la_memoire_ne_va_qu_aux_roles_qui_l_ont():
+    """Dans l'ancienne Alix, seuls Greg et Julien avaient retenir, oublier et souvenirs ; un partenaire n'avait qu'un outil."""
+    from noyau.agent import consignes, memoire_du_role
+    from noyau.app import outils_du_client
+    from noyau.memoire import CONSIGNES as CONSIGNES_MEMOIRE
+
+    fsp = configuration.lire("clients/four-seasons-properties.yaml")
+    roles = fsp.les_roles()
+    assert memoire_du_role(fsp, roles["gestionnaire"]) and not memoire_du_role(fsp, roles["partenaire"])
+    assert not memoire_du_role(fsp, roles["visiteur"]) and memoire_du_role(fsp)
+    assert CONSIGNES_MEMOIRE in consignes(fsp, roles["gestionnaire"]) and CONSIGNES_MEMOIRE not in consignes(fsp, roles["visiteur"])
+
+    class FausseMemoire:
+        def outils(self):
+            return ["retenir"]
+
+    assert outils_du_client(fsp, None, ("memoire",), memoire=FausseMemoire()) == ["retenir"]
+    assert outils_du_client(fsp, None, ("vitrine",), relations=type("R", (), {"outils": lambda self, g: []})(), memoire=FausseMemoire()) == []

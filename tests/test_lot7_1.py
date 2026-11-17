@@ -40,7 +40,7 @@ def signe(c: bytes) -> dict:
 
 class AgentNomme(FauxAgent):
     def __init__(self, nom):
-        super().__init__(f"réponse de {nom}")
+        super().__init__(f"réponse de {nom}.")  # une phrase complète : Four Seasons reprend une phrase coupée
         self.nom = nom
         self.images = []
 
@@ -173,7 +173,7 @@ def test_par_api_un_visiteur(tmp_path):
     stockage.ClesApi(url).ajouter(ident, "site", empreinte, 30)
     r = t.post("/api/messages", headers={"authorization": f"Bearer {cle}"}, json={"personne": "p1", "texte": "je cherche une villa"})
     accueil, reponse = r.json()["reponse"].rsplit("\n\n", 1)
-    assert accueil.startswith("Bonjour, je suis Alix") and reponse == "réponse de visiteur"
+    assert accueil.startswith("Bonjour, je suis Alix") and reponse == "réponse de visiteur."
     # Des rôles sans visiteurs : l'entrée par API est fermée
     (tmp_path / "b").mkdir()
     t2, *_ = agent_fsp(tmp_path / "b", {**FSP_WA, "roles": {"gestionnaire": {}}})
