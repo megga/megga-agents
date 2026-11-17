@@ -1,0 +1,38 @@
+name: console
+
+# La console MEGGA (console/) : à part de tests.yml, que d'autres lots modifient.
+on:
+  pull_request:
+    paths: ["console/**", ".github/workflows/console.yml"]
+  push:
+    branches: [main]
+    paths: ["console/**", ".github/workflows/console.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    env:
+      COPILOTKIT_TELEMETRY_DISABLED: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      # Le serveur d'agents de l'essai lit les gabarits et le noyau, sans les modifier.
+      - run: uv venv --python 3.12 && uv pip install -e ".[test]" "ag-ui-protocol==1.0.0"
+        working-directory: .
+      - run: ../.venv/bin/python -m pytest -q agents
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
