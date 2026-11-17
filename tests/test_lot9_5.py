@@ -49,6 +49,24 @@ def test_le_catalogue_dit_qui_fait_tourner_chaque_modele():
     assert detail["deepseek-v4-pro"]["hebergement"] == "Chine"
 
 
+def test_mistral_seulement_avec_sa_cle_et_un_secours_choisi():
+    sans, avec = regles.offerts({}), regles.offerts({"MISTRAL_API_KEY": "cle"})
+    assert "mistral-large-latest" not in sans + tuple(regles.catalogue(sans)["modeles"]) and "mistral-large-latest" in avec
+    base = {**CONF, "modeles": {"principal": "claude-sonnet-5-5", "secours": "deepseek-v4-pro"}}
+    with pytest.raises(regles.Refus) as e:  # sans sa clé, chaque tour échouerait
+        regles.appliquer("client", base, {"modeles": {"principal": "mistral-large-latest", "secours": None}}, None, sans)
+    assert e.value.statut == 400
+    with pytest.raises(regles.Refus) as e:  # le secours resterait DeepSeek, en Chine
+        regles.appliquer("client", base, {"modeles": {"principal": "mistral-large-latest"}}, None, avec)
+    assert e.value.statut == 400 and "secours" in e.value.message
+    c = regles.appliquer("client", base, {"modeles": {"principal": "mistral-large-latest", "secours": "mistral-medium-latest"}}, None, avec)
+    assert (c.modeles.principal, c.modeles.secours) == ("mistral-large-latest", "mistral-medium-latest")
+    # une configuration écrite à la main : pas de secours d'office derrière un modèle européen
+    with pytest.raises(ValueError):
+        configuration.Modeles(principal="mistral-large-latest")
+    assert configuration.Modeles(principal="mistral-large-latest", secours=None).secours is None
+
+
 def test_un_modele_mistral():
     m = modele("mistral-large-latest", {"MISTRAL_API_KEY": "cle"})
     assert (m.id, m.base_url, m.api_key) == ("mistral-large-latest", "https://api.mistral.ai/v1", "cle")
@@ -248,7 +266,7 @@ def test_l_atelier(tmp_path):
             return {"personne": personne, "donnees": {}} if methode == "GET" else {"personne": personne, "effacees": {"megga_fil": 2}}
 
     porte = Porte()
-    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db",
+    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db", "MISTRAL_API_KEY": "cle",
                                   "ESSAIS_DIR": str(tmp_path / "essais"), "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE},
                                  porte=porte, principal_essai=FauxModele()))
     nouveau_client(t)

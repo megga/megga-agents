@@ -155,11 +155,11 @@ Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{i
 - `DELETE /atelier/clients/{id}/personnes/{personne}?confirmer=oui` : tout effacer, définitivement (sans `confirmer=oui`, `400`). Les autres personnes ne sont pas touchées.
 - Hors Cloudflare, comme les conversations, rien ne quitte l'installation (`409`).
 
-**Les modèles du client.** Le client choisit lui-même son modèle principal et son secours (`modeles.principal`, `modeles.secours`) dans le catalogue de l'atelier, où chacun dit qui le fait tourner et où (`modeles_detail`) : Anthropic (États-Unis), DeepSeek (Chine), et maintenant Mistral AI (Union européenne, France ; `mistral-large-latest`, `mistral-medium-latest`, par son API compatible OpenAI, avec la clé `MISTRAL_API_KEY` de MEGGA, posée comme les autres par `scripts/secrets_worker.sh`). Le modèle de l'oral reste un réglage de MEGGA. Décidé avec Thomas (16.11.2026) : laisser ce choix au client plutôt qu'imposer un secours européen.
+**Les modèles du client.** Le client choisit lui-même son modèle principal et son secours (`modeles.principal`, `modeles.secours`) dans le catalogue de l'atelier, où chacun dit qui le fait tourner et où (`modeles_detail`) : Anthropic (États-Unis), DeepSeek (Chine), et maintenant Mistral AI (Union européenne, France ; `mistral-large-latest`, `mistral-medium-latest`, par son API compatible OpenAI, avec la clé `MISTRAL_API_KEY` de MEGGA, posée comme les autres par `scripts/secrets_worker.sh`). Mistral AI n'est proposé qu'une fois cette clé posée (`regles.offerts`). Derrière un modèle européen, le secours se choisit (européen, un autre, ou aucun) : le secours par défaut, DeepSeek, enverrait les conversations en Chine pendant une panne. Le modèle de l'oral reste un réglage de MEGGA. Décidé avec Thomas (16.11.2026) : laisser ce choix au client plutôt qu'imposer un secours européen.
 
 **Les routes** côté porte : `GET /admin/clients/{id}/suivi/valeur`, `GET|DELETE /admin/clients/{id}/personnes/{personne}` ; au conteneur `/interne/suivi/valeur`, `/interne/personnes/{personne}`.
 
 **Ce qui reste.**
 - Les rendez-vous pris (avec les agendas, plus tard) et le coût par conversation propre au client (son forfait) dans la valeur.
 - Le marquage de la voix synthétique (article 50) et le contrat de sous-traitance type, avec un juriste.
-- La clé `MISTRAL_API_KEY` à créer chez Mistral AI et à poser avant qu'un client choisisse ce modèle.
+- La clé `MISTRAL_API_KEY` à créer chez Mistral AI et à poser : jusque-là, l'atelier ne propose pas ses modèles.

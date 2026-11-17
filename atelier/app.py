@@ -229,7 +229,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if base is None:
             raise Refus(404, "aucune version de base")
         changements = corps.get("changements")
-        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident))
+        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident),
+                                regles.offerts(env))
         return conf, base["version"]
 
     def preparer(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
@@ -247,7 +248,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     @r.get("/catalogue")
     def catalogue(qui: Identite = Depends(identite)):
-        return regles.catalogue()
+        return regles.catalogue(regles.offerts(env))
 
     @r.get("/clients")
     async def lister(qui: Identite = Depends(identite)):

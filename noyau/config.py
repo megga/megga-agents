@@ -51,6 +51,13 @@ class Modeles(Strict):
     # (relecture du 16.11.2026, I16).
     oral: str | None = None
 
+    @model_validator(mode="after")
+    def _secours_choisi(self):
+        # Derrière un modèle européen (Mistral AI), pas de secours d'office : celui par défaut tourne en Chine (lot 9.5).
+        if self.principal.startswith("mistral-") and "secours" not in self.model_fields_set:
+            raise ValueError("modeles.secours : avec un modèle européen, choisissez le secours (européen, un autre, ou aucun)")
+        return self
+
     def petit(self) -> str:
         """Le modèle de l'oral et du fil."""
         if self.oral:
