@@ -35,7 +35,7 @@ CONSIGNES = """Tes façons de travailler (outils de travail) :
 - Tes consignes absolues passent avant toute règle : jamais de prix, d'adresse ni de lien aux partenaires ; jamais un mot de passe affiché ; jamais un mandat confidentiel rendu public ; aucun chiffre inventé ; ni tiret long ni point médian. Si on te demande une règle contraire, dis poliment que tu ne peux pas, et pourquoi.
 - « Arrête le message du matin », « envoie-le-moi à 7 h », « reprends-le » : mot_du_matin.
 - « Fais-moi le point » : point, puis résume en quelques lignes ce qui demande une action, le plus urgent d'abord ; ce qui est en ordre se dit en une phrase. Jamais de point qu'on ne t'a pas demandé.
-- « Qu'est-ce que tu sais faire ? », « aide » : présente-toi avec assurance et chaleur, en peu de mots, d'après tes capacités ci-dessous : un aperçu (une ligne par thème, avec un exemple de phrase qu'on peut te dire, sans nom d'outil), puis propose d'approfondir un thème. Ne promets que ce qui y est ; pour autre chose, dis franchement que tu ne sais pas encore le faire."""
+- « Qu'est-ce que tu sais faire ? », « tu peux faire quoi ? », « aide » : présente-toi avec assurance et chaleur, en peu de mots, d'après tes capacités ci-dessous. D'abord un aperçu : les grands thèmes, une ligne chacun, chacun avec un exemple concret de phrase qu'on peut te dire, sans nom d'outil ni jargon. En vocal : les trois ou quatre thèmes les plus utiles, et propose le reste par écrit. Puis propose d'approfondir : demande quel thème détailler ; sur un thème choisi, explique comment s'y prendre, avec des exemples, et dis aussi ses limites. Ne promets que ce qui y est, tel que c'est écrit ; pour autre chose, dis franchement que tu ne sais pas encore le faire."""
 
 # Ce qu'aucune règle ne peut demander. Une règle qui va dans leur sens (« ne donne jamais de prix aux partenaires ») passe.
 NEGATION = re.compile(r"\b(jamais|aucun|aucune|ni|never|not|no)\b|\bn['’]|\bne\b", re.I)
@@ -190,7 +190,7 @@ class Travail:
             return "\n".join(map(self.ligne, toutes)) or "Aucune règle apprise pour l'instant."
 
         async def point(run_context: RunContext) -> str:
-            """Le point demandé : ce qui attend une action (demandes du site, questions de visiteurs, demandes de partenaires, annonces sans photo ou masquées, rappels, veilles)."""
+            """Le point demandé : ce qui attend une action (demandes du site, questions de visiteurs, demandes de partenaires, annonces sans photo ou masquées, affaires en cours et clients en mémoire, rappels, veilles)."""
             personne, compte = gestionnaire(run_context)
             return await self.faire_le_point(personne, compte)
 
@@ -226,6 +226,17 @@ class Travail:
             attente = [(d, x) for d in await asyncio.to_thread(s.reseau.en_attente, personne, maintenant - 14 * JOUR) for x in d["propositions"] if not x["choix"]]
             if attente:
                 blocs.append("Demandes de partenaires qui attendent ton choix : " + " ; ".join(f"{d['nom']}, {x['reference']}" for d, x in attente) + ".")
+        # Les affaires en cours et les clients que l'agent a retenus de lui (initiative.js d'Alix FSP) : la mémoire.
+        if s.memoires is not None:
+            try:
+                souvenirs = [court(x, 200) for x in await s.memoires(personne) if court(x, 200)][:30]
+            except Exception:
+                souvenirs = []
+            if souvenirs:
+                blocs.append("Ce que tu as retenu de lui (mémoire : affaires en cours, clients et leurs critères) :\n"
+                             + "\n".join(f"  - {x}" for x in souvenirs)
+                             + "\n  Pour chaque client dont les critères sont clairs, chercher_biens avec ses critères avant de résumer : "
+                               "dis quel bien lui correspond, s'il y en a un. Les affaires en cours se rappellent en une ligne chacune.")
         if s.rappels is not None:
             rappels = await asyncio.to_thread(s.rappels.lister, personne)
             if rappels:

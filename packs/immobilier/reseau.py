@@ -29,7 +29,7 @@ from agno.run import RunContext
 
 from noyau.whatsapp import chiffres
 
-from .annonces import Services, court, fiche_du_site
+from .annonces import Services, court, fiche_du_site, prenom_du_courtier
 from .gestion import GestionErreur
 
 TYPES = ("maison", "appartement", "terrain", "bureau")
@@ -391,8 +391,9 @@ class Reseau:
                 etat = (ETATS.get(x["etat"], ETATS["rien"]).format(quoi=QUOI.get(x["choix"], "")) if x["choix"] and x["etat"] and x["etat"] != "en cours"
                         else "en attente de la réponse du courtier")
                 lignes.append(f"{x['reference']} ({decrire_bien(x['bien'])}) : {etat}")
+        de_qui = prenom_du_courtier(s) or "l'agence"
         return "\n".join(x for x in [
-            f"Contexte : tu parles à {p['nom']}{', de ' + p['agence'] if p.get('agence') else ''}, partenaire de l'agence.",
+            f"Contexte : tu parles à {p['nom']}{', de ' + p['agence'] if p.get('agence') else ''}, partenaire de {de_qui}.",
             f"Règle du courtier pour lui : {REGLE_POUR_LUI[p['regle']]}." if p.get("regle") else "",
             f"Ses demandes de ces sept derniers jours : {' ; '.join(lignes)}." if lignes else "",
             ("Recherches de ses clients gardées : " + " ; ".join(f"{r['resume']} (depuis le {jour_court(r['derniere'], s.fuseau)})" for r in recherches) + ".")
@@ -501,15 +502,19 @@ class Reseau:
                 await asyncio.to_thread(s.reseau.terminer, ident, rang, "indisponible")
                 return ("indisponible", f"La référence {x['reference']} n'est plus en ligne (vendue, masquée ou retirée) : je n'envoie rien à {d['nom']}.",
                         f"La référence {x['reference']} n'est plus en ligne : rien ne part.")
-            pourquoi = f"Un nouveau bien répond à la recherche de votre client ({d['recherche']}). " if d.get("suite") else ""
+            # Le courtier par son prénom, s'il est réglé (partenaires/conversation.js d'Alix FSP).
+            prenom = prenom_du_courtier(s)
+            pourquoi = (f"Un nouveau bien{' de ' + prenom if prenom else ''} répond à la recherche de votre client ({d['recherche']}). "
+                        if d.get("suite") else "")
+            transmet = f"{prenom or 'Le courtier'} vous transmet"
             if option == "lignes":
-                messages = [{"texte": f"{pourquoi}Le courtier vous transmet quelques lignes sur la référence {x['reference']} :\n{lignes_bien(bien)}"}]
+                messages = [{"texte": f"{pourquoi}{transmet} quelques lignes sur la référence {x['reference']} :\n{lignes_bien(bien)}"}]
             else:
                 slug = await self.slug_par_reference(compte, x["reference"])
                 pdf, fichier, _ = await fiche_du_site(s, compte, slug, "anonyme" if option == "partenaire" else "marque", "fr",
                                                       option == "partenaire")
                 media = await s.exp.televerser(pdf, "application/pdf", fichier)
-                messages = [{"texte": f"{pourquoi}Le courtier vous transmet la fiche de la référence {x['reference']}."},
+                messages = [{"texte": f"{pourquoi}{transmet} la fiche de la référence {x['reference']}."},
                             {"document": media, "nom": fichier, "legende": f"Référence {x['reference']}"}]
             etat = await self.ecrire(d["partenaire"], messages, "livraison", [x["reference"]])
             etat = {"libre": "livree"}.get(etat, etat)
