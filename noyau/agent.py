@@ -80,12 +80,21 @@ def instructions_du_tour(base: list[str], contexte):
 
 
 def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None,
-               outils: list | None = None, role: Role | None = None, nom_role: str | None = None, contexte=None) -> Agent:
+               outils: list | None = None, role: Role | None = None, nom_role: str | None = None, contexte=None,
+               gardien=None) -> Agent:
     """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs ;
-    `contexte` : le Contexte de chaque tour (instructions_du_tour)."""
+    `contexte` : le Contexte de chaque tour (instructions_du_tour) ; `gardien` : les approbations et le journal d'audit
+    des outils (noyau/approbations.py), sans lui les règles d'approbation s'appliquent quand même (un outil interdit
+    n'est pas proposé, un outil à approuver est refusé)."""
+    from .approbations import Gardien, filtrer, regles_pour
+
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
+    regles = regles_pour(config, role)
+    outils = filtrer(list(outils or []), regles)
+    gardien = gardien or Gardien()
+    gardien.connaitre(outils, nom_role or "public")
     return Agent(
         id=f"{config.id}-{nom_role}" if nom_role else config.id,
         name=config.nom_agent,
@@ -98,7 +107,9 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.
         enable_agentic_memory=True,
         add_memories_to_context=True,
-        tools=list(outils or []),
+        tools=outils,
+        # Chaque appel d'outil : au journal d'audit, et soumis à sa règle (noyau/approbations.py).
+        tool_hooks=[gardien.crochet(regles, nom_role or "public")],
         # Un tour n'appelle pas plus d'outils que cela : une boucle (ou une consigne glissée) ne fait pas exploser la facture.
         tool_call_limit=TOOL_CALL_LIMIT,
         add_datetime_to_context=True,

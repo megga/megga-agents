@@ -105,15 +105,34 @@ class WhatsApp(Strict):
 GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
+REGLE_OUTIL = Literal["approbation", "interdit"]
+NOM_OUTIL = re.compile(r"^[a-z][a-z0-9_]{1,59}$")
+APPROBATIONS_MAX = 60
+
+
+def _approbations(v: dict[str, str]) -> dict[str, str]:
+    """{nom d'un outil: « approbation » ou « interdit »} ; un outil absent se fait sans accord (noyau/approbations.py)."""
+    if len(v) > APPROBATIONS_MAX:
+        raise ValueError(f"approbations : {APPROBATIONS_MAX} outils au plus")
+    for nom in v:
+        if not NOM_OUTIL.fullmatch(nom):
+            raise ValueError("approbations : le nom d'un outil, en minuscules (chercher_biens, envoyer_a_un_contact…)")
+    return v
+
+
 class Role(Strict):
     """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils.
 
     `accueil` : le premier message à une personne de ce rôle, mot pour mot, par langue ({"fr": …, "en": …}) ;
-    envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
+    envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot.
+    `approbations` : pour les personnes de ce rôle, par-dessus celles de la configuration (noyau/approbations.py)."""
 
     consignes: str = Field(default="", max_length=12000)
     outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
+    approbations: dict[str, REGLE_OUTIL] = {}
+
+    _approbations = field_validator("approbations")(classmethod(lambda cls, v: _approbations(v)))
 
     @field_validator("consignes")
     @classmethod
@@ -254,6 +273,10 @@ class Config(Strict):
     gestion: Gestion | None = None
     # Les portails de son marché (outils du marché).
     marche: Marche | None = None
+    # Les outils qui attendent l'accord d'un gestionnaire, ou qui sont interdits (noyau/approbations.py).
+    approbations: dict[str, REGLE_OUTIL] = {}
+
+    _approbations = field_validator("approbations")(classmethod(lambda cls, v: _approbations(v)))
 
     @model_validator(mode="before")
     @classmethod

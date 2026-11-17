@@ -239,9 +239,10 @@ class AgentClient extends Conteneur {
 
   /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
   async suivre(chemin, recherche = "") {
-    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes)?$/.test(chemin)) throw new Error("chemin de suivi");
+    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes|\/audit|\/approbations)?$/.test(chemin)) throw new Error("chemin de suivi");
     const cle = chemin + recherche;
-    const duree = chemin.startsWith("/conversations") ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
+    // Les conversations, le journal d'audit et les demandes d'accord changent vite : gardés une minute seulement.
+    const duree = /^\/(conversations|audit|approbations)/.test(chemin) ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
     this.cacheSuivi ??= new Map();
     const garde = this.cacheSuivi.get(cle);
     if (garde && Date.now() - garde.quand < duree) return { statut: 200, donnees: garde.donnees };
@@ -274,6 +275,34 @@ class AgentClient extends Conteneur {
   }
 
   /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
+  /** Une décision de la console sur une demande d'accord (noyau/approbations.py) : l'action accordée est faite par le conteneur.
+   * `par` : qui l'a décidée dans l'atelier, noté par le conteneur. */
+  async decider(n, accord, par) {
+    if (!/^\d{1,10}$/.test(String(n)) || typeof accord !== "boolean") throw new Error("demande");
+    if (par !== undefined && !/^[a-z0-9:]{1,60}$/.test(par)) throw new Error("demande");
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/approbations/${n}`, {
+      method: "POST",
+      headers: { "x-megga-interne": jeton, "content-type": "application/json" },
+      body: JSON.stringify({ accord, par }),
+    });
+    const texte = await r.text();
+    let donnees;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    this.cacheSuivi?.clear(); // la liste des demandes a changé
+    return { statut: r.status, donnees };
+  }
+
   async cles(methode, chemin = "", corps = null) {
     if (!/^(\/[0-9a-f]{12})?$/.test(chemin)) throw new Error("chemin de clé");
     const dormait = !this.ctx.container?.running;

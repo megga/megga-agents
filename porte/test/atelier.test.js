@@ -45,6 +45,10 @@ function liaison(journal, demarres = new Set(), enPanne = new Set()) {
           journal.push({ j, nom, secrets: Object.keys(s) });
           return Object.keys(s);
         },
+        decider: async (n, accord, par) => {
+          journal.push({ j, nom, decider: n, accord, par });
+          return { statut: 200, donnees: { id: Number(n), etat: accord ? "faite" : "refusee" } };
+        },
         fetch: async (r) => {
           journal.push({ j, nom, chemin: new URL(r.url).pathname, auth: r.headers.get("authorization"), corps: await r.text() });
           return Response.json({ ok: true });
@@ -215,6 +219,58 @@ test("le suivi d'un client : réservé à MEGGA, transmis à son conteneur, para
   const panne = await get("exemple/suivi/panne");
   assert.equal(panne.status, 503);
   assert.deepEqual(await panne.json(), { erreur: "conteneur injoignable" });
+});
+
+test("les approbations (lot 9.1) : audit et demandes lus par le suivi, décision transmise, réservée à MEGGA", async () => {
+  const journal = [];
+  const e = env(journal);
+  await put(e, "exemple", { version: 1, config: config() });
+  journal.length = 0;
+  const get = (chemin) => recevoir(new Request(`https://porte/admin/clients/${chemin}`, { headers: { authorization: "Bearer admin" } }), e);
+  await get("exemple/suivi/approbations?etat=attente&limite=20");
+  await get("exemple/suivi/approbations?etat=nimporte");
+  await get("exemple/suivi/audit?depuis=1700000000");
+  assert.deepEqual(journal.map((x) => [x.suivi, x.recherche]), [
+    ["/approbations", "?limite=20&etat=attente"],
+    ["/approbations", ""],
+    ["/audit", "?depuis=1700000000"],
+  ]);
+  journal.length = 0;
+  const decider = (chemin, corps, jeton = "admin") =>
+    recevoir(new Request(`https://porte/admin/clients/${chemin}`, { method: "POST", body: JSON.stringify(corps), headers: { authorization: `Bearer ${jeton}` } }), e);
+  const r = await decider("exemple/approbations/12", { accord: true, par: "client:0123456789ab" });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { id: 12, etat: "faite" });
+  assert.equal((await decider("exemple/approbations/12", { accord: "oui" })).status, 400);
+  assert.equal((await decider("exemple/approbations/12", { accord: true, par: "Robert !" })).status, 400);
+  assert.equal((await decider("exemple/approbations/12", { accord: true }, "faux")).status, 401);
+  assert.equal((await decider("inconnu/approbations/12", { accord: true })).status, 404);
+  assert.equal((await decider("exemple/approbations/abc", { accord: true })).status, 404);
+  // qui décide passe jusqu'au conteneur
+  assert.deepEqual(journal.map((x) => [x.decider, x.accord, x.par]), [["12", true, "client:0123456789ab"]]);
+});
+
+test("l'objet d'un client transmet une décision à son conteneur, avec le jeton interne", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async (u, o = {}) => {
+      vus.push([new URL(u).pathname, o.method, o.body, o.headers?.["x-megga-interne"]]);
+      return Response.json({ id: 3, etat: "faite" });
+    },
+  });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  assert.deepEqual(await agent.decider("3", true, "megga"), { statut: 200, donnees: { id: 3, etat: "faite" } });
+  assert.deepEqual(vus, [["/interne/approbations/3", "POST", '{"accord":true,"par":"megga"}', await jetonInterne("admin", "exemple")]]);
+  await assert.rejects(agent.decider("3", true, "pas ça"), /demande/);
+  await assert.rejects(agent.decider("../x", true), /demande/);
+  await assert.rejects(agent.decider("3", "oui"), /demande/);
+  // le suivi accepte l'audit et les demandes
+  await agent.suivre("/audit");
+  await agent.suivre("/approbations", "?etat=attente");
+  assert.deepEqual(vus.slice(1).map((v) => v[0]), ["/interne/suivi/audit", "/interne/suivi/approbations"]);
 });
 
 test("l'objet d'un client : suivi avec le jeton interne, chemins bornés, lecture récente gardée en mémoire", async () => {

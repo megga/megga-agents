@@ -19,8 +19,11 @@
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
-//   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
+//   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
+//   POST /admin/clients/:id/approbations/:n
+//                                  {accord, par} : une demande d'accord décidée par la console, et qui
+//                                  l'a décidée (jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
@@ -46,6 +49,8 @@ const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
 // Le site d'un client (lot 7.4) : une clé d'au moins 32 caractères, un corps de 16 Kio au plus.
 const CLE_SITE = /^Bearer [\x21-\x7e]{32,200}$/;
+// Qui décide d'une demande d'accord dans l'atelier : « megga » ou « client:<jeton> » (noyau/approbations.py).
+const PAR = /^[a-z0-9:]{1,60}$/;
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
@@ -75,6 +80,8 @@ export async function recevoir(requete, env, ctx) {
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
+  const decision = url.pathname.match(/^\/admin\/clients\/([^/]+)\/approbations\/(\d{1,10})$/);
+  if (decision && requete.method === "POST") return decider(requete, env, decision[1], decision[2]);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
   if (url.pathname === "/pilotage" || url.pathname.startsWith("/pilotage/")) return pilote(requete, env);
@@ -323,6 +330,8 @@ async function suivre(requete, env, id, chemin, params) {
     const v = params.get(k);
     if (v !== null && /^\d{1,12}(\.\d+)?$/.test(v)) gardes.set(k, v);
   }
+  const etat = params.get("etat"); // les demandes d'accord d'un état (noyau/approbations.py)
+  if (etat !== null && /^(attente|accordee|faite|echec|refusee|expiree)$/.test(etat)) gardes.set("etat", etat);
   const recherche = gardes.size ? `?${gardes}` : "";
   let lu;
   try {
@@ -336,6 +345,28 @@ async function suivre(requete, env, id, chemin, params) {
   } catch (e) {
     const message = String(e?.message ?? e).slice(0, 200);
     return json({ erreur: message === "chemin de suivi" ? message : "conteneur injoignable" }, message === "chemin de suivi" ? 400 : 503);
+  }
+}
+
+/** La décision de la console sur une demande d'accord : la porte transmet au conteneur du client, qui fait l'action. */
+async function decider(requete, env, id, n) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  let corps;
+  try {
+    corps = await requete.json();
+  } catch {
+    return json({ erreur: "{accord: true|false}" }, 400);
+  }
+  if (typeof corps?.accord !== "boolean") return json({ erreur: "{accord: true|false}" }, 400);
+  if (corps.par !== undefined && !PAR.test(corps.par)) return json({ erreur: "par : megga, ou client:<jeton>" }, 400);
+  try {
+    const { statut, donnees } = await agent.decider(n, corps.accord, corps.par);
+    return json(donnees, statut);
+  } catch {
+    return json({ erreur: "conteneur injoignable" }, 503);
   }
 }
 
