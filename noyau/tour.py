@@ -104,6 +104,8 @@ class Conversations:
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
         self.taches: set[asyncio.Task] = set()
+        # Le transfert vers un humain (noyau/reprises.py) : async f(personne, messages) -> vrai si l'équipe a la main.
+        self.reprise = None
 
     def _lancer(self, coro) -> asyncio.Task:
         t = asyncio.create_task(coro)
@@ -170,6 +172,12 @@ class Conversations:
                 for m in messages:
                     self._noter_fil(personne, "recu", "bouton", m.texte)
                 return
+            if self.reprise is not None:  # un humain a la conversation (noyau/reprises.py) : l'agent ne répond pas
+                try:
+                    if await self.reprise(personne, messages):
+                        return
+                except Exception as e:
+                    log.warning("reprise illisible (%s) : %s", self.conf.id, str(e)[:200])
             if not self.debit.permis(personne):
                 for m in messages:  # reçus, mais sans tour
                     self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
@@ -553,7 +561,7 @@ class Conversations:
                 rates = []
                 for m in ligne["messages"]:
                     try:
-                        await self._envoyer_messages(personne, [m], "differe")
+                        await self._envoyer_messages(personne, [m], m.get("usage") or "differe")  # « reprise » : noyau/reprises.py
                         livres["n"] += 1
                     except Exception as e:
                         # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.

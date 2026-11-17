@@ -239,10 +239,10 @@ class AgentClient extends Conteneur {
 
   /** Le suivi du conteneur (volumes, conversations, alertes), lu par l'atelier à travers la porte. */
   async suivre(chemin, recherche = "") {
-    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes|\/audit|\/approbations)?$/.test(chemin)) throw new Error("chemin de suivi");
+    if (!/^(\/conversations(\/(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:[A-Za-z0-9._-]{1,40}))?|\/alertes|\/audit|\/approbations|\/reprises)?$/.test(chemin)) throw new Error("chemin de suivi");
     const cle = chemin + recherche;
     // Les conversations, le journal d'audit et les demandes d'accord changent vite : gardés une minute seulement.
-    const duree = /^\/(conversations|audit|approbations)/.test(chemin) ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
+    const duree = /^\/(conversations|audit|approbations|reprises)/.test(chemin) ? CACHE_CONVERSATIONS_MS : CACHE_SUIVI_MS;
     this.cacheSuivi ??= new Map();
     const garde = this.cacheSuivi.get(cle);
     if (garde && Date.now() - garde.quand < duree) return { statut: 200, donnees: garde.donnees };
@@ -299,6 +299,32 @@ class AgentClient extends Conteneur {
       donnees = { erreur: texte.slice(0, 200) };
     }
     this.cacheSuivi?.clear(); // la liste des demandes a changé
+    return { statut: r.status, donnees };
+  }
+
+  /** Ce que la console fait d'une conversation confiée à l'équipe (lot 9.3) : {action, texte?}, transmis au conteneur. */
+  async reprise(n, corps) {
+    if (!/^\d{1,10}$/.test(String(n))) throw new Error("conversation");
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const jeton = await jetonInterne(this.env.ADMIN_TOKEN ?? "", this.ctx.id.name ?? "");
+    const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/reprises/${n}`, {
+      method: "POST",
+      headers: { "x-megga-interne": jeton, "content-type": "application/json" },
+      body: JSON.stringify({ action: corps.action, texte: corps.texte ?? "" }),
+    });
+    const texte = await r.text();
+    let donnees;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    this.cacheSuivi?.clear(); // la liste des conversations transmises a changé
     return { statut: r.status, donnees };
   }
 

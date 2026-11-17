@@ -5,8 +5,8 @@ D'après l'étude de marché du 16.11.2026 (le catalogue des fonctionnalités in
 | Sous-lot | Contenu |
 |---|---|
 | **9.1 Approbations et journal d'audit** (fait) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
-| **9.2 Base de connaissances** (cette PR) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
-| 9.3 Transfert vers un humain | passer la main à un collaborateur avec un résumé, puis la reprendre |
+| **9.2 Base de connaissances** (fait) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
+| **9.3 Transfert vers un humain** (cette PR) | passer la main à un collaborateur avec un résumé, puis la reprendre |
 | 9.4 Leads et connecteurs | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
 | 9.5 Le client et ses chiffres | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
 | 9.6 Banc d'essai par pack | les scénarios de `parite/` généralisés, mesurés en pass^k à chaque version |
@@ -90,3 +90,36 @@ Côté porte : `GET|POST /admin/clients/{id}/connaissances`, `DELETE /admin/clie
 - L'essai de l'atelier n'a pas les documents du client (sa base d'essai est à part) : l'outil y répond qu'ils ne sont pas consultables ici.
 - Un changement de modèle demandera de recalculer les passages (le nom du modèle est gardé avec chaque vecteur pour le savoir).
 - Pas encore de lecture d'un site entier, d'un Drive ni d'un fichier Word : à venir avec les connecteurs (9.4).
+
+## 9.3 Le transfert vers un humain
+
+**Pourquoi.** 87 % des clients exigent de pouvoir parler à un humain quand une entreprise utilise l'IA (Gartner, août 2026) ; Klarna a dû réembaucher après avoir tout confié à son assistant. Un agent qui sait passer la main au bon moment, avec un résumé, garde la confiance.
+
+**Le réglage `Config.transfert`** (le client l'active lui-même dans l'atelier). Il ne sert qu'avec le rôle gestionnaire (seul ce rôle a les outils pour prendre la main et répondre) : sans ce rôle, ou sans aucun numéro de gestionnaire, personne n'est prévenu et l'outil répond à l'agent que ce n'est pas possible, qui propose alors un contact direct. Aucune conversation n'attend donc 24 heures pour rien. Il donne à l'agent, et à chaque rôle sauf le gestionnaire, l'outil `passer_la_main(motif, resume)` et sa consigne : quand la personne demande un humain, quand c'est sensible (réclamation, litige, urgence), ou quand l'agent ne peut pas l'aider. Les gestionnaires, eux, reçoivent les outils de l'équipe.
+
+**Le parcours.**
+1. L'agent passe la main : la conversation est confiée à l'équipe (`megga_reprises`, « ouverte ») avec son motif et un résumé (secrets masqués) ; l'agent dit à la personne qu'un membre de l'équipe va lui répondre. Une seule conversation en cours par personne.
+2. Chaque gestionnaire la reçoit sur WhatsApp, après le tour de la personne, avec « Je la prends » ou « Rendre à l'agent » (préfixe `tr:`, traité sans le modèle, seulement pour un gestionnaire, une seule fois). Hors des 24 heures, modèle Meta `transfert`. Une conversation prise ne se rend que par celui qui l'a prise, ou par la console.
+3. Tant qu'elle est en cours, l'agent ne répond plus à cette personne : ses messages vont au fil (la console les lit) et, si un gestionnaire l'a prise, lui sont relayés sur WhatsApp (modèle `reprise_message` hors des 24 heures). Un média est numéroté comme au tour de l'agent (« média 3 »). Un relais en échec (Meta indisponible) est noté au journal ; l'humain garde la main.
+4. L'équipe répond du numéro de l'entreprise : dans la console, ou sur WhatsApp en le demandant à son propre agent (« réponds à la conversation 3 : … » ; outils `conversations_transmises`, `repondre_en_reprise`, `rendre_la_main`). Ces réponses vont au fil (genre `reprise`), aussi quand elles attendent hors des 24 heures (modèle `reprise`) et partent au message suivant.
+5. Rendue (ou sans personne pour la prendre en 24 heures, ou sans message de l'équipe en 72 heures), l'agent reprend : pendant un jour, il lit le motif, ce que l'équipe a écrit et ce que la personne a écrit depuis sans réponse (le Contexte, entre balises `<reprise>`) ; au premier tour, pourquoi elle lui revient. À l'échéance (`/interne/rappels`), une conversation oubliée revient à l'agent même si la personne ne réécrit pas : elle reçoit un mot d'excuse, et le gestionnaire qui l'avait prise en est prévenu (usage `reprise_fin`, sans modèle propre : le repli `message`).
+
+**Les identités.** Les conversations nomment une personne « +41… » ; les gestionnaires sont prévenus sous ce nom (`approbations.equipe`), sinon leur fenêtre de 24 heures ne se retrouve pas (corrigé aussi pour les demandes d'accord du 9.1).
+
+**Par API, pas de transfert** : le logiciel ne recevrait pas les réponses de l'équipe ; l'outil le dit à l'agent, qui propose un contact direct.
+
+**Les routes.**
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /atelier/clients/{id}/reprises?etat=ouverte` | tous | les conversations confiées à l'équipe (`ouverte`, `prise`, `rendue`, `expiree`) |
+| `POST /atelier/clients/{id}/reprises/{n}` | tous | `{action: prendre}`, `{action: message, texte}` (part du numéro de l'entreprise), `{action: rendre}` ; `409` si elle n'est plus en cours |
+
+Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{id}/reprises/{n}` ; au conteneur, `/interne/suivi/reprises` et `/interne/reprises/{n}`. Hors Cloudflare, rien ne quitte l'installation (`409`) : l'équipe passe par WhatsApp.
+
+**La table** (additive) : `megga_reprises`.
+
+**Ce qui reste.**
+- Une alerte de la console quand une conversation attend depuis longtemps, et l'heure de réponse de l'équipe dans le suivi.
+- Les vocaux reçus pendant une reprise sont relayés comme « [vocal] », sans transcription.
+- Les modèles Meta `transfert`, `reprise` et `reprise_message` sont proposés dans `docs/modeles-fsp.md`, pas encore soumis.

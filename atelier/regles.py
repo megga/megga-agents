@@ -19,7 +19,8 @@ from noyau.config import METIERS, ZONES, Config, manques  # noqa: F401 (manques 
 # Les réglages simples d'un client. « voix » : l'identifiant de la voix ElevenLabs, ou rien.
 # « approbations » : quels outils attendent l'accord de son équipe, ou lui sont interdits (noyau/approbations.py) ;
 # c'est le client qui porte le risque d'une action, c'est lui qui en décide.
-CHAMPS_CLIENT = ("metier", "nom_agent", "voix", "ton", "outils", "approbations")
+# « transfert » : l'agent peut confier une conversation à son équipe (noyau/reprises.py).
+CHAMPS_CLIENT = ("metier", "nom_agent", "voix", "ton", "outils", "approbations", "transfert")
 # Les zones que la porte Cloudflare sert ; les autres passent par le pilotage (lot 6).
 ZONES_PORTE = ("europe", "etats-unis")
 MODELES = ("claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5", "deepseek-v4-pro")

@@ -60,7 +60,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import api as entree_api
-from . import approbations
+from . import approbations, reprises
 from . import config as configuration
 from . import licence as licences
 from . import pilotage as pilotages
@@ -89,6 +89,7 @@ REPONSES_APPROBATION = {
            "echec": "The team approved your request, but it could not be completed. We will get back to you.",
            "refusee": "The team did not approve your request."},
 }
+ETATS_REPRISE = ("ouverte", "prise", "rendue", "expiree")
 ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
 CORPS_DOCUMENT = 12 * 1024 * 1024  # un document de 8 Mo, en base64 dans du JSON
 CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
@@ -253,6 +254,15 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     # même (interdit : pas proposé ; à approuver : refusé), sans journal.
     gardien = (Gardien(stockage.Audit(env["DATABASE_URL"]), stockage.Approbations(env["DATABASE_URL"]))
                if env.get("DATABASE_URL") else Gardien())
+    # Le transfert vers un humain (noyau/reprises.py), si le client l'a voulu (Config.transfert).
+    transfert = None
+    if conf.transfert and env.get("DATABASE_URL"):
+        from .reprises import Transfert
+
+        # Seul le rôle gestionnaire peut prendre la main et répondre (ses outils d'équipe, noyau/roles.py) : sans lui,
+        # personne n'est prévenu et l'outil dit à l'agent que ce n'est pas possible (pas de conversation muette 24 h).
+        equipe = approbations.equipe(personnes.gestionnaires) if "gestionnaire" in conf.les_roles() else []
+        transfert = Transfert(stockage.Reprises(env["DATABASE_URL"]), fil, equipe, conf.nom_agent, conf.langue)
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
@@ -299,15 +309,17 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
             fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, connaissances=connaissances),
-                           contexte=ensemble(du_fil, gardien.contexte), gardien=gardien)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, connaissances=connaissances)
+                           + (transfert.outils_pour(None) if transfert else []),
+                           contexte=ensemble(du_fil, gardien.contexte, transfert.contexte if transfert else None), gardien=gardien)
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
         # chaque tour (le fil ; les demandes, les questions, les règles des packs ; l'issue de ses demandes d'accord).
         agents = agents or {nom: construire(conf, base, cles,
-                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, connaissances),
+                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, connaissances)
+                                            + (transfert.outils_pour(nom) if transfert else []),
                                             role=role, nom_role=nom, gardien=gardien,
                                             contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None,
-                                                              gardien.contexte))
+                                                              gardien.contexte, transfert.contexte if transfert else None))
                             for nom, role in conf.les_roles().items()}
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
@@ -315,7 +327,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         voie = Voie(env["ELEVENLABS_API_KEY"], conf.voix)
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
-                                  choix={**(relations.choix if relations else {}), approbations.PREFIXE: gardien.choix},
+                                  choix={**(relations.choix if relations else {}), approbations.PREFIXE: gardien.choix,
+                                         **({reprises.PREFIXE: transfert.choix} if transfert else {})},
                                   echeances=relations.echeances if relations else None, fil_tenu=fil_tenu,
                                   etats=stockage.Etats(env["DATABASE_URL"]) if env.get("DATABASE_URL") else None)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
@@ -349,6 +362,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                                     variables=[conf.nom_agent])
 
     gardien.notifier, gardien.prevenir = prevenir_equipe, prevenir_personne
+    if transfert is not None:  # l'équipe répond par les conversations ; un tour s'arrête si elle a la main
+        transfert.conversations = conversations
+        conversations.reprise = transfert.garde
+        conversations.echeances.append(transfert.echeance)  # les conversations oubliées, à l'heure dite
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
@@ -688,6 +705,44 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
         return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
                               "apercu": approbations.apercu(d["arguments"], None)} for d in demandes]}
+
+    @app.get("/interne/suivi/reprises")
+    async def interne_reprises(requete: Request):
+        """Les conversations confiées à l'équipe (lot 9.3), les plus récentes d'abord ; `etat=ouverte` : celles à prendre."""
+        if (refus := lisible(requete)) is not None:
+            return refus
+        if transfert is None:
+            return erreur(409, "cet agent ne transmet pas de conversations (Config.transfert)")
+        etat = requete.query_params.get("etat")
+        if etat and etat not in ETATS_REPRISE:
+            return erreur(400, "etat : " + ", ".join(ETATS_REPRISE))
+        lignes = await asyncio.to_thread(transfert.reprises.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
+        return {"reprises": [{k: v for k, v in r.items() if k not in ("prevenue", "relue")} for r in lignes]}
+
+    @app.post("/interne/reprises/{ident}")
+    async def interne_reprise(ident: str, requete: Request):
+        """Ce que la console fait d'une conversation transmise : {action: prendre | message | rendre, texte?}."""
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if transfert is None:
+            return erreur(409, "cet agent ne transmet pas de conversations (Config.transfert)")
+        try:
+            d = await requete.json()
+            action, texte = d["action"], d.get("texte", "")
+        except (ValueError, KeyError, TypeError):
+            return erreur(400, "{action: prendre | message | rendre, texte?}")
+        if action not in reprises.ACTIONS or not isinstance(texte, str) or not ident.isdigit() or len(ident) > 10:
+            return erreur(400, "{action: prendre | message | rendre, texte?}")
+        n = int(ident)
+        if action == "message":
+            try:
+                return await transfert.repondre(n, texte, "console")
+            except ValueError as e:
+                return erreur(409 if "plus en cours" in str(e) else 400, str(e))
+        r = await (transfert.prendre(n, "console") if action == "prendre" else transfert.rendre(n))
+        if r is None:
+            return erreur(409, f"la conversation {n} n'est plus " + ("à prendre" if action == "prendre" else "en cours"))
+        return {"id": n, "etat": r["etat"]}
 
     @app.post("/interne/approbations/{ident}")
     async def interne_decider(ident: str, requete: Request):

@@ -269,6 +269,8 @@ class Config(Strict):
     marche: Marche | None = None
     # Les outils qui attendent l'accord d'un gestionnaire, ou qui sont interdits (noyau/approbations.py).
     approbations: dict[str, REGLE_OUTIL] = {}
+    # Le transfert vers un humain (noyau/reprises.py) : l'agent peut confier une conversation à l'équipe.
+    transfert: bool = False
 
     _approbations = field_validator("approbations")(classmethod(lambda cls, v: _approbations(v)))
 

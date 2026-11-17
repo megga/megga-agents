@@ -20,6 +20,8 @@
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
+//   POST /admin/clients/:id/reprises/:n
+//                                  {action, texte?} : une conversation transmise, prise, répondue ou rendue (lot 9.3)
 //   POST /admin/clients/:id/approbations/:n
 //                                  {accord, par} : une demande d'accord décidée par la console, et qui
 //                                  l'a décidée (jeton ADMIN_TOKEN)
@@ -83,6 +85,8 @@ export async function recevoir(requete, env, ctx) {
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   const decision = url.pathname.match(/^\/admin\/clients\/([^/]+)\/approbations\/(\d{1,10})$/);
   if (decision && requete.method === "POST") return decider(requete, env, decision[1], decision[2]);
+  const reprise = url.pathname.match(/^\/admin\/clients\/([^/]+)\/reprises\/(\d{1,10})$/);
+  if (reprise && requete.method === "POST") return reprendre(requete, env, reprise[1], reprise[2]);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
   if (url.pathname === "/pilotage" || url.pathname.startsWith("/pilotage/")) return pilote(requete, env);
@@ -331,7 +335,8 @@ async function suivre(requete, env, id, chemin, params) {
     if (v !== null && /^\d{1,12}(\.\d+)?$/.test(v)) gardes.set(k, v);
   }
   const etat = params.get("etat"); // les demandes d'accord d'un état (noyau/approbations.py)
-  if (etat !== null && /^(attente|accordee|faite|echec|refusee|expiree)$/.test(etat)) gardes.set("etat", etat);
+  // les demandes d'accord (lot 9.1) ou les conversations transmises (lot 9.3) d'un état
+  if (etat !== null && /^(attente|accordee|faite|echec|refusee|expiree|ouverte|prise|rendue)$/.test(etat)) gardes.set("etat", etat);
   const recherche = gardes.size ? `?${gardes}` : "";
   let lu;
   try {
@@ -345,6 +350,28 @@ async function suivre(requete, env, id, chemin, params) {
   } catch (e) {
     const message = String(e?.message ?? e).slice(0, 200);
     return json({ erreur: message === "chemin de suivi" ? message : "conteneur injoignable" }, message === "chemin de suivi" ? 400 : 503);
+  }
+}
+
+/** Ce que la console fait d'une conversation confiée à l'équipe : prendre, répondre, rendre. */
+async function reprendre(requete, env, id, n) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  let corps;
+  try {
+    corps = await requete.json();
+  } catch {
+    return json({ erreur: "{action, texte?}" }, 400);
+  }
+  if (!["prendre", "message", "rendre"].includes(corps?.action) || (corps.texte !== undefined && typeof corps.texte !== "string"))
+    return json({ erreur: "{action: prendre | message | rendre, texte?}" }, 400);
+  try {
+    const { statut, donnees } = await agent.reprise(n, corps);
+    return json(donnees, statut);
+  } catch {
+    return json({ erreur: "conteneur injoignable" }, 503);
   }
 }
 

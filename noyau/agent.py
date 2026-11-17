@@ -90,7 +90,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     `contexte` : le Contexte de chaque tour (instructions_du_tour) ; `gardien` : les approbations et le journal d'audit
     des outils (noyau/approbations.py), sans lui les règles d'approbation s'appliquent quand même (un outil interdit
     n'est pas proposé, un outil à approuver est refusé)."""
-    from .approbations import Gardien, filtrer, regles_pour
+    from .approbations import Gardien, filtrer, nom, regles_pour
 
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
@@ -99,13 +99,18 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     outils = filtrer(list(outils or []), regles)
     gardien = gardien or Gardien()
     gardien.connaitre(outils, nom_role or "public")
+    fixes = consignes(config, role)
+    if any(nom(o) == "passer_la_main" for o in outils):  # passer la main à l'équipe (noyau/reprises.py), pas dans l'essai
+        from .reprises import CONSIGNE as PASSER_LA_MAIN
+
+        fixes.append(PASSER_LA_MAIN)
     return Agent(
         id=f"{config.id}-{nom_role}" if nom_role else config.id,
         name=config.nom_agent,
         model=principal,
         fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
         db=db,
-        instructions=instructions_du_tour(consignes(config, role), contexte),
+        instructions=instructions_du_tour(fixes, contexte),
         add_history_to_context=True,
         num_history_runs=12,
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.
