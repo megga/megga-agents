@@ -400,12 +400,15 @@ export class Atelier extends Conteneur {
   }
 
   /**
-   * Un essai au fil de l'eau : rendu morceau par morceau, et compté en cours jusqu'à la fin du flux (ou jusqu'à ce que
-   * la console raccroche), pour qu'un redémarrage ne le coupe pas non plus.
+   * Un essai au fil de l'eau : rendu morceau par morceau, et compté en cours jusqu'à la fin du flux, pour qu'un
+   * redémarrage ne le coupe pas non plus. Si la console raccroche, le flux du conteneur est lu jusqu'au bout en
+   * arrière-plan : l'essai va au bout (et compte), la requête n'est décomptée qu'à sa fin.
    */
   enFlux(r) {
     const lecteur = r.body.getReader();
+    const ctx = this.ctx;
     let fini = false;
+    let annule = false;
     const finir = async () => {
       if (fini) return;
       fini = true;
@@ -416,17 +419,25 @@ export class Atelier extends Conteneur {
         try {
           const { done, value } = await lecteur.read();
           if (done) {
-            c.close();
+            if (!annule) c.close();
             await finir();
-          } else c.enqueue(value);
+          } else if (!annule) c.enqueue(value);
         } catch (e) {
-          c.error(e);
+          if (!annule) c.error(e);
           await finir();
         }
       },
-      async cancel(raison) {
-        await lecteur.cancel(raison).catch(() => {});
-        await finir();
+      cancel() {
+        annule = true;
+        const vider = (async () => {
+          try {
+            while (!(await lecteur.read()).done);
+          } catch {
+            // le conteneur a coupé : l'essai est fini de toute façon
+          }
+          await finir();
+        })();
+        ctx.waitUntil?.(vider);
       },
     });
     return new Response(corps, { status: r.status, headers: r.headers });

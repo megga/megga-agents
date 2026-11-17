@@ -168,7 +168,19 @@ function ctx({ running = false, secrets = {} } = {}) {
     setInactivityTimeout: async () => {},
     getTcpPort: () => ({ fetch: async () => new Response("ok") }),
   };
-  return { ctx: { id: { name: "megga" }, blockConcurrencyWhile: (f) => f(), storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) }, container: c }, journal, stock };
+  const attendus = [];
+  return {
+    ctx: {
+      id: { name: "megga" },
+      blockConcurrencyWhile: (f) => f(),
+      waitUntil: (p) => attendus.push(p),
+      storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) },
+      container: c,
+    },
+    journal,
+    stock,
+    attendus,
+  };
 }
 
 test("l'atelier redémarre tout de suite, seulement s'il tourne", async () => {
@@ -344,18 +356,28 @@ test("un essai au fil de l'eau passe morceau par morceau, et l'atelier ne redém
   assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
 });
 
-test("une console qui raccroche pendant un essai en flux libère l'atelier", async () => {
+test("une console qui raccroche pendant un essai en flux : l'essai va au bout, puis l'atelier redémarre", async () => {
   const a = ctx({ running: true });
+  let pousser;
   let annule = false;
   a.ctx.container.getTcpPort = () => ({
-    fetch: async () => new Response(new ReadableStream({ start: () => {}, cancel: () => (annule = true) }), { headers: { "content-type": "text/event-stream" } }),
+    fetch: async () =>
+      new Response(new ReadableStream({ start: (c) => (pousser = c), cancel: () => (annule = true) }), { headers: { "content-type": "text/event-stream" } }),
   });
   const atelier = new Atelier(a.ctx, {});
   atelier.demarrer = async () => {};
   const r = await atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/essai", { method: "POST" }));
   assert.equal(await atelier.redemarrer(), true);
   await r.body.cancel();
-  assert.equal(annule, true);
+  // L'essai n'est pas coupé : le flux du conteneur est encore lu, la requête toujours en cours
+  pousser.enqueue(new TextEncoder().encode('event: texte\ndata: {"texte": "Bon"}\n\n'));
+  await new Promise((fin) => setTimeout(fin, 0));
+  assert.equal(annule, false);
+  assert.deepEqual(a.journal, []);
+  assert.equal(atelier.enCours, 1);
+  // L'essai fini (versions.noter_essai écrit), l'atelier est libéré et repart
+  pousser.close();
+  await Promise.all(a.attendus);
   assert.deepEqual(a.journal, [["destroy"]]);
   assert.equal(atelier.enCours, 0);
 });

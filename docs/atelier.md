@@ -76,7 +76,7 @@ Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée 
 
 Pour la console, qui montre la réponse pendant qu'elle s'écrit : avec `Accept: text/event-stream`, l'essai répond par les mêmes événements que l'entrée par API (`noyau/flux.py`, `docs/api.md`) : `texte` (des morceaux, masqués comme en service), `outil` (le nom d'un outil, `debut` puis `fin`, ce que l'écran d'essai trace), puis `fin` avec `{version, conversation, reponse}`, la même réponse que l'essai d'un bloc, qui fait foi ; `erreur` si l'essai n'a pas pu aller au bout. Les refus (jeton, version, message) restent des réponses JSON. L'essai va au bout et compte même si la console se ferme.
 
-À la porte, l'objet de l'atelier rend le flux morceau par morceau au lieu de lire la réponse en entier, mais le compte en cours jusqu'à sa fin : un redémarrage demandé pendant un essai attend qu'il soit fini, ou que la console ait raccroché.
+À la porte, l'objet de l'atelier rend le flux morceau par morceau au lieu de lire la réponse en entier, mais le compte en cours jusqu'à sa fin : un redémarrage demandé pendant un essai attend qu'il soit fini. Si la console raccroche, la porte lit le flux jusqu'au bout en arrière-plan : l'essai n'est pas coupé.
 
 ## L'entrée par API (lot 6.6)
 
