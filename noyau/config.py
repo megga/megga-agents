@@ -167,6 +167,11 @@ class Gestion(Strict):
     # Le site principal, s'il s'ouvre au public et se referme comme les autres (porte_site) : {nom: adresse publique}.
     # Son nom n'est le préfixe d'aucun bien (Greg, 16.11.2026 : « geneve », fspgeneva.com).
     principal: dict[str, str] = Field(default={}, max_length=1)
+    # Le prénom du courtier, tel que les textes écrits par le code le nomment aux visiteurs et aux partenaires (« <prénom> a
+    # bien reçu votre demande… », « <prénom> vous transmet la fiche… ») ; sans lui, « notre courtier ».
+    courtier: str | None = Field(default=None, pattern=r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’ -]{0,39}$")
+    # Les gestionnaires se tutoient : rappelé dans le Contexte de chaque tour, même si l'historique les vouvoie.
+    tutoiement: bool = False
 
     @field_validator("sites", "principal")
     @classmethod

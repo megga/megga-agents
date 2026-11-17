@@ -43,10 +43,11 @@ class Gestion:
         self._delai = delai
 
     async def appel(self, compte: str, methode: str, chemin: str, corps=None, fichiers=None, params=None,
-                    brut: tuple[bytes, str] | None = None) -> dict:
+                    brut: tuple[bytes, str] | None = None, delai: float | None = None) -> dict:
         """Un appel à la gestion au nom de ce compte ; une panne ou un refus devient une GestionErreur (statut 0 : sans réponse).
 
-        `fichiers` : un formulaire multipart ; `brut` : (octets, type) envoyés tels quels (un PDF)."""
+        `fichiers` : un formulaire multipart ; `brut` : (octets, type) envoyés tels quels (un PDF, une vidéo) ; `delai` : en
+        secondes, à la place de celui de la gestion (une vidéo de 100 Mo met plus d'une minute à monter)."""
         if not compte:
             raise GestionErreur(403, "aucun compte de gestion pour cette personne")
         if not CHEMIN.fullmatch(chemin):
@@ -60,7 +61,7 @@ class Gestion:
         elif corps is not None:
             options["json"] = corps
         try:
-            async with httpx.AsyncClient(transport=self._transport, timeout=self._delai) as c:
+            async with httpx.AsyncClient(transport=self._transport, timeout=delai or self._delai) as c:
                 r = await c.request(methode, f"{self._url}/api/gestion{chemin}", headers=entetes, **options)
         except httpx.HTTPError as e:
             raise GestionErreur(0, f"la gestion ne répond pas ({type(e).__name__})") from e
