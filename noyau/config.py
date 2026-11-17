@@ -334,6 +334,12 @@ class Config(Strict):
                 raise ValueError(f"Ces outils sont ceux des gestionnaires, pas du rôle {nom} : {', '.join(pris)}.")
         return self
 
+    @model_validator(mode="after")
+    def transfert_a_l_equipe(self):
+        if self.transfert and "gestionnaire" not in self.les_roles():
+            raise ValueError("Le transfert vers un humain demande le rôle gestionnaire : c'est à l'équipe que l'agent passe la main.")
+        return self
+
     def les_roles(self) -> dict[str, Role]:
         """Les rôles réglés : {nom: rôle}, vide sans rôles."""
         if self.roles is None:

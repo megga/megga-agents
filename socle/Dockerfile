@@ -26,6 +26,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 WORKDIR /app
+# Le modèle de recherche de la base de connaissances (noyau/connaissances.py) : révision et empreinte figées. Avant le
+# code : téléchargé une fois, il reste en cache tant que socle/modele.py ne change pas.
+COPY socle/modele.py ./socle/
+RUN python socle/modele.py /opt/megga/modele
 COPY --from=fiche /usr/local/bin/node /usr/local/bin/node
 COPY --from=fiche /fiche ./fiche
 COPY pyproject.toml ./
@@ -35,9 +39,7 @@ COPY atelier ./atelier
 COPY pilote ./pilote
 # La clé publique cosign de MEGGA (scripts/cle_signature.sh), quand elle existe : le pilote vérifie avec elle
 # chaque image qu'on lui propose (le Dockerfile, toujours là, évite l'échec de COPY sans la clé).
-COPY socle/Dockerfile socle/modele.py socle/cosign.pu[b] ./socle/
-# Le modèle de recherche de la base de connaissances (noyau/connaissances.py) : révision et empreinte figées.
-RUN python socle/modele.py /opt/megga/modele
+COPY socle/Dockerfile socle/cosign.pu[b] ./socle/
 RUN if [ -f socle/cosign.pub ]; then cp socle/cosign.pub noyau/cosign.pub; fi \
     && pip install --no-cache-dir . && useradd --create-home --uid 10001 agent \
     && mkdir /sauvegardes && chown agent /sauvegardes
