@@ -14,7 +14,7 @@ from noyau.agent import construire
 from noyau.app import creer
 
 CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
-# Le transfert demande le rôle gestionnaire : c'est à l'équipe que l'agent passe la main.
+# Le transfert ne sert qu'avec le rôle gestionnaire : c'est à l'équipe que l'agent passe la main.
 CONF_T = {**CONF, "transfert": True, "roles": {"gestionnaire": {}, "visiteur": {}}}
 
 
@@ -122,9 +122,7 @@ def test_pas_de_transfert_sans_personne_pour_la_prendre(url):
     t = transfert(url, gestionnaires=())
     r = asyncio.run(outil(t, "passer_la_main")("humain", "x", Contexte("+41790000001")))
     assert "pas possible" in r and stockage.Reprises(url).lister() == []
-    with pytest.raises(ValueError, match="demande le rôle gestionnaire"):
-        configuration.lire({**CONF, "transfert": True})
-    assert configuration.lire(CONF_T).transfert is True
+    assert configuration.lire({**CONF, "transfert": True}).transfert is True  # permis, mais inerte sans rôle gestionnaire
 
 
 def test_les_outils_par_role(url):
@@ -379,10 +377,18 @@ def test_l_atelier_prend_repond_et_rend(tmp_path):
     assert porte.actions == [(3, {"action": "prendre", "texte": ""}), (3, {"action": "message", "texte": "Bonjour"}),
                              (3, {"action": "rendre", "texte": ""})]
     assert porte.lus == [("/reprises", "ouverte")]
-    # le client active lui-même le transfert, s'il a des gestionnaires pour prendre la main
-    r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {"transfert": True}})
-    assert r.status_code == 422 and "demande le rôle gestionnaire" in r.json()["details"][0]["message"]
-    assert t.post("/atelier/clients/exemple/versions", headers=MEGGA,
-                  json={"changements": {"roles": CONF_T["roles"]}}).status_code == 201
+    # le client active lui-même le transfert
     r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {"transfert": True}})
     assert r.status_code == 201 and r.json()["config"]["transfert"] is True
+
+
+def test_sans_role_gestionnaire_l_agent_ne_passe_pas_la_main(url):
+    """Sans le rôle gestionnaire, personne ne peut prendre ni répondre : l'outil le dit, rien n'est ouvert ni envoyé."""
+    from test_app import FauxAgent, FauxExpediteur
+
+    app = creer({"CLIENT_CONFIG": json.dumps({**CONF, "transfert": True}), "DATABASE_URL": url,
+                 "GESTIONNAIRES": json.dumps({"+41790000099": "greg@agence.ch"})}, agent=FauxAgent(), expediteur=FauxExpediteur())
+    t = app.state.conversations.reprise.__self__
+    assert t.gestionnaires == []
+    r = asyncio.run(outil(t, "passer_la_main")("humain", "x", Contexte("+41790000001")))
+    assert "pas possible" in r and stockage.Reprises(url).lister() == []
