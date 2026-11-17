@@ -104,6 +104,8 @@ Un fichier par nouveau métier, `noyau/banc/<métier>.json`, d'abord les interdi
 
 La CI vérifie la forme de ces scénarios (`tests/test_lot9_6.py::test_les_scenarios_sont_bien_formes`) mais ne les joue pas : le banc appelle les vrais modèles.
 
+La CI joue en revanche les modèles de bout en bout sur la vraie image, devant un faux Claude (job `image`, `tests/image/essai_modeles_metier.py`). L'atelier crée un client depuis chaque modèle du dépôt et refuse santé pour la zone États-Unis. Puis un agent Garage, servi d'après sa version, reçoit le socle et son bloc, note une demande, la complète pour la même personne au lieu de la doubler, et en ouvre une autre pour une autre personne. Ce que le parcours attend se lit dans `atelier/gabarits/` : un modèle ajouté y est essayé sans toucher au script. En local, après `docker build -f socle/Dockerfile -t megga-agents:essai .` : `python3 tests/image/essai_modeles_metier.py`.
+
 **Le seuil** : chaque cas S, J, H, C, F et G tenu trois fois sur trois (pass^3). Sinon, les consignes du modèle sont reprises avant la fusion.
 
 ### Ce qui reste à faire avant la fusion : le banc avec les vrais modèles
