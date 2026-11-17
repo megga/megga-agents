@@ -108,7 +108,7 @@ class WhatsApp(Strict):
 GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
-REGLE_OUTIL = Literal["approbation", "interdit"]
+REGLE_OUTIL = Literal["approbation", "interdit", "auto"]
 NOM_OUTIL = re.compile(r"^[a-z][a-z0-9_]{1,59}$")
 APPROBATIONS_MAX = 60
 
@@ -126,12 +126,13 @@ def _approbations(v: dict[str, str]) -> dict[str, str]:
 class ServeurMcp(Strict):
     """Un serveur MCP du client (noyau/connecteurs.py) : son CRM, son agenda, son outil métier.
 
-    `nom` préfixe ses outils (« crm_creer_contact ») ; `outils` : ceux qu'on propose à l'agent (vide : tous, à éviter) ;
+    `nom` préfixe ses outils (« crm_creer_contact ») ; `outils` : ceux qu'on propose à l'agent, nommés un à un (jamais
+    tous) ; ils attendent l'accord de l'équipe, sauf règle « auto » explicite (Config.approbations) ;
     `jeton` : le numéro du secret qui l'ouvre (MCP_JETON_1 à 5), envoyé en « Authorization: Bearer »."""
 
     nom: str = Field(pattern=r"^[a-z][a-z0-9]{1,15}$")
     url: str = Field(pattern=r"^https://\S{4,500}$")
-    outils: tuple[str, ...] = Field(default=(), max_length=40)
+    outils: tuple[str, ...] = Field(min_length=1, max_length=40)
     jeton: int | None = Field(default=None, ge=1, le=5)
 
     @field_validator("outils")

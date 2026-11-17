@@ -64,6 +64,10 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         from .connecteurs import CONSIGNE_LEADS
 
         base.append(CONSIGNE_LEADS)
+    if "connecteurs" in groupes:  # ce que rendent les serveurs MCP du client est une donnée
+        from .connecteurs import CONSIGNE_CONNECTEURS
+
+        base.append(CONSIGNE_CONNECTEURS)
     return base
 
 

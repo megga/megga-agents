@@ -39,8 +39,10 @@ _CHOIX = re.compile(r"^ap:(\d{1,10}):(oui|non)$")
 
 
 def regles_pour(conf, role=None) -> dict[str, str]:
-    """Les règles des outils pour un rôle : celles de la configuration, puis celles du rôle par-dessus."""
-    return {**conf.approbations, **(role.approbations if role is not None else {})}
+    """Les règles des outils pour un rôle : celles de la configuration, puis celles du rôle par-dessus. Les outils des
+    serveurs MCP du client (noyau/connecteurs.py) attendent l'accord de l'équipe, sauf règle « auto » explicite."""
+    mcp = {f"{s.nom}_{o}": APPROBATION for s in getattr(conf, "mcp", ()) for o in s.outils}
+    return {**mcp, **conf.approbations, **(role.approbations if role is not None else {})}
 
 
 def equipe(gestionnaires) -> list[str]:
@@ -192,15 +194,8 @@ class Gardien:
         """L'action accordée, au nom de la personne qui l'a demandée : (faite ou echec, ce que l'outil a rendu)."""
         fonction = self._outils.get((d["role"], d["outil"]))
         for boite in self._boites.get(d["role"], []) if fonction is None else []:
-            if hasattr(boite, "connect"):  # un serveur MCP : sa session du tour est fermée, on la rouvre pour l'action
-                try:
-                    await boite.connect(force=True)
-                except Exception as e:
-                    log.warning("serveur MCP injoignable pour la demande %s : %s", d["id"], str(e)[:200])
-                    continue
-            trouvee = (getattr(boite, "functions", None) or {}).get(d["outil"])
-            if trouvee is not None:
-                fonction = getattr(trouvee, "entrypoint", trouvee)
+            # un serveur MCP (connecteurs.BoiteMcp) : une session à part, ouverte et refermée pour cette seule action
+            if (fonction := getattr(boite, "appel", lambda _: None)(d["outil"])) is not None:
                 break
         if fonction is None:
             return "echec", "outil introuvable dans cette version de l'agent"

@@ -406,6 +406,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Les lignes du journal d'audit de ces tours, écrites en arrière-plan (noyau/approbations.py)
         if restantes := await gardien.vider(delai_vider):
             log.warning("arrêt avec %d ligne(s) du journal d'audit non écrite(s)", restantes)
+        # Les leads en route vers le webhook du client (noyau/connecteurs.py)
+        if leads is not None and (restants := await leads.vider(delai_vider)):
+            log.warning("arrêt avec %d lead(s) non transmis au webhook", restants)
 
     def a_relire() -> bool:
         """Une autre configuration est à servir : poussée et acceptée, retirée par le client, ou la précédente

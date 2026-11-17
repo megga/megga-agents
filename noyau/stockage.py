@@ -1428,7 +1428,10 @@ class Reprises:
 
 class Leads:
     """Les leads d'un client (table megga_leads, noyau/connecteurs.py) : la fiche que l'agent a faite d'une personne qui
-    a un vrai besoin, et ce qu'est devenu son envoi au webhook du client (garde, envoye, echec)."""
+    a un vrai besoin, et ce qu'est devenu son envoi au webhook du client (garde, envoye, echec). Gardés un an
+    (CONSERVATION) : les plus anciens s'effacent au démarrage et à chaque nouveau lead."""
+
+    CONSERVATION = 365 * 86400
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1446,8 +1449,25 @@ class Leads:
             Column("etat", String(10), nullable=False),
             Column("erreur", String(120), nullable=True),
         )
+        self.purger()
+
+    def purger(self) -> int:
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.cree < time.time() - self.CONSERVATION)).rowcount
+
+    def completer(self, ident: int, personne: str, fiche: dict) -> dict | None:
+        """Le lead `ident` de cette personne, complété de ce que `fiche` précise ; sa fiche entière, ou None."""
+        t, champs = self._t, ("besoin", "score", "budget", "delai", "lieu", "nom")
+        with self._e.begin() as c:
+            ligne = c.execute(select(t).where(t.c.id == int(ident), t.c.personne == personne[:PERSONNE])).first()
+            if ligne is None:
+                return None
+            nouvelle = {k: fiche.get(k) or ligne._mapping[k] for k in champs}
+            c.execute(update(t).where(t.c.id == int(ident)).values(etat="garde", erreur=None, **nouvelle))
+            return nouvelle
 
     def noter(self, personne: str, fiche: dict) -> int:
+        self.purger()
         with self._e.begin() as c:
             return int(c.execute(insert(self._t).values(personne=personne[:PERSONNE], cree=time.time(), etat="garde",
                                                         **{k: fiche.get(k, "") for k in ("besoin", "budget", "delai", "lieu", "nom")},
