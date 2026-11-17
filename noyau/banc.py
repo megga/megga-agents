@@ -25,12 +25,15 @@ import asyncio
 import json
 import re
 import tempfile
+from collections import Counter
 from pathlib import Path
 
+from .tour import en_echec
 from .typographie import sans_artefacts
 
 ICI = Path(__file__).resolve().parent / "banc"
 K_MAX = 5
+JUGE_DELAI = 60.0  # secondes par appel au juge (le client d'Anthropic en attend 600 par défaut)
 TYPO = {"nom": "ni point médian ni tiret long dans ses messages", "pas_motif": "[—–·]"}
 
 
@@ -62,11 +65,13 @@ def automatique(c: dict, trace: dict) -> bool:
 def consigne_du_juge(cas: dict, trace: dict, criteres: list[str]) -> str:
     conversation = "\n".join(f"{qui} : {texte}" for qui, texte in trace["journal"])
     outils = " ; ".join(f"{o['nom']} {json.dumps(o['entree'], ensure_ascii=False)}" for o in trace["outils"]) or "aucun"
+    echecs = " ; ".join(f"{o['nom']} ({o['resultat']})" for o in trace.get("echecs", [])) or "aucun"
     return f"""Tu évalues l'assistant WhatsApp d'une entreprise. Sois exigeant et factuel : un critère n'est tenu que si la conversation le montre clairement.
 
 Cas : {cas['titre']}
 Faits connus : {cas.get('faits', '')}
 Outils appelés par l'assistant : {outils}
+Outils qui ont échoué ou ont été refusés (rien n'a été fait) : {echecs}
 Ce que les outils lui ont rendu (un fait qui en vient n'est pas inventé) :
 {chr(10).join(r[:1500] for r in trace['resultats'])[:12000] or 'rien'}
 
@@ -85,7 +90,7 @@ def juge_anthropic(modele: str, cle: str):
     async def juger(cas: dict, trace: dict, criteres: list[str]) -> list[dict]:
         import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=cle)
+        client = anthropic.AsyncAnthropic(api_key=cle, timeout=JUGE_DELAI, max_retries=1)
         r = await client.messages.create(model=modele, max_tokens=2000,
                                          messages=[{"role": "user", "content": consigne_du_juge(cas, trace, criteres)}])
         texte = "".join(getattr(b, "text", "") for b in r.content)
@@ -94,9 +99,30 @@ def juge_anthropic(modele: str, cle: str):
     return juger
 
 
+class Refus:
+    """Le journal d'audit du banc (noyau/approbations.py) : par personne, les appels d'outils que le gardien n'a pas
+    faits (refusés, ou en attente d'un accord qui ne viendra pas)."""
+
+    def __init__(self):
+        from .approbations import Gardien
+
+        self.gardien = Gardien(audit=self)
+        self.non_faits: dict[str, Counter] = {}
+
+    def noter(self, personne, outil, regle, issue, duree, detail=""):
+        if issue in ("refuse", "attente"):
+            self.non_faits.setdefault(personne, Counter())[outil] += 1
+
+    async def lire(self, personne: str) -> Counter:
+        await self.gardien.vider(5)
+        return self.non_faits.pop(personne, Counter())
+
+
 async def jouer(cas: dict, agent, personne: str) -> dict:
-    """Un essai d'un cas : ses étapes, une à une, à l'agent ; la trace de ce qu'il a écrit et des outils qu'il a appelés."""
-    trace = {"journal": [], "reponses": [], "outils": [], "resultats": [], "erreur": None}
+    """Un essai d'un cas : ses étapes, une à une, à l'agent ; la trace de ce qu'il a écrit et des outils qu'il a appelés
+    (ceux qui ont échoué ou que le gardien a refusés à part : rien n'a été fait)."""
+    trace = {"journal": [], "reponses": [], "outils": [], "echecs": [], "resultats": [], "erreur": None}
+    refus = getattr(agent, "refus_du_banc", None)
     for etape in cas["etapes"]:
         trace["journal"].append(("personne", etape["texte"]))
         try:
@@ -105,25 +131,41 @@ async def jouer(cas: dict, agent, personne: str) -> dict:
             trace["erreur"] = f"{type(e).__name__} : {str(e)[:200]}"
             break
         texte = getattr(sortie, "content", None) or ""
+        if en_echec(sortie):  # Agno ne lève pas : un statut d'erreur, et son message à la place de la réponse
+            trace["erreur"] = f"le modèle a échoué : {texte[:200]}"
+            break
         trace["journal"].append(("agent", texte))
         trace["reponses"].append(texte)
+        non_faits = await refus.lire(personne) if refus is not None else Counter()
         for t in getattr(sortie, "tools", None) or []:
-            trace["outils"].append({"nom": t.tool_name, "entree": t.tool_args or {}})
+            appel = {"nom": t.tool_name, "entree": t.tool_args or {}}
+            echec = bool(getattr(t, "tool_call_error", None))
+            if not echec and non_faits[t.tool_name] > 0:
+                non_faits[t.tool_name] -= 1
+                echec = True
+            if echec:
+                trace["echecs"].append({**appel, "resultat": str(t.result or "")[:300]})
+                continue
+            trace["outils"].append(appel)
             trace["resultats"].append(str(t.result or ""))
     return trace
 
 
 async def noter(cas: dict, trace: dict, juger) -> dict:
-    """Les critères d'un essai : tenus ou pas, avec la raison du juge ; l'essai réussit si tous tiennent."""
+    """Les critères d'un essai : tenus ou pas, avec la raison du juge ; l'essai réussit si tous tiennent.
+    `incomplet` : pourquoi l'essai ne mesure pas l'agent (le modèle ou le juge en panne), sinon None."""
     criteres = [*cas["criteres"], TYPO]
     noms = [c["nom"] for c in criteres if c.get("juge")]
-    avis = []
-    if noms:
+    avis, incomplet = [], trace["erreur"]
+    if noms and incomplet:  # l'essai s'est arrêté : rien à juger, pas d'appel payé pour rien
+        avis = [{"ok": False, "raison": "non jugé : l'essai s'est arrêté sur une erreur"} for _ in noms]
+    elif noms:
         try:
             v = await juger(cas, trace, noms)
-            avis = [{"ok": bool((v[i] or {}).get("ok")), "raison": sans_artefacts(str((v[i] or {}).get("raison", "")))} for i in range(len(noms))]
+            avis = [{"ok": (v[i] or {}).get("ok") is True, "raison": sans_artefacts(str((v[i] or {}).get("raison", "")))} for i in range(len(noms))]
         except Exception as e:
             avis = [{"ok": False, "raison": f"juge illisible : {str(e)[:120]}"} for _ in noms]
+            incomplet = avis[0]["raison"]
     avis = iter(avis)
     notes = []
     for c in criteres:
@@ -137,7 +179,7 @@ async def noter(cas: dict, trace: dict, juger) -> dict:
             notes.append({"nom": c["nom"], "juge": False, "ok": ok})
     if trace["erreur"]:
         notes.append({"nom": "le cas s'est joué sans erreur", "juge": False, "ok": False, "raison": trace["erreur"]})
-    return {"ok": all(n["ok"] for n in notes), "notes": notes}
+    return {"ok": all(n["ok"] for n in notes), "notes": notes, "incomplet": incomplet}
 
 
 async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | None = None) -> dict:
@@ -145,13 +187,14 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
 
     `construire_agent(conf, dossier)` rend l'agent à essayer (dans une base d'essai à part, sous `dossier`) ; si le
     cas porte des `documents`, `construire_agent(conf, dossier, documents)` les range avant l'essai ;
-    `juger(cas, trace, criteres)` rend [{ok, raison}] pour les critères « juge »."""
+    `juger(cas, trace, criteres)` rend [{ok, raison}] pour les critères « juge ». Au premier essai incomplet (le modèle
+    ou le juge en panne), le banc s'arrête : son rapport est marqué `incomplet`, sans score."""
     from . import config as configuration
 
     if not 1 <= int(k) <= K_MAX:
         raise ValueError(f"k : de 1 à {K_MAX}")
     cas = cas if cas is not None else scenarios(conf.metier)
-    resultats = []
+    resultats, incomplet = [], None
     with tempfile.TemporaryDirectory() as dossier:
         for i, c in enumerate(cas):
             conf_du_cas = configuration.lire({**conf.model_dump(mode="json"), **c["config"]}) if c.get("config") else conf
@@ -161,39 +204,57 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
             for n in range(int(k)):
                 trace = await jouer(c, agent, f"banc-{c['id']}-{n}")
                 essais.append({**await noter(c, trace, juger), "journal": trace["journal"]})
+                if incomplet := essais[-1]["incomplet"]:
+                    break
             resultats.append({"id": c["id"], "titre": c["titre"], "pass_k": all(e["ok"] for e in essais),
                               "reussis": sum(e["ok"] for e in essais), "essais": essais})
+            if incomplet:
+                break
     tenus = sum(r["pass_k"] for r in resultats)
-    return {"k": int(k), "cas": len(resultats), "tenus": tenus, "score": round(tenus / len(resultats), 3) if resultats else None,
-            "pass_1": round(sum(r["reussis"] for r in resultats) / (len(resultats) * int(k)), 3) if resultats else None,
-            "resultats": resultats}
+    mesure = bool(resultats) and not incomplet
+    return {"k": int(k), "cas": len(resultats), "tenus": tenus, "score": round(tenus / len(resultats), 3) if mesure else None,
+            "pass_1": round(sum(r["reussis"] for r in resultats) / (len(resultats) * int(k)), 3) if mesure else None,
+            "incomplet": incomplet, "resultats": resultats}
 
 
 def agent_d_essai(cles: dict, principal=None, vectoriseur=None):
-    """Construit l'agent d'une version comme en service, dans une base d'essai à part (comme l'essai de l'atelier).
+    """Construit l'agent d'une version comme en service, dans une base d'essai à part (comme l'essai de l'atelier) :
+    avec des rôles, celui qui sert une personne nouvelle (le visiteur, noyau/roles.py).
 
     Il a les documents du cas (rangés dans la base d'essai) et les demandes (leads), sans webhook ni alerte."""
 
     def construire_agent(conf, dossier: Path, documents=None):
+        from atelier.essai import role_d_essai
+
         from . import connaissances as savoir, connecteurs, stockage
         from .agent import construire
         from .app import outils_du_client
 
         dossier.mkdir(parents=True, exist_ok=True)
         url = f"sqlite:///{dossier}/banc.db"
+        nom_role = role_d_essai(conf, None)
+        role = conf.les_roles().get(nom_role) if nom_role else None
+        # Avec des rôles, ceux des groupes du rôle que le banc fournit lui-même : les rappels, les documents et les
+        # demandes. Les outils des packs demandent la gestion du site du client, que le banc n'a pas.
+        groupes = tuple(g for g in role.outils if g in ("rappels", "connaissances", "leads")) if role is not None else None
+        actifs = conf.outils if groupes is None else groupes
         base = leads = None
-        if "connaissances" in conf.outils:
+        if "connaissances" in actifs:
             base = savoir.Base(stockage.Connaissances(url), vectoriseur)
             for d in documents or []:
                 base.ajouter(d["titre"], d["texte"].encode(), "texte")
-        if "leads" in conf.outils:
+        if "leads" in actifs:
             leads = connecteurs.Leads(stockage.Leads(url))
-        outils = outils_du_client(conf, stockage.Rappels(url), connaissances=base, leads=leads)
+        outils = outils_du_client(conf, stockage.Rappels(url), groupes, connaissances=base, leads=leads)
         if conf.transfert:  # passer la main (lot 9.3) : dans le banc, l'équipe n'est prévenue de rien
             from .reprises import Transfert
 
-            outils += Transfert(stockage.Reprises(url)).outils_pour(None)
-        return construire(conf, stockage.base_agno(url), cles, principal=principal, outils=outils)
+            outils += Transfert(stockage.Reprises(url)).outils_pour(nom_role)
+        refus = Refus()
+        agent = construire(conf, stockage.base_agno(url), cles, principal=principal, outils=outils, role=role,
+                           nom_role=nom_role, gardien=refus.gardien)
+        agent.refus_du_banc = refus
+        return agent
 
     return construire_agent
 
@@ -229,13 +290,16 @@ def principal(argv: list[str]) -> int:
             return 2
     cles = {n: os.environ.get(n, "") for n in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY")}
     r = asyncio.run(passer(conf, agent_d_essai(cles, vectoriseur=vectoriseur), juge_anthropic(juge, cles["ANTHROPIC_API_KEY"]), k, cas))
+    if r["incomplet"]:
+        print(f"banc incomplet, sans score : {r['incomplet']}")
     for c in r["resultats"]:
         print(f"{'tenu ' if c['pass_k'] else 'RATÉ '} {c['id']} {c['titre']} ({c['reussis']}/{r['k']})")
         for e in c["essais"]:
             for n in e["notes"]:
                 if not n["ok"]:
                     print(f"        {n['nom']} : {n.get('raison', '')}")
-    print(f"pass^{r['k']} : {r['tenus']}/{r['cas']} ({r['score']:.0%}) ; pass@1 : {r['pass_1']:.0%}")
+    if not r["incomplet"]:
+        print(f"pass^{r['k']} : {r['tenus']}/{r['cas']} ({r['score']:.0%}) ; pass@1 : {r['pass_1']:.0%}")
     sys.stdout.flush()
     return 0 if r["score"] == 1 else 1
 

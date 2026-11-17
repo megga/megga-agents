@@ -370,6 +370,20 @@ def test_le_banc_range_les_documents_et_offre_les_leads(tmp_path):
     assert [d["titre"] for d in stockage.Connaissances(f"sqlite:///{tmp_path / 'cas'}/banc.db").documents()] == ["Horaires"]
 
 
+def test_avec_des_roles_le_banc_garde_les_documents_et_les_leads_du_visiteur(tmp_path):
+    """Le banc essaie l'agent du visiteur (lot 9.6) : ses documents et ses demandes restent, le banc les fournit."""
+    from test_lot5 import FauxModele
+    from test_lot9_2 import FauxVectoriseur
+
+    roles = {"visiteur": {"consignes": "Tu sers les visiteurs.", "outils": ["rappels", "connaissances", "leads"]}}
+    conf = configuration.lire({**CONF, "outils": ["connaissances", "leads"], "roles": roles})
+    agent = banc.agent_d_essai({}, principal=FauxModele(), vectoriseur=FauxVectoriseur())(
+        conf, tmp_path / "cas", [{"titre": "Horaires", "texte": "Ouvert du lundi au vendredi, de 8 h à 18 h."}])
+    assert agent.id == f"{conf.id}-visiteur"
+    noms = {getattr(o, "__name__", getattr(o, "name", "")) for o in agent.tools}
+    assert {"chercher_dans_les_documents", "enregistrer_lead"} <= noms
+
+
 def configuration_du_banc(dossier, metier):
     chemin = dossier / f"banc-{metier}.yaml"
     conf = gabarits.nouvelle_config(metier, {"id": f"banc-{metier}", "entreprise": "Essai", "zone": "europe"}, "Lea")
@@ -383,7 +397,7 @@ def test_le_banc_s_arrete_avant_de_jouer_sans_le_modele_de_recherche(tmp_path, m
 
     async def faux_passer(conf, construire_agent, juger, k=3, cas=None):
         joues.append(conf.metier)
-        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "resultats": []}
+        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "incomplet": None, "resultats": []}
 
     monkeypatch.setattr(banc, "passer", faux_passer)
     monkeypatch.setenv("MEGGA_MODELE_DIR", str(tmp_path / "pas-de-modele"))
@@ -406,7 +420,7 @@ def test_le_banc_partage_un_seul_modele_de_recherche(tmp_path, monkeypatch):
         return lambda *a: None
 
     async def faux_passer(conf, construire_agent, juger, k=3, cas=None):
-        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "resultats": []}
+        return {"k": k, "cas": 0, "tenus": 0, "score": 1, "pass_1": 1, "incomplet": None, "resultats": []}
 
     monkeypatch.setattr(banc, "agent_d_essai", faux_agent_d_essai)
     monkeypatch.setattr(banc, "passer", faux_passer)
