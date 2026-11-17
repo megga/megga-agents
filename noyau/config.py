@@ -45,13 +45,27 @@ class Modeles(Strict):
     secours: str | None = "deepseek-v4-pro"
     # Le petit modèle de la réécriture pour un vocal et du résumé du fil ; vide : Claude Haiku quand le principal est Claude,
     # sinon le principal. Jamais le secours d'office : il ne sert qu'en panne, et ces textes portent les conversations
-    # (relecture du 16.11.2026, I16).
+    # (relecture du 16.11.2026, I16). Un modèle DeepSeek (« deepseek-… ») y sert aussi.
     oral: str | None = None
+    # Le modèle du fil (noyau/fil.py) ; vide : celui de l'oral (petit()).
+    fil: str | None = None
+    # Claude, le modèle principal : les jetons d'une réponse, la réflexion adaptative et son effort (parité, D8).
+    jetons: int = Field(default=4096, ge=1024, le=64000)
+    reflexion: bool = False
+    effort: Literal["low", "medium", "high"] | None = None
 
     def petit(self) -> str:
         """Le modèle de l'oral et du fil."""
         if self.oral:
             return self.oral
+        return PETIT_CLAUDE if self.principal.startswith("claude-") else self.principal
+
+    def du_fil(self) -> str:
+        return self.fil or self.petit()
+
+    def juge(self) -> str:
+        """Le petit modèle qui juge (une réaction d'humeur) et qui regarde les photos : Claude Haiku quand le principal est
+        Claude (il voit les images), sinon le principal."""
         return PETIT_CLAUDE if self.principal.startswith("claude-") else self.principal
 
 
@@ -70,6 +84,19 @@ class Voix(Strict):
     vitesse: float = Field(default=1.0, ge=0.7, le=1.2)
     # Le serveur d'ElevenLabs (https://api.eu.residency.elevenlabs.io pour l'UE, offre Enterprise).
     serveur: str = Field(default="https://api.elevenlabs.io", pattern=r"^https://[a-z0-9.-]+$")
+    # La langue de la réponse (fr, en, es) imposée à ElevenLabs : sinon une voix devine le parler d'après le style
+    # (un français familier glissait vers l'accent québécois). Refusée par le modèle (400, 422) : relue sans (M6).
+    imposer_langue: bool = True
+    # Les indications de jeu d'ElevenLabs que l'oral peut placer (« warmly », « softly ») : une au plus par vocal.
+    # Vide : aucune, et tout crochet est ôté (un modèle qui ne les connaît pas les lirait à voix haute).
+    balises: tuple[str, ...] = Field(default=(), max_length=12)
+
+    @field_validator("balises")
+    @classmethod
+    def balises_simples(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not re.fullmatch(r"[a-z][a-z ]{1,30}", b) for b in v):
+            raise ValueError("balises : des mots anglais en minuscules (warmly, laughs softly)")
+        return v
 
     @field_validator("par_langue")
     @classmethod
@@ -114,6 +141,32 @@ class Role(Strict):
     consignes: str = Field(default="", max_length=12000)
     outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
+    # Les phrases fixes du noyau (excuse, vocal non compris, trop de messages, rappel) au tutoiement (M4).
+    tutoiement: bool = False
+    # Les réactions d'humeur (🎉 une vente, 😂 une blague, 💪 un coup dur) : complices, sobres, ou celles de l'agent (None).
+    humeur: Literal["aucune", "complice", "sobre"] | None = None
+    # Les plafonds de ce rôle : tours par personne et par jour (None : 100, sans limite pour un gestionnaire), et par
+    # dix minutes (None : 20 ; 0 : sans limite) (D9).
+    par_jour: int | None = Field(default=None, ge=1, le=10000)
+    par_dix_minutes: int | None = Field(default=None, ge=0, le=1000)
+    # Le prénom tiré du profil WhatsApp, redit dans le Contexte de chaque tour (D11).
+    prenom_du_profil: bool = False
+    # Ce que l'oral sait de plus de ces personnes (« elle le vouvoie, et parle de Greg à la troisième personne »).
+    oral: str = Field(default="", max_length=2000)
+    # Les paragraphes d'une réponse qui redisent l'accueil déjà parti, par motifs (expressions régulières) (D11).
+    accueil_redit: tuple[str, ...] = Field(default=(), max_length=10)
+
+    @field_validator("oral")
+    @classmethod
+    def oral_sans_artefacts(cls, v: str) -> str:
+        if re.search(r"[\u2014\u2013\u00b7]", v):
+            raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+    @field_validator("accueil_redit")
+    @classmethod
+    def motifs_redit(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(motif_valide(m) for m in v)
 
     @field_validator("consignes")
     @classmethod
@@ -185,6 +238,85 @@ class Gestion(Strict):
         return self
 
 
+class Remplacement(Strict):
+    """Un remplacement au point d'envoi (noyau/typographie.py, Remplaceur) : chaque texte qui part sur WhatsApp, une
+    légende, une variable de modèle, une liste, et ce que dit la voix. Un motif (expression régulière, sans casse) et
+    ce qui le remplace (vide : il disparaît)."""
+
+    motif: str = Field(min_length=1, max_length=300)
+    par: str = Field(default="", max_length=80)
+
+    @field_validator("motif")
+    @classmethod
+    def motif_lisible(cls, v: str) -> str:
+        return motif_valide(v)
+
+
+class Historique(Strict):
+    """Ce que l'agent relit de la conversation (D1) : les derniers tours, et l'oubli après une inactivité."""
+
+    tours: int = Field(default=12, ge=2, le=100)
+    # Après tant d'heures sans message, la conversation repart à neuf (ce qui s'y disait rejoint le fil) ; vide : jamais.
+    inactivite: float | None = Field(default=None, gt=0, le=24 * 30)
+
+
+class Memoire(Strict):
+    """La mémoire durable de l'agent (D2). Sans outils : celle d'Agno, qu'il tient lui-même, toute relue à chaque tour.
+    Avec : retenir, oublier, souvenirs (noyau/memoire.py), et à chaque tour les souvenirs utiles, tous jusqu'à `montres`."""
+
+    outils: bool = False
+    montres: int = Field(default=40, ge=5, le=200)
+
+
+class Oral(Strict):
+    """Ce qu'un vocal dit (noyau/oral.py, D3)."""
+
+    # La consigne de la réécriture pour l'oral, propre au client ; vide : celle du noyau.
+    consignes: str = Field(default="", max_length=12000)
+    # Une référence (de bien, de dossier) ne se lit jamais : elle part par écrit après le vocal. Un motif (expression régulière).
+    references: str | None = Field(default=None, max_length=300)
+
+    @field_validator("consignes")
+    @classmethod
+    def sans_artefacts(cls, v: str) -> str:
+        if re.search(r"[\u2014\u2013\u00b7]", v):
+            raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+    @field_validator("references")
+    @classmethod
+    def motif_references(cls, v: str | None) -> str | None:
+        return motif_valide(v) if v else v
+
+
+class Photos(Strict):
+    """Les photos reçues (D6) : combien le modèle en voit par tour, et leur description, gardée pour les tours suivants."""
+
+    max: int = Field(default=5, ge=1, le=10)
+    # Le petit modèle (Modeles.juge) dit en une ligne ce qu'on voit sur chacune ; la ligne reste dans l'historique.
+    decrire: bool = False
+    # Ce qu'il doit y regarder, propre au client ; vide : la consigne du noyau.
+    consigne: str = Field(default="", max_length=3000)
+
+
+class ReglageRappels(Strict):
+    """Les rappels (D4) : l'heure d'un rappel demandé sans heure (vide : minuit), et les rappels prévus dans le Contexte."""
+
+    heure: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    contexte: bool = False
+
+
+def motif_valide(v: str) -> str:
+    """Une expression régulière lisible, qui ne trouve jamais une chaîne vide (elle remplacerait partout)."""
+    try:
+        r = re.compile(v, re.I)
+    except re.error as e:
+        raise ValueError(f"motif illisible : {e}") from None
+    if r.fullmatch(""):
+        raise ValueError("un motif qui ne trouve jamais une chaîne vide")
+    return v
+
+
 DOMAINE = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}")
 
 
@@ -237,6 +369,20 @@ class Config(Strict):
     modeles_meta: dict[str, ModeleMeta] = {}
     # Un 👀 sur le message quand un tour traîne, retiré à la réponse.
     reactions: bool = True
+    # Les réactions d'humeur de l'agent sans rôles, et par défaut de ses rôles (Role.humeur) (M7).
+    humeur: Literal["aucune", "complice", "sobre"] = "aucune"
+    # Ce qui part sur WhatsApp ou se dit passe par ces remplacements (un nom qui ne doit jamais sortir).
+    remplacements: tuple[Remplacement, ...] = Field(default=(), max_length=20)
+    historique: Historique = Historique()
+    memoire: Memoire = Memoire()
+    oral: Oral = Oral()
+    photos: Photos = Photos()
+    rappels: ReglageRappels = ReglageRappels()
+    # Un vocal non transcrit, une position, un autocollant, une fiche contact : passés au modèle, qui répond lui-même,
+    # au lieu d'une phrase fixe (M4, D13).
+    pieces_au_modele: bool = False
+    # Une réponse qui s'arrête au milieu d'une phrase (« Oui je transmets votre ») est réécrite par un dernier appel (M2).
+    reprendre_coupees: bool = False
     # Le fil (noyau/fil.py) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour.
     fil: bool = False
     # Le mot du matin (packs/immobilier/bonjour.py) : chaque jour à cette heure (« 08:00 », heure du client), un

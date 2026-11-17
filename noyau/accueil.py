@@ -78,15 +78,45 @@ def texte_accueil(accueil: dict[str, str], langue: str, prenom: str | None) -> s
     return re.sub(r"^(\w+)([,!])", lambda m: f"{m.group(1)} {prenom}{m.group(2)}", t, count=1)
 
 
-def apres_accueil(reponse: str, accueil: str) -> str:
-    """La réponse du modèle après l'accueil envoyé : sans les paragraphes qui le redisent, sans salutation en tête."""
+def ligne_profil(profil: str | None, nom_agent: str) -> str:
+    """Ce que le Contexte de chaque tour dit du profil WhatsApp de la personne (Role.prenom_du_profil, D11)."""
+    if not profil:
+        return ""
+    prenom = prenom_du_profil(profil)
+    if prenom:
+        return (f"Le nom de son profil WhatsApp donne le prénom {prenom} : appelle-la ainsi (« Hello {prenom}, I'm {nom_agent}… », "
+                f"« Bonjour {prenom}, je suis {nom_agent}… »), sauf s'il te semble un surnom ; si elle donne elle-même son prénom, "
+                "c'est le sien.")
+    return "Son profil WhatsApp ne donne pas de prénom (un surnom, une entreprise ou des signes) : aucun nom tant qu'elle ne s'est pas présentée."
+
+
+def _redit(p: str, motifs) -> bool:
+    return any(re.search(m, p, re.I) for m in motifs)
+
+
+def apres_accueil(reponse: str, accueil: str, motifs=()) -> str:
+    """La réponse du modèle après l'accueil envoyé : sans les paragraphes qui le redisent (le même texte, ou un des
+    `motifs` du rôle, Role.accueil_redit), sans salutation en tête."""
     def plat(p: str) -> str:
         return " ".join(re.sub(r"[^\w\s]", " ", p.lower()).split())
 
     redits = {plat(p) for p in re.split(r"\n\s*\n", accueil) if p.strip()}
     paragraphes = [p.strip() for p in re.split(r"\n\s*\n", reponse or "") if p.strip()]
-    gardes = [p for p in paragraphes if plat(p) not in redits and not any(r and r in plat(p) for r in redits)]
+    gardes = [p for p in paragraphes if plat(p) not in redits and not any(r and r in plat(p) for r in redits) and not _redit(p, motifs)]
     if gardes:
         reste = _SALUT_EN_TETE.sub("", gardes[0], count=1)
         gardes[0] = reste[:1].upper() + reste[1:] if reste != gardes[0] else reste
     return "\n\n".join(p for p in gardes if p)
+
+
+def sans_doublon(reponse: str, recu: str, accueil: dict[str, str], motifs=()) -> str:
+    """L'accueil que le modèle a écrit lui-même (sa langue n'était pas sûre) n'est jamais complété en doublon : après sa
+    dernière phrase, rien à une simple salutation ; sinon, ni salutation, ni ce qui le redit (Role.accueil_redit)."""
+    t = str(reponse or "")
+    fins = [f for f in (texte.strip().split("\n")[-1].strip() for texte in accueil.values()) if len(f) >= 10]
+    position = max((t.find(f) + len(f) for f in fins if f in t), default=-1)
+    if position < 0:
+        return t
+    suite = [] if est_salutation(recu) else [p.strip() for p in re.split(r"\n\s*\n", t[position:])
+                                               if p.strip() and not _redit(p, motifs) and not _SALUT_EN_TETE.match(p.strip())]
+    return "\n\n".join([t[:position], *suite])

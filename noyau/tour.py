@@ -2,11 +2,13 @@
 
 - Les messages d'une même personne qui arrivent à quelques secondes d'intervalle
   sont lus ensemble (on envoie souvent plusieurs messages à la suite).
-- Un vocal est transcrit ; à un vocal, l'agent répond par un vocal s'il a une voix,
-  et par écrit en plus ce qui se copie ou se clique (lien, e-mail, numéro).
-- Coches bleues et « en train d'écrire » dès la lecture ; un 👀 si le tour traîne,
-  retiré à la réponse.
-- Hors des 24 heures de WhatsApp, un message de l'agent ne part que par un modèle Meta.
+- Un vocal est transcrit, et le modèle sait que c'en est un et que sa réponse sera dite ; à un vocal, l'agent répond
+  par un vocal s'il a une voix, et par écrit en plus ce qui se copie ou se clique (lien, e-mail, numéro, référence),
+  ou tout, si la personne le demande ou accepte l'écrit que le vocal précédent lui proposait.
+- Coches bleues et « en train d'écrire » dès la lecture, relancé toutes les 20 secondes ; un 👀 si le tour traîne,
+  retiré à la réponse ; parfois une réaction d'humeur (noyau/humeur.py).
+- Une réponse vide ou coupée au milieu d'une phrase : un dernier appel au modèle, sinon l'excuse (noyau/phrases.py).
+- Hors des 24 heures de WhatsApp, un message de l'agent ne part que par un modèle Meta (noyau/envois.py).
 - Une erreur technique n'est jamais envoyée telle quelle.
 - L'accueil d'un rôle (Role.accueil) part tel quel au premier message d'une conversation (noyau/accueil.py).
 - Un choix touché dans une liste ou sur un bouton qu'un pack sait traiter (`choix`, par préfixe) l'est sans le
@@ -22,26 +24,25 @@ import time
 from dataclasses import dataclass, field
 
 from . import accueil as accueils
+from . import phrases
 from .api import DELAI_TOUR
+from .autour import Autour, _borner
 from .config import Config
-from .garde import TROP, TROP_JOUR, Debit, Plafond, masquer_secrets
-from .oral import pour_la_voix
-from .typographie import nettoyer
+from .envois import ABANDON_RAPPEL, ANNONCE_VALIDE, GARDE_JOURNAL, REESSAI_RAPPEL, Envois  # noqa: F401 (réexportés)
+from .garde import TROP, TROP_JOUR, TROP_TU, Debit, Plafond, masquer_secrets
+from .typographie import Remplaceur, nettoyer
 from .voix import a_ecrire, se_prete
-from .whatsapp import Entrant, decrire_media, fenetre_ouverte
+from .whatsapp import PIECES, Entrant, decrire_media
 
 log = logging.getLogger("megga")
 
-EXCUSE = "Je rencontre un petit souci technique. Je reviens vers vous dès que possible."
-NON_COMPRIS = "Je n'ai pas pu écouter ce vocal. Pouvez-vous me l'écrire ?"
+EXCUSE = phrases.EXCUSE[0]
+NON_COMPRIS = phrases.NON_COMPRIS[0]
 REGARD = "\U0001F440"
-REESSAI_RAPPEL = 300  # secondes avant de retenter un rappel en échec
-GARDE_JOURNAL = 400 * 86400  # le journal du noyau (échecs, volumes) : un peu plus d'un an
-ABANDON_RAPPEL = 24 * 3600  # un rappel encore en échec un jour après son heure est abandonné (noté au journal)
 NON_LU = "Je ne lis que les messages écrits, les vocaux, les photos et les documents pour le moment."
-IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
+IMAGES_MAX = 5  # photos montrées au modèle dans un même tour (Photos.max)
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
-ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute pendant douze heures, tant que la personne n'a pas répondu
+ECRIT = 20.0  # WhatsApp retire « en train d'écrire » après 25 s : relancé toutes les 20 s (D7)
 
 
 def en_echec(sortie) -> bool:
@@ -56,13 +57,14 @@ class _Boite:
     role: str = "public"
 
 
-class Conversations:
+class Conversations(Envois, Autour):
     """Les conversations d'un client, une file par personne."""
 
     def __init__(self, conf: Config, agent, expediteur, voie=None, contacts=None, reecrire=None,
                  attente: float = 2.5, seuil_regard: float = 8.0, rappels=None, debit: Debit | None = None,
                  journal=None, fil=None, delai_api: float = DELAI_TOUR, agents: dict | None = None, medias=None,
-                 differes=None, choix: dict | None = None, echeances: list | None = None, fil_tenu=None, etats=None):
+                 differes=None, choix: dict | None = None, echeances: list | None = None, fil_tenu=None, etats=None,
+                 juger=None, decrire=None, role_de=None, memoire=None, seconde_passe=None):
         self.conf = conf
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
@@ -77,7 +79,8 @@ class Conversations:
         self.seuil_regard = seuil_regard
         self.rappels = rappels
         self.debit = debit or Debit()
-        self.plafond = Plafond()
+        # Les plafonds du jour, par rôle s'il en a un (Role.par_jour, D9).
+        self.plafond = Plafond(par_role={n: r.par_jour for n, r in conf.les_roles().items() if r.par_jour})
         self._purge_le = 0.0
         # Un tour par API ne retient pas la personne plus longtemps que le logiciel n'attend.
         self.delai_api = delai_api
@@ -94,12 +97,32 @@ class Conversations:
         self.echeances = list(echeances or [])
         # Le fil des conversations (noyau/fil.py), refait après les réponses, s'il est réglé.
         self.fil_tenu = fil_tenu
-        # Le dernier message de chaque personne, tel que le modèle l'a lu (une règle apprise doit en venir).
+        # Le juge des réactions d'humeur : async f(texte, genre) -> émoji ou « » (noyau/humeur.py).
+        self.juger = juger
+        # La description des photos reçues : async f(images) -> [une ligne par photo] (Photos.decrire).
+        self.decrire = decrire
+        # Le rôle d'une personne hors d'un tour (un rappel à l'heure dite) : f(personne) -> rôle, lu hors de la boucle.
+        self.role_de = role_de
+        # La mémoire par les outils du noyau (noyau/memoire.py), pour le Contexte de chaque tour.
+        self.memoire = memoire
+        # Une seconde passe qu'un pack demande après la réponse (une transmission promise et pas faite, M9) :
+        # async f(rôle, personne, réponse, début du tour) -> consigne ou None ; le tour est relancé une fois.
+        self.seconde_passe = seconde_passe
+        # Ce qui part sur WhatsApp ou se dit passe par les remplacements du client (Config.remplacements).
+        self.remplaceur = Remplaceur(conf.remplacements)
+        # Le dernier message de chaque personne, tel qu'elle l'a écrit ou dit (une règle apprise doit en venir).
         self._entendus: dict[str, str] = {}
         # L'heure du dernier modèle « message » envoyé à chaque personne : une annonce suffit tant qu'elle n'a pas répondu.
         # Gardée aussi dans la base (stockage.Etats) : un conteneur qui s'endort ne la renvoie pas (relecture, I13).
         self._annonces: dict[str, float] = {}
         self.etats = etats
+        # Par personne : son rôle et son profil au dernier tour, les tours depuis sa dernière réaction d'humeur,
+        # la conversation en cours (Historique.inactivite), l'écrit proposé par le dernier vocal.
+        self._roles: dict[str, str] = {}
+        self._profils: dict[str, str] = {}
+        self._depuis_reaction: dict[str, int] = {}
+        self._sessions: dict[str, dict] = {}
+        self._offres: dict[str, float] = {}
         self._boites: dict[str, _Boite] = {}
         # Un verrou par personne, tant qu'un tour la concerne ; oublié ensuite (_a_son_tour).
         self._verrous: dict[str, list] = {}
@@ -110,6 +133,49 @@ class Conversations:
         self.taches.add(t)
         t.add_done_callback(self.taches.discard)
         return t
+
+    # Les réglages du rôle d'une personne
+
+    def _role_conf(self, role: str | None):
+        return self.conf.les_roles().get(role) if role else None
+
+    def _tutoie(self, role: str | None) -> bool:
+        r = self._role_conf(role)
+        return bool(r and r.tutoiement)
+
+    def _humeur(self, role: str | None) -> str:
+        r = self._role_conf(role)
+        return r.humeur if r is not None and r.humeur is not None else self.conf.humeur
+
+    def _rafale(self, role: str | None) -> int | None:
+        r = self._role_conf(role)
+        return r.par_dix_minutes if r is not None else None
+
+    def excuse(self, role: str | None) -> str:
+        return phrases.phrase(phrases.EXCUSE, self._tutoie(role))
+
+    def debit_libre(self, personne: str, role: str | None) -> bool:
+        m = self._rafale(role)
+        return self.debit.libre(personne) if m is None else self.debit.libre(personne, maximum=m)
+
+    def debit_attente(self, personne: str, role: str | None) -> int:
+        m = self._rafale(role)
+        return self.debit.attente(personne) if m is None else self.debit.attente(personne, maximum=m)
+
+    def _debit_permis(self, personne: str, role: str | None) -> bool:
+        m = self._rafale(role)
+        return self.debit.permis(personne) if m is None else self.debit.permis(personne, maximum=m)
+
+    async def _role_de(self, personne: str) -> str | None:
+        if personne in self._roles:
+            return self._roles[personne]
+        if self.role_de is None:
+            return None
+        try:
+            return await asyncio.to_thread(self.role_de, personne)
+        except Exception as e:
+            log.warning("rôle illisible : %s", str(e)[:200])
+            return None
 
     def recevoir(self, m: Entrant, role: str = "public") -> None:
         """Range le message ; le tour part après un court délai, avec ceux qui suivent. `role` : celui de la
@@ -142,6 +208,10 @@ class Conversations:
     def agent_du_role(self, role: str):
         return self.agents.get(role, self.agent)
 
+    def vocal_seul(self, personne: str) -> bool:
+        """Cette personne attend-elle un vocal seul pendant ce tour ? (pas de cartes, M5)"""
+        return personne in getattr(self.exp, "sans_cartes", ())
+
     @contextlib.asynccontextmanager
     async def _a_son_tour(self, personne: str):
         """Les tours d'une même personne passent l'un après l'autre. Le verrou est oublié quand plus personne
@@ -159,49 +229,74 @@ class Conversations:
     async def _tour(self, personne: str, messages: list[Entrant], role: str = "public") -> None:
         async with self._a_son_tour(personne):
             dernier = messages[-1]
+            self._roles[personne] = role
+            if dernier.profil:
+                self._profils[personne] = dernier.profil
+            _borner(self._roles)
+            _borner(self._profils)
             premier = await self._premier(personne, role)
             await self._sans_echec(self._noter(personne, max(m.envoye for m in messages), dernier.profil))
             await self._sans_echec(self.exp.lu(dernier.id))
-            livres = {"n": 0}
-            await self._sans_echec(self._rappels_differes(personne, livres))
-            # Le bouton d'un modèle Meta (« Afficher », « Voir la demande ») : ce qui attendait vient de partir, c'est la
-            # réponse ; son libellé n'est pas une question pour le modèle (relecture du 16.11.2026, I11).
-            if livres["n"] and all(m.genre == "button" for m in messages):
-                for m in messages:
-                    self._noter_fil(personne, "recu", "bouton", m.texte)
-                return
-            if not self.debit.permis(personne):
-                for m in messages:  # reçus, mais sans tour
-                    self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
-                if self.debit.prevenir(personne):
-                    await self._ecrire(personne, TROP)
-                return
-            if (atteint := self.plafond.libre(personne, role)) is not None:
-                for m in messages:
-                    self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
-                self.noter_plafond(atteint)
-                if self.plafond.prevenir(personne):
-                    await self._ecrire(personne, TROP_JOUR)
-                return
-            self.plafond.compter(personne, role)
-            etat = {"pose": False}
-            regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
+            ecrit = asyncio.create_task(self._relancer_ecrit(dernier.id))
             try:
-                await self._repondre(personne, messages, role, premier)
+                await self._tour_lu(personne, messages, role, premier)
             finally:
-                if regard:
-                    regard.cancel()
-                    if etat["pose"]:
-                        await self._sans_echec(self.exp.reaction(personne, dernier.id, ""))
+                ecrit.cancel()
+
+    async def _relancer_ecrit(self, message_id: str) -> None:
+        while True:
+            await asyncio.sleep(ECRIT)
+            await self._sans_echec(self.exp.lu(message_id))
+
+    async def _tour_lu(self, personne: str, messages: list[Entrant], role: str, premier: bool) -> None:
+        dernier = messages[-1]
+        livres = {"n": 0}
+        await self._sans_echec(self._rappels_differes(personne, livres, role))
+        # Le bouton d'un modèle Meta (« Afficher », « Voir la demande ») : ce qui attendait vient de partir, c'est la
+        # réponse ; son libellé n'est pas une question pour le modèle (relecture du 16.11.2026, I11).
+        if livres["n"] and all(m.genre == "button" for m in messages):
+            for m in messages:
+                self._noter_fil(personne, "recu", "bouton", m.texte)
+            return
+        if not self._debit_permis(personne, role):
+            for m in messages:  # reçus, mais sans tour
+                self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
+            if self.debit.prevenir(personne):
+                await self._ecrire(personne, TROP_TU if self._tutoie(role) else TROP)
+            return
+        if (atteint := self.plafond.libre(personne, role)) is not None:
+            for m in messages:
+                self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
+            self.noter_plafond(atteint)
+            if self.plafond.prevenir(personne):
+                await self._ecrire(personne, TROP_JOUR)
+            return
+        self.plafond.compter(personne, role)
+        etat = {"pose": False, "humeur": False, "fini": False, "id": dernier.id}
+        regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
+        try:
+            await self._repondre(personne, messages, role, premier, etat)
+        finally:
+            etat["fini"] = True
+            if regard:
+                regard.cancel()
+            if etat["pose"] and not etat["humeur"]:
+                await self._sans_echec(self.exp.reaction(personne, dernier.id, ""))
 
     async def _regard(self, personne: str, message_id: str, etat: dict) -> None:
         await asyncio.sleep(self.seuil_regard)
+        if etat["humeur"] or etat["fini"]:
+            return
         await self._sans_echec(self.exp.reaction(personne, message_id, REGARD))
         etat["pose"] = True
 
     def _accueil(self, role: str) -> dict[str, str]:
         r = self.conf.les_roles().get(role)
         return r.accueil if r is not None else {}
+
+    def _redit(self, role: str) -> tuple[str, ...]:
+        r = self.conf.les_roles().get(role)
+        return r.accueil_redit if r is not None else ()
 
     async def _premier(self, personne: str, role: str) -> bool:
         """Le premier message d'une conversation (rien de la personne depuis douze heures), pour un rôle qui a un accueil."""
@@ -231,13 +326,16 @@ class Conversations:
         except Exception as e:
             log.error("choix en échec (%s) : %s", self.conf.id, str(e)[:200])
             self.noter_journal("choix_echec", detail=type(e).__name__)
-            reponse = EXCUSE
+            reponse = self.excuse(role)
         if reponse:
             await self._ecrire(personne, reponse)
         return True
 
-    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False) -> None:
-        parties, vocal, sourd, images, rang, choisis = [], False, False, [], 0, 0
+    async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False,
+                        etat: dict | None = None) -> None:
+        etat = etat if etat is not None else {"pose": False, "humeur": False, "fini": False, "id": ""}
+        parties, bruts, vocal, sourd, images, photos, rang, choisis = [], [], False, False, [], [], 0, 0
+        pieces = self.conf.pieces_au_modele
         for m in messages:
             if m.choix and await self._choisi(personne, role, m.choix):
                 choisis += 1
@@ -246,41 +344,80 @@ class Conversations:
                 texte = await self._ecouter(m.vocal)
                 self._noter_fil(personne, "recu", "vocal", texte)
                 if texte:
-                    parties.append(texte)
+                    parties.append(phrases.TRANSCRIT + texte)
+                    bruts.append(texte)
                 else:
                     sourd = True
+                    if pieces:
+                        parties.append(phrases.NON_TRANSCRIT)
             elif m.media:
                 # La photo, la vidéo ou le document, numérotés : l'agent les voit, ses outils les retrouvent.
                 rang += 1
                 n = await self._numeroter(personne, m.media, rang)
                 parties.append(decrire_media(m.media, n) + (f"\n{m.texte}" if m.texte else ""))
+                bruts.append(m.texte)
                 self._noter_fil(personne, "recu", m.media.genre, (f"[média {n}] " + m.texte).strip())
-                if m.media.genre == "image" and len(images) < IMAGES_MAX:
+                if m.media.genre == "image" and len(images) < self.conf.photos.max:
                     vue = await self._regarder(m.media)
                     if vue is not None:
                         images.append(vue)
+                        photos.append((len(parties) - 1, n))
             elif m.texte:
                 self._noter_fil(personne, "recu", "texte", m.texte)
                 parties.append(m.texte)
+                bruts.append(m.texte)
+            elif pieces and m.genre in PIECES:  # une position, un autocollant, une fiche contact (D13)
+                self._noter_fil(personne, "recu", m.genre, "")
+                parties.append(phrases.piece(PIECES[m.genre]))
         entendu = "\n".join(parties).strip()
+        brut = "\n".join(b for b in bruts if b).strip()
         if not entendu:
             if not choisis:
-                await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
+                await self._ecrire(personne, phrases.phrase(phrases.NON_COMPRIS, self._tutoie(role)) if sourd else NON_LU)
             return
-        bienvenue = self._bienvenue(role, entendu, messages[-1].profil) if premier else ""
+        await self._decrire_photos(parties, photos, images)
+        entendu = "\n".join(parties).strip()
+        bienvenue = self._bienvenue(role, brut or entendu, messages[-1].profil) if premier else ""
         if bienvenue:
             await self._ecrire(personne, bienvenue)
-            if accueils.est_salutation(entendu):  # à une simple salutation, l'accueil seul
+            if accueils.est_salutation(brut):  # à une simple salutation, l'accueil seul
                 return
-        reponse, _ = await self._executer(personne, f"{entendu}\n{accueils.APRES_ACCUEIL}" if bienvenue else entendu, role, images)
-        if bienvenue and reponse != EXCUSE:
-            reponse = accueils.apres_accueil(reponse, bienvenue)
+        humeur = self._humeur_du_tour(personne, role, brut, etat)
+        # Le vocal (M5) : la réponse sera dite ; l'écrit, demandé ou accepté, la suit en entier.
+        parle = vocal and self.voie is not None and self.voie.parle
+        offre = await self._offre(personne) if brut else False
+        ecrit = vocal and bool(phrases.PAR_ECRIT.search(brut) or (offre and phrases.OUI.match(brut)))
+        consignes = []
+        if parle:
+            consignes.append(phrases.VOCAL_ECRIT if ecrit else phrases.VOCAL_DIT)
+        elif offre and phrases.OUI.match(brut):
+            consignes.append(phrases.ECRIT_ACCEPTE)
+        if bienvenue:
+            consignes.append(accueils.APRES_ACCUEIL)
+        sans_cartes = getattr(self.exp, "sans_cartes", None) if parle and not ecrit else None
+        if sans_cartes is not None:
+            sans_cartes.add(personne)
+        try:
+            reponse, echec = await self._executer(personne, "\n".join([entendu, *consignes]), role, images, brut=brut or entendu)
+        finally:
+            if sans_cartes is not None:
+                sans_cartes.discard(personne)
+            if humeur is not None:
+                with contextlib.suppress(Exception):
+                    await humeur
+        if bienvenue and not echec:
+            reponse = accueils.apres_accueil(reponse, bienvenue, self._redit(role))
+        elif premier and not echec and self._accueil(role):  # l'accueil écrit par le modèle, jamais complété en doublon
+            reponse = accueils.sans_doublon(reponse, brut, self._accueil(role), self._redit(role))
         if not reponse.strip():
             return
-        if vocal and self.voie is not None and self.voie.parle and se_prete(reponse) and reponse != EXCUSE:
-            if await self._dire(personne, reponse, entendu):
-                if a_ecrire(reponse):
+        if parle and not echec and se_prete(reponse):
+            dit = await self._dire(personne, reponse, brut, role)
+            if dit is not None:
+                if ecrit or a_ecrire(reponse, self.conf.oral.references):
                     await self._ecrire(personne, reponse)
+                # Le vocal a proposé le détail par écrit : un oui au message suivant le fait partir.
+                await self._garder_offre(personne, not ecrit and bool(phrases.OFFRE_ECRIT.search(dit)))
                 return
         await self._ecrire(personne, reponse)
 
@@ -304,26 +441,57 @@ class Conversations:
             log.warning("photo illisible (%s) : %s", self.conf.id, str(e)[:200])
             return None
 
-    async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None) -> tuple[str, bool]:
-        """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur."""
-        self._entendus[personne] = entendu
-        if len(self._entendus) > 5000:  # oublie les plus anciens
-            for p in list(self._entendus)[:1000]:
-                del self._entendus[p]
+    async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None,
+                        brut: str | None = None) -> tuple[str, bool]:
+        """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur. Une
+        réponse vide ou coupée : un dernier appel, sans outil (M1, M2)."""
+        self._entendus[personne] = brut if brut is not None else entendu
+        _borner(self._entendus)
+        self._roles.setdefault(personne, role)
+        agent = self.agent_du_role(role)
+        debut = time.time()
         try:
+            session = await self._session(personne)
             options = {"images": images} if images else {}
-            sortie = await self.agent_du_role(role).arun(entendu, user_id=personne, session_id=personne, **options)
+            sortie = await agent.arun(entendu, user_id=personne, session_id=session, **options)
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
                 self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
-                return EXCUSE, True
+                return self.excuse(role), True
+            reponse = getattr(sortie, "content", None) or ""
+            if not str(reponse).strip():
+                reponse = await self._conclure(agent, personne, session, phrases.FINIR)
+                if not reponse:
+                    log.error("réponse vide (%s)", self.conf.id)
+                    self.noter_journal("tour_echec", detail="vide")
+                    return self.excuse(role), True
+            if self.seconde_passe is not None:
+                consigne = await self.seconde_passe(role, personne, str(reponse), debut)
+                if consigne:
+                    relance = await self._conclure(agent, personne, session, f"[{consigne.strip().strip('[]')}]")
+                    reponse = relance or reponse
+            if self.conf.reprendre_coupees and phrases.inacheve(reponse):
+                repris = await self._conclure(agent, personne, session, phrases.REPRENDRE)
+                if repris and not phrases.inacheve(repris):
+                    reponse = repris
+                else:
+                    self.noter_journal("reponse_coupee")
             if self.fil_tenu is not None:  # après la réponse, en arrière-plan
                 self._lancer(self._sans_echec(self.fil_tenu.apres(personne)))
-            return getattr(sortie, "content", None) or "", False
+            return str(reponse), False
         except Exception as e:
             log.error("tour en échec (%s) : %s", self.conf.id, str(e)[:300])
             self.noter_journal("tour_echec", detail=type(e).__name__)
-            return EXCUSE, True
+            return self.excuse(role), True
+
+    async def _conclure(self, agent, personne: str, session: str, consigne: str) -> str:
+        """Un dernier appel, sur une consigne du système : la réponse, ou « » s'il échoue."""
+        try:
+            sortie = await agent.arun(consigne, user_id=personne, session_id=session)
+            return "" if en_echec(sortie) else str(getattr(sortie, "content", None) or "").strip()
+        except Exception as e:
+            log.warning("dernier appel en échec (%s) : %s", self.conf.id, str(e)[:200])
+            return ""
 
     def noter_plafond(self, atteint: str) -> None:
         """Le plafond du jour atteint (« personne » ou « client ») : au journal, une fois par jour, sans numéro."""
@@ -332,7 +500,7 @@ class Conversations:
             self.noter_journal("plafond", detail=atteint)
 
     def entendu(self, personne: str) -> str:
-        """Le dernier message de cette personne, tel que le modèle l'a lu dans son tour."""
+        """Le dernier message de cette personne, tel qu'elle l'a écrit ou dit."""
         return self._entendus.get(personne, "")
 
     async def repondre_api(self, personne: str, texte: str, role: str = "public") -> tuple[str, bool] | None:
@@ -347,9 +515,10 @@ class Conversations:
             self.taches.add(lance)
         try:
             async with self._a_son_tour(personne):
-                if not self.debit.permis(personne):
+                if not self._debit_permis(personne, role):
                     return None
                 self.plafond.compter(personne, role)
+                self._roles[personne] = role
                 premier = await self._premier(personne, role)
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
@@ -359,47 +528,23 @@ class Conversations:
                 else:
                     try:
                         brute, echec = await asyncio.wait_for(
-                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role), self.delai_api)
+                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role, brut=texte),
+                            self.delai_api)
                     except asyncio.TimeoutError:
                         log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
                         self.noter_journal("tour_echec", detail="delai")
-                        brute, echec = EXCUSE, True
+                        brute, echec = self.excuse(role), True
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
-                        brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
-                reponse = nettoyer(masquer_secrets(brute))
+                        brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue, self._redit(role))) if p)
+                reponse = self.remplaceur.texte(nettoyer(masquer_secrets(brute)))
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:
             if lance is not None:
                 self.taches.discard(lance)
 
-    async def _ecouter(self, media_id: str) -> str:
-        if self.voie is None or not self.voie.ecoute:
-            return ""
-        try:
-            texte = await self.voie.transcrire(await self.exp.telecharger(media_id))
-            self.noter_journal("vocal_entendu")
-            return texte
-        except Exception as e:
-            log.error("vocal illisible (%s) : %s", self.conf.id, str(e)[:200])
-            self.noter_journal("vocal_illisible", detail=type(e).__name__)
-            return ""
-
-    async def _dire(self, personne: str, reponse: str, entendu: str) -> bool:
-        try:
-            dit = await pour_la_voix(self.reecrire, nettoyer(reponse), entendu) if self.reecrire else reponse
-            audio, ogg = await self.voie.dire(dit)
-            self.noter_journal("voix_caracteres", len(dit))
-            await self.exp.vocal(personne, audio, ogg)
-            self._noter_fil(personne, "envoye", "vocal", dit)
-            return True
-        except Exception as e:
-            log.error("voix en échec (%s), réponse écrite : %s", self.conf.id, str(e)[:200])
-            self.noter_journal("voix_echec", detail=type(e).__name__)
-            return False
-
     async def _ecrire(self, personne: str, texte: str) -> None:
-        envoye = nettoyer(masquer_secrets(texte))
+        envoye = self.remplaceur.texte(nettoyer(masquer_secrets(texte)))
         try:
             await self.exp.texte(personne, envoye)
             self._noter_fil(personne, "envoye", "texte", envoye)
@@ -424,206 +569,6 @@ class Conversations:
     async def _noter(self, personne: str, quand: float, nom: str = "") -> None:
         if self.contacts is not None and quand:
             await asyncio.to_thread(self.contacts.noter, personne, quand, nom)
-
-    async def ecrire_de_soi_meme(self, personne: str, texte: str, usage: str, variable: str | None = None) -> str:
-        """Un message que l'agent envoie sans qu'on vienne de lui écrire (rappel, relance). Hors des 24 heures, le modèle
-        Meta de cet usage reçoit `variable` (le texte lui-même, sans elle).
-
-        Rend « libre » (dans les 24 heures), « modele » (par le modèle Meta de cet
-        usage) ou « attente » (ni l'un ni l'autre : à remettre au prochain message).
-        """
-        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
-        if fenetre_ouverte(dernier):
-            await self.exp.texte(personne, nettoyer(texte))
-            self._noter_fil(personne, "envoye", usage, nettoyer(texte))
-            return "libre"
-        modele = self.conf.modeles_meta.get(usage)
-        if modele:
-            try:
-                await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
-                self._noter_fil(personne, "envoye", "modele", nettoyer(texte)[:1000])
-                return "modele"
-            except Exception as e:
-                # Un modèle suspendu, reclassé ou refusé : le rappel attend le prochain message, sans boucler toutes les
-                # 5 minutes (relecture du 16.11.2026, I10).
-                log.error("modèle « %s » refusé (%s) : %s", usage, self.conf.id, str(e)[:200])
-                self.noter_journal("envoi_echec", detail="modele")
-        # Sans modèle de cet usage (ou refusé) : le modèle « message » annonce que quelque chose attend (le rappel part
-        # au message suivant).
-        await self._annoncer(personne)
-        return "attente"
-
-    async def envoyer_de_soi_meme(self, personne: str, messages: list[dict], usage: str, variables: list[str] | None = None,
-                                  langue: str = "", garder: bool = True) -> str:
-        """Des messages que l'agent envoie de lui-même à une personne (une demande pour un gestionnaire, une fiche
-        pour un partenaire, une réponse pour un visiteur). `messages` : {"texte", "apercu"?}, {"document", "nom", "legende"}
-        (un identifiant chez Meta) ou {"liste": {corps, bouton, section, lignes}}.
-
-        Dans les 24 heures, ils partent. Au-delà, ils sont gardés pour son prochain message (stockage.Differes, sauf `garder` faux),
-        et le modèle Meta de cet usage (« <usage>_<langue> » d'abord) l'annonce s'il est réglé, avec `variables`.
-        Rend « libre », « modele », « attente », ou « aucune » (pas de WhatsApp, ou une personne venue par API).
-        """
-        if self.conf.whatsapp is None or personne.startswith("api:"):
-            return "aucune"
-        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
-        if fenetre_ouverte(dernier):
-            await self._envoyer_messages(personne, messages, usage)
-            return "libre"
-        if garder and self.differes is not None:
-            await asyncio.to_thread(self.differes.garder, personne, messages)
-        modele = self.conf.modeles_meta.get(f"{usage}_{langue}") or self.conf.modeles_meta.get(usage)
-        if modele:
-            try:
-                await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(v)[:1000] for v in (variables or [])])
-                self._noter_fil(personne, "envoye", "modele", " | ".join(variables or []))
-                return "modele"
-            except Exception as e:
-                log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
-                self.noter_journal("envoi_echec", detail="modele")
-        # Le repli : le modèle « message » (« Vous avez un message de… ») annonce ce qui est gardé.
-        if garder and self.differes is not None and await self._annoncer(personne, langue):
-            return "modele"
-        return "attente"
-
-    async def _annoncer(self, personne: str, langue: str = "") -> bool:
-        """Le modèle Meta « message » (« message_<langue> » d'abord), s'il est réglé : il annonce un message qui attend, sa
-        réponse rouvre les 24 heures et ce qui était gardé part aussitôt. Sa variable : le nom de l'agent."""
-        modele = self.conf.modeles_meta.get(f"message_{langue}") or self.conf.modeles_meta.get("message")
-        if modele is None:
-            return False
-        # Déjà annoncé depuis son dernier message, il y a moins de douze heures : ce qui s'ajoute partira avec le reste.
-        deja = self._annonces.get(personne)
-        if deja is None and self.etats is not None:
-            try:
-                deja = await asyncio.to_thread(self.etats.lire, personne, "annonce")
-            except Exception as e:
-                log.warning("annonce illisible : %s", str(e)[:200])
-        dernier = await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None
-        if deja and time.time() - deja < ANNONCE_VALIDE and (dernier is None or deja > dernier):
-            return True
-        try:
-            await self.exp.modele(personne, modele.nom, modele.langue, [self.conf.nom_agent])
-            self._noter_fil(personne, "envoye", "modele", "un message attend")
-            self._annonces[personne] = time.time()
-            if self.etats is not None:
-                await self._sans_echec(asyncio.to_thread(self.etats.ecrire, personne, "annonce", self._annonces[personne]))
-            if len(self._annonces) > 5000:
-                for p in list(self._annonces)[:1000]:
-                    del self._annonces[p]
-            return True
-        except Exception as e:
-            log.error("modèle « message » refusé (%s) : %s", self.conf.id, str(e)[:200])
-            self.noter_journal("envoi_echec", detail="modele")
-            return False
-
-    async def peut_ecrire(self, personne: str, usage: str, langue: str = "") -> bool:
-        """Un message libre (dans les 24 heures) ou le modèle Meta de cet usage peut-il partir à cette personne ?"""
-        if self.conf.whatsapp is None or personne.startswith("api:"):
-            return False
-        if self.conf.modeles_meta.get(f"{usage}_{langue}") or self.conf.modeles_meta.get(usage):
-            return True
-        if self.differes is not None and self.conf.modeles_meta.get("message"):
-            return True
-        return fenetre_ouverte(await asyncio.to_thread(self.contacts.dernier, personne) if self.contacts else None)
-
-    async def _envoyer_messages(self, personne: str, messages: list[dict], usage: str) -> None:
-        for m in messages:
-            if m.get("document"):
-                await self.exp.document(personne, m.get("nom") or "document.pdf", media_id=m["document"], legende=m.get("legende", ""))
-                self._noter_fil(personne, "envoye", "document", m.get("legende") or m.get("nom") or "")
-            elif m.get("liste"):
-                l = m["liste"]
-                await self.exp.liste(personne, nettoyer(l["corps"]), l["bouton"], l["section"], l["lignes"])
-                self._noter_fil(personne, "envoye", "liste", nettoyer(l["corps"]))
-            elif m.get("texte"):
-                if m.get("apercu"):  # la carte d'une annonce : son lien avec son aperçu
-                    await self.exp.texte(personne, nettoyer(m["texte"]), apercu=True)
-                else:
-                    await self.exp.texte(personne, m["texte"] if m.get("secret") else nettoyer(m["texte"]))
-                # Un mot de passe ne se range jamais dans le fil (relu par la console et par le résumé du fil).
-                self._noter_fil(personne, "envoye", usage, "(mot de passe envoyé)" if m.get("secret") else nettoyer(m["texte"]))
-
-    async def _rappels_differes(self, personne: str, livres: dict | None = None) -> None:
-        """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant.
-        `livres["n"]` : combien sont partis."""
-        livres = {"n": 0} if livres is None else livres
-        if self.differes is not None:
-            # Chaque ligne gardée se retire une fois envoyée : un conteneur qui tombe en route ne perd rien.
-            for ligne in await asyncio.to_thread(self.differes.a_envoyer, personne):
-                rates = []
-                for m in ligne["messages"]:
-                    try:
-                        await self._envoyer_messages(personne, [m], "differe")
-                        livres["n"] += 1
-                    except Exception as e:
-                        # Retenté au message suivant, sans rajeunir (effacé après un mois) ni retenir ceux qui suivent.
-                        log.error("message gardé non envoyé (%s) : %s", self.conf.id, str(e)[:200])
-                        self.noter_journal("envoi_echec", detail="differe")
-                        rates.append(m)
-                if rates:
-                    await asyncio.to_thread(self.differes.garder, personne, rates, ligne["quand"])
-                await asyncio.to_thread(self.differes.retirer, ligne["ligne"])
-        if self.rappels is None:
-            return
-        for r in await asyncio.to_thread(self.rappels.differes, personne):
-            await self.exp.texte(personne, nettoyer(f"Rappel : {r['texte']}"))
-            self._noter_fil(personne, "envoye", "rappel", nettoyer(f"Rappel : {r['texte']}"))
-            await asyncio.to_thread(self.rappels.marquer, r["id"], "envoye")
-            livres["n"] += 1
-
-    async def envoyer_rappels_echus(self, maintenant: float) -> dict:
-        """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
-        bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
-        if self.journal is not None and maintenant >= self._purge_le:  # le journal ne grossit pas sans fin
-            self._purge_le = maintenant + 86400
-            await self._sans_echec(asyncio.to_thread(self.journal.purger, maintenant - GARDE_JOURNAL))
-        if self.rappels is None:
-            return {"prochain": await self._echeances(maintenant), **bilan}
-        # Les rappels d'abord : une échéance d'un pack (une recherche sur les portails) peut prendre du temps.
-        for r in await asyncio.to_thread(self.rappels.echus, maintenant):
-            if self.conf.whatsapp is None:
-                # Un agent sans WhatsApp (seulement par API) ne peut rien envoyer : un rappel d'avant est
-                # annulé, au lieu d'échouer à chaque passage.
-                await asyncio.to_thread(self.rappels.marquer, r["id"], "annule")
-                self.noter_journal("rappel_echec", detail="sans WhatsApp")
-                bilan["echec"] += 1
-                continue
-            try:
-                async with self._a_son_tour(r["personne"]):  # jamais au milieu d'une réponse en route
-                    voie = await self.ecrire_de_soi_meme(r["personne"], f"Rappel : {r['texte']}", "rappel", str(r["texte"]).strip().rstrip("."))
-                await asyncio.to_thread(self.rappels.marquer, r["id"], "differe" if voie == "attente" else "envoye")
-                bilan[voie] += 1
-            except Exception as e:
-                log.error("rappel en échec (%s) : %s", self.conf.id, str(e)[:200])
-                if maintenant - float(r["quand"]) > ABANDON_RAPPEL:  # un jour d'échecs : abandonné, plus retenté
-                    await asyncio.to_thread(self.rappels.marquer, r["id"], "echec")
-                    self.noter_journal("rappel_echec", detail="abandonné après un jour")
-                    continue
-                self.noter_journal("rappel_echec", detail=type(e).__name__)
-                bilan["echec"] += 1
-        prochain = await asyncio.to_thread(self.rappels.prochain)
-        if bilan["echec"] and prochain is not None:
-            # Un rappel en échec reste à envoyer : il est retenté dans 5 minutes, pas en boucle.
-            prochain = max(prochain, maintenant + REESSAI_RAPPEL)
-        suivant = await self._echeances(maintenant)
-        if suivant is not None:
-            prochain = suivant if prochain is None else min(prochain, suivant)
-        return {"prochain": prochain, **bilan}
-
-    async def _echeances(self, maintenant: float) -> float | None:
-        """Ce que les packs ont à faire à l'heure dite ; rend la plus proche des prochaines heures. Une échéance en
-        échec est retentée dans 5 minutes."""
-        prochaines = []
-        for f in self.echeances:
-            try:
-                p = await f(maintenant)
-            except Exception as e:
-                log.error("échéance en échec (%s) : %s", self.conf.id, str(e)[:200])
-                self.noter_journal("echeance_echec", detail=type(e).__name__)
-                p = maintenant + REESSAI_RAPPEL
-            if p is not None:
-                prochaines.append(p)
-        return min(prochaines) if prochaines else None
 
     @staticmethod
     async def _sans_echec(coro) -> None:
