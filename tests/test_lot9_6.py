@@ -1,6 +1,7 @@
 """Lot 9.6 : le banc d'essai par pack, mesuré en pass^k (noyau/banc.py)."""
 
 import asyncio
+import datetime as dt
 from types import SimpleNamespace
 
 import pytest
@@ -88,7 +89,9 @@ def test_le_juge_qui_refuse_ou_qui_tombe():
     for juge, raison in ((juge_severe, "pas poli"), (juge_en_panne, "juge illisible")):
         r = asyncio.run(banc.passer(CONF, lambda conf, dossier: AgentDEssai(["C'est noté."], ["rappeler"]), juge, k=1, cas=CAS))
         [note] = [n for n in r["resultats"][0]["essais"][0]["notes"] if n.get("juge")]
-        assert r["score"] == 0.0 and raison in note["raison"]
+        assert raison in note["raison"]
+        # un juge en panne ne note pas l'agent : le rapport est incomplet, sans score (relecture du 17.11.2026)
+        assert (r["score"], r["incomplet"]) == ((0.0, None) if juge is juge_severe else (None, note["raison"]))
     with pytest.raises(ValueError):
         asyncio.run(banc.passer(CONF, lambda conf, dossier: AgentDEssai(["x"]), juge_d_accord, k=6, cas=CAS))
 
@@ -104,14 +107,22 @@ def test_avec_un_vrai_agent_agno():
 # L'atelier
 
 
-def test_le_banc_dans_l_atelier(tmp_path):
+def atelier(tmp_path, juge=juge_d_accord):
     from atelier.app import creer as creer_atelier
-    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, MEGGA, FaussePorte, FauxModele, jeton_client, nouveau_client
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, FaussePorte, FauxModele, nouveau_client
 
-    t = TestClient(creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db",
-                                  "ESSAIS_DIR": str(tmp_path / "essais"), "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE},
-                                 porte=FaussePorte(), principal_essai=FauxModele(), juge_banc=juge_d_accord))
+    app = creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db",
+                         "ESSAIS_DIR": str(tmp_path / "essais"), "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE},
+                        porte=FaussePorte(), principal_essai=FauxModele(), juge_banc=juge)
+    t = TestClient(app)
     nouveau_client(t)
+    return app, t
+
+
+def test_le_banc_dans_l_atelier(tmp_path):
+    from test_lot5 import MEGGA, jeton_client
+
+    _, t = atelier(tmp_path)
     client = jeton_client(t)
     assert t.post("/atelier/clients/exemple/versions/1/banc", headers=client, json={"k": 1}).status_code == 403  # il coûte : MEGGA
     assert t.post("/atelier/clients/exemple/versions/1/banc", headers=MEGGA, json={"k": 9}).status_code == 400
@@ -121,3 +132,106 @@ def test_le_banc_dans_l_atelier(tmp_path):
     assert d["version"] == 1 and d["cas"] == len(banc.scenarios("general")) and 0 <= d["score"] <= 1
     # le score reste avec le brouillon, lisible du client
     assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["banc"]["cas"] == d["cas"]
+
+
+# La relecture du 17.11.2026
+
+
+def test_un_modele_en_erreur_ne_reussit_jamais(monkeypatch):
+    """Agno ne lève pas : il rend un statut d'erreur, et son message (« 429 rate_limit_error ») à la place de la réponse."""
+    from test_suivi import ModeleEnPanne
+
+    for cle in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY"):  # le secours ne part jamais pour de vrai
+        monkeypatch.delenv(cle, raising=False)
+
+    cas = [{"id": "T02", "titre": "un merci", "etapes": [{"texte": "Merci"}, {"texte": "Bonne journée"}], "faits": "",
+            "criteres": [{"nom": "pas de mot de passe", "pas_motif": "Soleil"}]}]
+    r = asyncio.run(banc.passer(CONF, banc.agent_d_essai({}, principal=ModeleEnPanne()), juge_d_accord, k=1, cas=cas))
+    [essai] = r["resultats"][0]["essais"]
+    assert not essai["ok"] and r["score"] is None and r["incomplet"]
+    assert essai["journal"] == [("personne", "Merci")]  # l'essai s'arrête, l'erreur n'est pas une réponse de l'agent
+
+
+def test_un_client_a_roles_est_essaye_comme_une_personne_nouvelle(tmp_path):
+    """En service, une personne nouvelle est servie par l'agent du visiteur (noyau/roles.py)."""
+    from test_lot5 import FauxModele
+
+    roles = {"partenaire": {"consignes": "Tu sers les partenaires."}, "visiteur": {"consignes": "Tu sers les visiteurs."}}
+    conf = configuration.lire({**CONF.model_dump(mode="json"), "roles": roles})
+    agent = banc.agent_d_essai({}, principal=FauxModele())(conf, tmp_path)
+    assert agent.id == f"{conf.id}-visiteur"
+
+
+@pytest.mark.parametrize("cas_outil", ["fait", "refuse", "erreur"])
+def test_un_outil_en_echec_ne_compte_pas_comme_appele(cas_outil):
+    """Un rappel refusé par le gardien ou en erreur n'est pas programmé : « programme le rappel » ne tient pas."""
+    from test_lot9_1 import ModeleOutil
+
+    regles = {"rappeler": "approbation"} if cas_outil == "refuse" else {}
+    conf = configuration.lire({**CONF.model_dump(mode="json"), "approbations": regles})
+    quand = (dt.datetime.now() + dt.timedelta(days=30)).strftime("%Y-%m-%dT10:00")
+    modele = ModeleOutil(outil="rappeler", arguments={"quand": quand, "quoi": "" if cas_outil == "erreur" else "le dossier"})
+    r = asyncio.run(banc.passer(conf, banc.agent_d_essai({}, principal=modele), juge_d_accord, k=1, cas=CAS))
+    [essai] = r["resultats"][0]["essais"]
+    rates = [n["nom"] for n in essai["notes"] if not n["ok"]]
+    assert rates == ([] if cas_outil == "fait" else ["programme le rappel"]), essai
+
+
+def test_le_juge_qui_ecrit_false_en_toutes_lettres():
+    async def juge(cas, trace, criteres):
+        return [{"ok": "false", "raison": "pas poli"} for _ in criteres]
+
+    r = asyncio.run(banc.passer(CONF, lambda conf, dossier: AgentDEssai(["C'est noté."], ["rappeler"]), juge, k=1, cas=CAS))
+    assert r["score"] == 0.0
+
+
+def test_le_juge_a_un_delai(monkeypatch):
+    import anthropic
+
+    vus = {}
+
+    class Client:
+        def __init__(self, **k):
+            vus.update(k)
+            self.messages = self
+
+        async def create(self, **k):
+            return SimpleNamespace(content=[SimpleNamespace(text='[{"ok": true, "raison": "poli"}]')])
+
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", Client)
+    trace = {"journal": [], "outils": [], "resultats": []}
+    assert asyncio.run(banc.juge_anthropic("claude-sonnet-5-5", "cle")(CAS[0], trace, ["poli"]))[0]["ok"] is True
+    assert 0 < vus["timeout"] <= 120 and vus["max_retries"] <= 1
+
+
+def test_le_juge_en_panne_ne_laisse_pas_de_score(tmp_path):
+    from test_lot5 import MEGGA
+
+    async def juge_en_panne(cas, trace, criteres):
+        raise RuntimeError("Anthropic indisponible")
+
+    _, t = atelier(tmp_path, juge_en_panne)
+    r = t.post("/atelier/clients/exemple/versions/1/banc", headers=MEGGA, json={"k": 1})
+    assert r.status_code == 200 and r.json()["incomplet"] and r.json()["score"] is None
+    assert t.get("/atelier/clients/exemple/versions/1", headers=MEGGA).json()["banc"] is None  # rien de gardé, rien de montré
+
+
+def test_un_seul_banc_a_la_fois_par_client(tmp_path):
+    """Un second clic ne relance pas tout en parallèle (le coût doublé) : il est refusé tant que le premier tourne."""
+    import httpx
+    from test_lot5 import MEGGA
+
+    async def juge_lent(cas, trace, criteres):
+        await asyncio.sleep(0.05)
+        return [{"ok": True, "raison": "tenu"} for _ in criteres]
+
+    app, _ = atelier(tmp_path, juge_lent)
+
+    async def deux_clics():
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://atelier") as c:
+            return await asyncio.gather(*(c.post("/atelier/clients/exemple/versions/1/banc", headers=MEGGA, json={"k": 1})
+                                          for _ in range(2)))
+
+    r = asyncio.run(deux_clics())
+    assert sorted(x.status_code for x in r) == [200, 409]
+    assert "en cours" in next(x for x in r if x.status_code == 409).json()["erreur"]
