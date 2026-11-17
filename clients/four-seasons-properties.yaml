@@ -22,6 +22,14 @@ outils: []
 modeles:
   principal: claude-sonnet-5-5
   secours: deepseek-v4-pro
+# La voix d'Alix, celle du Worker fourseasons-alix avant la bascule : Elise (ElevenLabs), en français comme en
+# anglais, Eleven v4, stabilité 1, vitesse 1. Sans elle, Alix transcrit les vocaux mais répond par écrit (Greg,
+# 17.11.2026 : « je n'ai pas d'outils pour envoyer des messages vocaux »). En service dans l'atelier : version 5.
+voix:
+  voix: EST9Ui6982FZPSi7gCHi
+  modele: eleven_v4
+  stabilite: 1.0
+  vitesse: 1.0
 gestion:
   url: https://fourseasonsproperties.ch
   sites:
