@@ -51,10 +51,14 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         base.append(config.consignes.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
-    if role is not None and set(role.outils) - {"rappels", "immobilier"}:  # la façon de se servir des outils du pack
+    if role is not None and set(role.outils) - {"rappels", "immobilier", "connaissances"}:  # la façon de se servir des outils du pack
         from packs.immobilier.relations import consignes_des_groupes
 
         base += consignes_des_groupes(role.outils, config, role)
+    if "connaissances" in (role.outils if role is not None else config.outils):  # la base de documents (noyau/connaissances.py)
+        from .connaissances import CONSIGNE
+
+        base.append(CONSIGNE)
     return base
 
 

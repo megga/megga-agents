@@ -69,6 +69,9 @@ class Porte:
     async def decider(self, ident: str, numero: int, accord: bool, par: str) -> dict:
         """Une demande d'accord d'un client (noyau/approbations.py), accordée (et faite) ou refusée ; `par` : qui décide."""
         return await self._appel("POST", f"/admin/clients/{ident}/approbations/{int(numero)}", json={"accord": accord, "par": par})
+    async def connaissances(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
+        """La base de connaissances d'un client, gardée dans sa base : lister, ajouter un document, en retirer un."""
+        return await self._appel(methode, f"/admin/clients/{ident}/connaissances{chemin}", json=corps, timeout=120)
 
     async def cles(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
         """Les clés des logiciels d'un client, gardées dans sa base : lister, ajouter (une empreinte), retirer."""

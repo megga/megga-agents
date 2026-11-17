@@ -68,6 +68,8 @@ jobs:
           # le tour échoue faute de clé de modèle, mais rien ne doit avoir voulu écrire sur le disque
           if docker logs essai 2>&1 | grep -qi "read-only file system"; then exit 1; fi
           test "$(docker inspect -f '{{.State.Running}}' essai)" = true
+      - name: Le modèle de recherche de la base de connaissances est dans l'image, et cohérent
+        run: docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp megga-agents:essai python -m noyau.connaissances verifier
       - name: La même image démarre en atelier
         run: |
           docker run -d --name atelier -p 8081:8080 --read-only --tmpfs /tmp -e HOME=/tmp -e MEGGA_SERVICE=atelier \

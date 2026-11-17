@@ -4,8 +4,8 @@ D'après l'étude de marché du 16.11.2026 (le catalogue des fonctionnalités in
 
 | Sous-lot | Contenu |
 |---|---|
-| **9.1 Approbations et journal d'audit** (cette PR) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
-| 9.2 Base de connaissances | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
+| **9.1 Approbations et journal d'audit** (fait) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
+| **9.2 Base de connaissances** (cette PR) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
 | 9.3 Transfert vers un humain | passer la main à un collaborateur avec un résumé, puis la reprendre |
 | 9.4 Leads et connecteurs | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
 | 9.5 Le client et ses chiffres | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
@@ -56,3 +56,37 @@ Côté porte : `GET /admin/clients/{id}/suivi/audit|approbations` (lues une minu
 |---|---|---|---|---|
 | `approbation` | un gestionnaire | Bonjour, {{1}} attend votre accord avant de faire une action pour une personne qui lui a écrit : {{2}}. Touchez le bouton pour voir la demande et y répondre. | Voir la demande | le nom de l'agent, le nom de l'outil |
 | `approbation_reponse` | la personne | Bonjour, l'équipe a répondu à la demande que vous avez faite à {{1}}. Touchez le bouton pour lire sa réponse. | Lire la réponse | le nom de l'agent |
+
+## 9.2 La base de connaissances
+
+**Pourquoi.** La qualité des réponses est le premier frein cité par les entreprises, et l'analyse de documents leur premier cas d'usage (étude de marché, section 3). Un agent qui répond d'après les documents du client (tarifs, conditions, horaires, procédures) et qui cite sa source, ou qui dit qu'il ne sait pas, invente moins.
+
+**Le groupe d'outils `connaissances`**, dans `Config.outils` (l'agent sans rôles) ou dans les outils d'un rôle : il ne va qu'aux rôles qu'on choisit (un partenaire, qui ne doit jamais voir un prix, ne l'a pas d'office). Il donne l'outil `chercher_dans_les_documents` et une consigne : chercher d'abord dans les documents, citer leur titre entre parenthèses, dire simplement quand rien ne répond. Les deux métiers le permettent.
+
+**Rien ne sort de la zone du client** (décidé avec Thomas le 16.11.2026) : ni les documents, ni les questions. Le modèle de recherche par le sens est embarqué dans l'image :
+- `paraphrase-multilingual-MiniLM-L12-v2`, quantifié en int8 (ONNX, 118 Mo) : français, allemand, italien, anglais, et d'une langue à l'autre (une question en français trouve un passage en allemand) ;
+- posé à la construction de l'image par `socle/modele.py`, révision de Hugging Face et empreintes SHA-256 figées : un fichier changé arrête la construction ; la CI vérifie que le modèle de l'image répond juste (`python -m noyau.connaissances verifier`) ;
+- chargé au premier document ou à la première question seulement, puis gardé tant que le conteneur est éveillé : un client sans documents ne paie rien.
+
+**La mémoire, à surveiller.** Mesuré sur linux/amd64 : environ 110 Mo pour l'agent seul, environ 550 Mo une fois le modèle chargé (sans la réserve d'onnxruntime, désactivée). Les conteneurs sont en `basic` (1 Gio) et le chart Helm limite à 1 Gi : ça tient pour un client, mais un agent chargé (pack immobilier, plusieurs rôles) avec une base de connaissances est à mesurer en production avant d'en ouvrir beaucoup ; `standard-1` (4 Gio, environ 27 $ par mois) est l'issue si ça ne tient pas. L'image passe de 672 Mo à 1,13 Go (onnxruntime, numpy, le modèle). Le modèle quantifié demande un processeur x86-64 avec AVX2 (Cloudflare, Exoscale et les serveurs courants l'ont).
+
+**Les documents.** Texte (ou Markdown), PDF (avec du texte : un PDF scanné doit d'abord passer par une reconnaissance de caractères) ou page HTML ; 8 Mo au plus. Lus, découpés en passages d'environ 800 caractères aux fins de phrase (chacun reprend la fin du précédent : une réponse coupée en deux se retrouve), calculés, rangés dans la base du client (`megga_documents`, `megga_passages` avec le vecteur et le nom du modèle qui l'a calculé). Le texte d'origine n'est pas gardé, seulement ses passages. 200 documents et 20 000 passages au plus par client, vérifiés avant le calcul ; un PDF n'est lu que jusqu'à un million de caractères ou 2 000 pages. Un document du même titre qu'un document déjà rangé est refusé, en le disant (un envoi repris après un délai dépassé ne se range pas deux fois) : pour le remplacer, on retire l'ancien. Une page HTML n'est lue que pour ce qu'elle affiche (ni `noscript`, ni `template`, ni éléments cachés).
+
+**La recherche** compare la question à tous les passages, en mémoire : une PME en a quelques milliers au plus, la comparaison prend quelques millisecondes. Ni pgvector ni rien de propre à Postgres : la même chose sur SQLite, comme le veut le plan. Seuls les passages au-dessus d'un seuil (0,3, mesuré sur le modèle int8 : une question hors sujet ne rend rien) partent au modèle, quatre au plus, avec leur titre, entre guillemets et présentés comme des citations, jamais des consignes ; la CI le vérifie avec une question hors sujet (`verifier`). La recherche se fait hors de la boucle d'événements : le chargement du modèle ne gèle pas le conteneur.
+
+**Les routes.**
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /atelier/clients/{id}/connaissances` | tous | les documents de la base |
+| `POST /atelier/clients/{id}/connaissances` | tous | `{titre, genre (texte, pdf, html), texte ou base64, source?}` : le document lu et rangé (`201`) ; `400` s'il est illisible, vide ou de trop |
+| `DELETE /atelier/clients/{id}/connaissances/{n}` | tous | retire un document et ses passages |
+
+Côté porte : `GET|POST /admin/clients/{id}/connaissances`, `DELETE /admin/clients/{id}/connaissances/{n}` (jeton `ADMIN_TOKEN`, 12 Mo au plus avec sa longueur), transmises au conteneur (`/interne/connaissances`). Hors Cloudflare, rien n'entre chez le client (`409`) : les documents s'ajoutent sur son serveur, `docker compose exec agent python -m noyau.connaissances ajouter conditions.pdf "Conditions de location"` (et `lister`, `retirer <n>`).
+
+**Les tables** (additives, sans changer `SCHEMA_VERSION`) : `megga_documents`, `megga_passages` ; exportées et importées avec le reste du client (les vecteurs en base64).
+
+**Ce qui reste.**
+- L'essai de l'atelier n'a pas les documents du client (sa base d'essai est à part) : l'outil y répond qu'ils ne sont pas consultables ici.
+- Un changement de modèle demandera de recalculer les passages (le nom du modèle est gardé avec chaque vecteur pour le savoir).
+- Pas encore de lecture d'un site entier, d'un Drive ni d'un fichier Word : à venir avec les connecteurs (9.4).

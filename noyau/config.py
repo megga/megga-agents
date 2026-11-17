@@ -21,10 +21,11 @@ VERSION = 1
 SANS_WHATSAPP_SCHEMA = 2
 ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
-METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
+METIERS: dict[str, tuple[str, ...]] = {"general": ("connaissances",), "immobilier": ("immobilier", "connaissances")}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
-OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                                                "vitrine", "accueil", "marche", "travail")}
+OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": ("connaissances",),
+                                                "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
+                                                               "vitrine", "accueil", "marche", "travail", "connaissances")}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
 OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
@@ -128,7 +129,8 @@ class Role(Strict):
     `approbations` : pour les personnes de ce rôle, par-dessus celles de la configuration (noyau/approbations.py)."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail",
+                         "connaissances"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
     approbations: dict[str, REGLE_OUTIL] = {}
 
@@ -255,8 +257,8 @@ class Config(Strict):
     fil: bool = False
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
     metier: Literal["general", "immobilier"] = "general"
-    # Les packs actifs (aujourd'hui : « immobilier »).
-    outils: tuple[Literal["immobilier"], ...] = ()
+    # Les packs actifs : « immobilier », « connaissances » (la base de documents du client, noyau/connaissances.py).
+    outils: tuple[Literal["immobilier", "connaissances"], ...] = ()
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
     catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
     # Les rôles des personnes (gestionnaires, partenaires, visiteurs) ; sans eux, un seul agent pour tous.

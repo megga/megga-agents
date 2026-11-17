@@ -388,3 +388,37 @@ test("le commit déployé (wrangler deploy --tag) est remis au conteneur", async
   await new Atelier(b.ctx, { ...envW, VERSION_PORTE: { id: "v2", tag: "" } }).demarrer();
   assert.equal("MEGGA_REVISION" in b.journal[0][1].env, false); // sans étiquette, l'image garde la sienne
 });
+
+test("la base de connaissances (lot 9.2) : documents transmis au conteneur du client, réservés à MEGGA, bornés", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async (u, o = {}) => {
+      vus.push([new URL(u).pathname, o.method, o.body ?? null, o.headers?.["x-megga-interne"]]);
+      return Response.json(o.method === "POST" ? { id: 1, titre: "Conditions", passages: 3 } : { documents: [] });
+    },
+  });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  const corps = JSON.stringify({ titre: "Conditions", genre: "texte", texte: "Les frais de dossier sont de 450 CHF." });
+  assert.deepEqual(await agent.connaissances("POST", "", corps), { statut: 200, donnees: { id: 1, titre: "Conditions", passages: 3 } });
+  await agent.connaissances("DELETE", "/1");
+  assert.deepEqual(vus, [
+    ["/interne/connaissances", "POST", corps, await jetonInterne("admin", "exemple")],
+    ["/interne/connaissances/1", "DELETE", null, await jetonInterne("admin", "exemple")],
+  ]);
+  await assert.rejects(agent.connaissances("DELETE", "/../cles"), /chemin de document/);
+});
+
+test("la porte ne transmet un document qu'à MEGGA, avec sa longueur, pas au-delà de 12 Mo", async () => {
+  const journal = [];
+  const e = env(journal);
+  await put(e, "exemple", { version: 1, config: config() });
+  const appel = (chemin, methode, corps, jeton = "admin", entetes = {}) =>
+    recevoir(new Request(`https://porte/admin/clients/${chemin}`, { method: methode, body: corps, headers: { authorization: `Bearer ${jeton}`, ...entetes } }), e);
+  assert.equal((await appel("exemple/connaissances", "GET", undefined, "faux")).status, 401);
+  assert.equal((await appel("exemple/connaissances/abc", "DELETE")).status, 400);
+  assert.equal((await appel("exemple/connaissances", "PUT", "{}")).status, 405);
+  assert.equal((await appel("exemple/connaissances", "POST", "{}", "admin", { "content-length": String(13 * 1024 * 1024) })).status, 413);
+});

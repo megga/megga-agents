@@ -26,6 +26,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 WORKDIR /app
+# Le modèle de recherche de la base de connaissances (noyau/connaissances.py) : révision et empreinte figées. Avant le
+# code : téléchargé une fois, il reste en cache tant que socle/modele.py ne change pas.
+COPY socle/modele.py ./socle/
+RUN python socle/modele.py /opt/megga/modele
 COPY --from=fiche /usr/local/bin/node /usr/local/bin/node
 COPY --from=fiche /fiche ./fiche
 COPY pyproject.toml ./
