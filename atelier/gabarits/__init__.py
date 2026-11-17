@@ -21,6 +21,7 @@ On dit « gabarit » dans le code pour ne pas confondre avec les modèles de lan
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 from pathlib import Path
@@ -35,6 +36,8 @@ from ..regles import Refus
 ICI = Path(__file__).parent
 # Elise, une voix de la bibliothèque d'ElevenLabs (celle de l'agent d'essai).
 VOIX_PAR_DEFAUT = "EST9Ui6982FZPSi7gCHi"
+# Les outils de tous les modèles : les documents de l'entreprise et les demandes notées pour l'équipe.
+OUTILS = ("connaissances", "leads")
 # Les bornes de Config (noyau/config.py) : un modèle qui les dépasse ne se charge pas.
 CONSIGNES_MAX = 8000
 TON_MAX = 200
@@ -131,7 +134,11 @@ def charger(dossier: Path | None = None) -> dict[str, dict]:
                 "metier": metier,
                 # Les réglages communs à tous les modèles : les documents de l'entreprise, les demandes notées pour
                 # l'équipe, le transfert à un humain, la mention de l'IA (lot 9).
-                "outils": ["connaissances", "leads"],
+                "outils": list(OUTILS),
+                # Le transfert passe la main à l'équipe : il demande le rôle gestionnaire (relecture du lot 9.3), et le
+                # visiteur sert tous les autres. Les deux gardent les outils de l'agent : rien ne change pour le public,
+                # et les gestionnaires reçoivent ceux de l'équipe pour prendre et rendre la main.
+                "roles": {r: {"outils": ["rappels", *OUTILS]} for r in ("gestionnaire", "visiteur")},
                 "ton": ton,
                 "consignes": consignes,
                 "voix": {"voix": VOIX_PAR_DEFAUT},
@@ -170,14 +177,18 @@ def gabarit(nom: Any) -> dict:
 
 
 def reglages_pour(nom: Any, base: dict) -> dict:
-    """Les réglages du gabarit pour ce client ; le pack immobilier reste actif si son catalogue est déjà branché. Santé et
-    garage sont refusés pour la zone États-Unis."""
+    """Les réglages du gabarit pour ce client ; le pack immobilier reste actif si son catalogue est déjà branché, et les rôles
+    déjà réglés restent. Santé et garage sont refusés pour la zone États-Unis."""
     g = gabarit(nom)
     if nom in PAS_AUX_ETATS_UNIS and base.get("zone") == "etats-unis":
         raise Refus(400, "Ce modèle n'est pas encore disponible pour la zone États-Unis.")
-    r = {k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v) for k, v in g["reglages"].items()}
+    r = copy.deepcopy(g["reglages"])
     if r["metier"] == "immobilier" and base.get("catalogue"):
         r["outils"] = ["immobilier", *r["outils"]]
+        for role in r["roles"].values():
+            role["outils"] = ["rappels", "immobilier", *role["outils"][1:]]
+    if base.get("roles"):  # les rôles déjà réglés pour ce client (par MEGGA) restent : un modèle ne les remplace pas
+        del r["roles"]
     return r
 
 

@@ -194,10 +194,16 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
     if not 1 <= int(k) <= K_MAX:
         raise ValueError(f"k : de 1 à {K_MAX}")
     cas = cas if cas is not None else scenarios(conf.metier)
-    resultats, incomplet = [], None
+    resultats, incomplet, ecartes = [], None, []
     with tempfile.TemporaryDirectory() as dossier:
         for i, c in enumerate(cas):
-            conf_du_cas = configuration.lire({**conf.model_dump(mode="json"), **c["config"]}) if c.get("config") else conf
+            try:
+                conf_du_cas = configuration.lire({**conf.model_dump(mode="json"), **c["config"]}) if c.get("config") else conf
+            except ValueError as e:
+                # Un réglage que ce client ne peut pas prendre (le transfert sans rôle gestionnaire) : le cas ne le
+                # concerne pas, il n'est pas joué ni compté.
+                ecartes.append({"id": c["id"], "titre": c["titre"], "raison": str(e)[:200]})
+                continue
             place = Path(dossier) / f"cas-{i}"
             agent = construire_agent(conf_du_cas, place, c["documents"]) if c.get("documents") else construire_agent(conf_du_cas, place)
             essais = []
@@ -214,7 +220,7 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
     mesure = bool(resultats) and not incomplet
     return {"k": int(k), "cas": len(resultats), "tenus": tenus, "score": round(tenus / len(resultats), 3) if mesure else None,
             "pass_1": round(sum(r["reussis"] for r in resultats) / (len(resultats) * int(k)), 3) if mesure else None,
-            "incomplet": incomplet, "resultats": resultats}
+            "incomplet": incomplet, "resultats": resultats, "ecartes": ecartes}
 
 
 def agent_d_essai(cles: dict, principal=None, vectoriseur=None):
@@ -249,7 +255,8 @@ def agent_d_essai(cles: dict, principal=None, vectoriseur=None):
         if conf.transfert:  # passer la main (lot 9.3) : dans le banc, l'équipe n'est prévenue de rien
             from .reprises import Transfert
 
-            outils += Transfert(stockage.Reprises(url)).outils_pour(nom_role)
+            # un gestionnaire fictif : sans numéro, l'outil refuserait de passer la main (lot 9.3)
+            outils += Transfert(stockage.Reprises(url), gestionnaires=("+41000000000",)).outils_pour(nom_role)
         refus = Refus()
         agent = construire(conf, stockage.base_agno(url), cles, principal=principal, outils=outils, role=role,
                            nom_role=nom_role, gardien=refus.gardien)

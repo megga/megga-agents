@@ -8,7 +8,8 @@
 - L'équipe répond du numéro de l'entreprise : dans la console, ou sur WhatsApp en le demandant à son propre agent
   (outils du gestionnaire : `conversations_transmises`, `repondre_en_reprise`, `rendre_la_main`).
 - Rendue (ou sans personne pour la prendre en 24 heures, ou sans message de l'équipe en 72 heures), l'agent
-  reprend, et lit à son tour suivant ce que l'équipe a dit (le Contexte).
+  reprend, et lit pendant un jour ce que l'équipe a dit et ce que la personne a écrit depuis (le Contexte). À
+  l'expiration, la personne reçoit un mot d'excuse, et le gestionnaire qui l'avait prise en est prévenu.
 
 Par API, pas de transfert : le logiciel ne recevrait pas les réponses de l'équipe ; l'outil le dit à l'agent.
 87 % des clients exigent de pouvoir parler à un humain (Gartner, août 2026) : c'est la condition de leur confiance.
@@ -32,6 +33,11 @@ ACTIONS = ("prendre", "message", "rendre")
 CONSIGNE = ("Si la personne demande à parler à quelqu'un de l'équipe, si c'est sensible (réclamation, litige, urgence) "
             "ou si tu ne peux pas l'aider, passe la main (passer_la_main) avec un résumé clair, puis dis-lui qu'un membre "
             "de l'équipe va lui répondre.")
+# Ce que la personne reçoit quand personne de l'équipe ne lui a répondu à temps (son agent le sait au tour suivant).
+EXCUSES = {"fr": "Toutes nos excuses : personne de l'équipe n'a pu vous répondre à temps. Je reprends votre demande, "
+                 "écrivez-moi ici pour continuer.",
+           "en": "We are sorry: no one from the team was able to reply in time. I am taking your request back, "
+                 "write to me here to continue."}
 
 
 def _qui(personne: str) -> str:
@@ -48,11 +54,12 @@ class Transfert:
     """Les conversations confiées à l'équipe d'un client. `reprises` : stockage.Reprises ; `fil` : stockage.Fil ;
     `gestionnaires` : leurs numéros, comme les conversations les nomment (« +41… ») ; `conversations` (noyau/tour.py) est posé une fois créé."""
 
-    def __init__(self, reprises, fil=None, gestionnaires=(), nom_agent: str = "L'agent"):
+    def __init__(self, reprises, fil=None, gestionnaires=(), nom_agent: str = "L'agent", langue: str = "fr"):
         self.reprises = reprises
         self.fil = fil
         self.gestionnaires = list(gestionnaires)
         self.nom_agent = nom_agent
+        self.excuse = EXCUSES.get(langue, EXCUSES["fr"])
         self.conversations = None
 
     # Les outils
@@ -74,7 +81,7 @@ class Transfert:
                 resume: ce que l'équipe doit savoir pour reprendre sans tout relire : la demande, ce qui a été dit, ce qui reste.
             """
             personne = getattr(run_context, "user_id", None) or ""
-            if not personne or personne.startswith("api:"):
+            if not personne or personne.startswith("api:") or not transfert.gestionnaires:
                 return "Le transfert à l'équipe n'est pas possible dans cette conversation : propose plutôt un contact direct."
             motif, resume = " ".join(str(motif).split())[:300], masquer_secrets(str(resume).strip())[:2000]
             ident, nouvelle = await asyncio.to_thread(transfert.reprises.ouvrir, personne, role, motif or "sans motif", resume)
@@ -106,14 +113,13 @@ class Transfert:
             """
             return await transfert.repondre(int(conversation), str(texte), getattr(run_context, "user_id", None) or "equipe")
 
-        async def rendre_la_main(conversation: int) -> str:
+        async def rendre_la_main(conversation: int, run_context: RunContext) -> str:
             """Rend une conversation transmise à l'agent, quand l'équipe a fini.
 
             Args:
                 conversation: le numéro de la conversation transmise.
             """
-            r = await transfert.rendre(int(conversation))
-            return f"La conversation {r['id']} est rendue à l'agent." if r else f"La conversation {conversation} n'est plus en cours."
+            return await transfert._rendre_par(int(conversation), getattr(run_context, "user_id", None) or "equipe")
 
         return [conversations_transmises, repondre_en_reprise, rendre_la_main]
 
@@ -139,8 +145,7 @@ class Transfert:
         if m is None:
             return "Je n'ai pas compris ce choix."
         if m[2] == "rendre":
-            r = await self.rendre(int(m[1]))
-            return f"La conversation {m[1]} est rendue à l'agent." if r else f"La conversation {m[1]} n'est plus en cours."
+            return await self._rendre_par(int(m[1]), personne)
         r = await asyncio.to_thread(self.reprises.prendre, int(m[1]), personne)
         if r is None:
             avant = await asyncio.to_thread(self.reprises.une, int(m[1]))
@@ -158,12 +163,37 @@ class Transfert:
         r = await asyncio.to_thread(self.reprises.ecrite, ident, par)
         if r is None:
             raise ValueError(f"la conversation {ident} n'est plus en cours")
-        envoi = await self.conversations.envoyer_de_soi_meme(r["personne"], [{"texte": texte[:4000]}], "reprise",
+        envoi = await self.conversations.envoyer_de_soi_meme(r["personne"], [{"texte": texte[:4000], "usage": "reprise"}], "reprise",
                                                              variables=[self.nom_agent])
         return {"id": ident, "envoi": envoi}
 
-    async def rendre(self, ident: int) -> dict | None:
-        return await asyncio.to_thread(self.reprises.rendre, ident)
+    async def rendre(self, ident: int, par: str = "console") -> dict | None:
+        """Rendue à l'agent ; une conversation prise ne se rend que par celui qui l'a prise, ou par la console."""
+        return await asyncio.to_thread(self.reprises.rendre, ident, None if par == "console" else par)
+
+    async def _rendre_par(self, ident: int, par: str) -> str:
+        if await self.rendre(ident, par):
+            return f"La conversation {ident} est rendue à l'agent."
+        avant = await asyncio.to_thread(self.reprises.une, ident)
+        if avant and avant["etat"] == "prise":
+            return (f"La conversation {ident} a été prise par un autre membre de l'équipe : seule la personne qui l'a prise, "
+                    "ou la console, peut la rendre à l'agent.")
+        return f"La conversation {ident} n'est plus en cours."
+
+    async def echeance(self, maintenant: float) -> float | None:
+        """À l'heure dite (/interne/rappels) : les conversations oubliées reviennent à l'agent ; la personne reçoit le mot
+        d'excuse, le gestionnaire qui l'avait prise en est prévenu. Rend l'heure de la prochaine expiration."""
+        for r in await asyncio.to_thread(self.reprises.expirer, maintenant):
+            try:
+                await self.conversations.envoyer_de_soi_meme(r["personne"], [{"texte": self.excuse}], "reprise_fin",
+                                                             variables=[self.nom_agent])
+                if _sur_whatsapp(r["par"]):
+                    await self.conversations.envoyer_de_soi_meme(r["par"], [{"texte": (
+                        f"Sans message de l'équipe depuis trois jours, la conversation {r['id']} avec {_qui(r['personne'])} "
+                        f"revient à {self.nom_agent}.")}], "reprise_fin", variables=[self.nom_agent])
+            except Exception as e:
+                log.warning("fin de reprise non annoncée : %s", str(e)[:200])
+        return await asyncio.to_thread(self.reprises.prochaine)
 
     async def prendre(self, ident: int, par: str) -> dict | None:
         return await asyncio.to_thread(self.reprises.prendre, ident, par)
@@ -176,33 +206,46 @@ class Transfert:
         r = await asyncio.to_thread(self.reprises.en_cours, personne)
         if r is None:
             return False
-        textes = []
+        textes, rang = [], 0
         for m in messages:
             genre = "vocal" if getattr(m, "vocal", None) else (m.media.genre if getattr(m, "media", None) else "texte")
             texte = getattr(m, "texte", "") or getattr(m, "choix", "") or ""
+            if genre not in ("vocal", "texte"):  # numéroté comme au tour de l'agent : la console et l'équipe le retrouvent
+                rang += 1
+                texte = f"[média {await self.conversations._numeroter(personne, m.media, rang)}] {texte}".strip()
             self.conversations._noter_fil(personne, "recu", genre, texte)
             textes.append(texte or f"[{genre}]")
         if r["etat"] == "prise" and _sur_whatsapp(r["par"]):
-            await self.conversations.envoyer_de_soi_meme(
-                r["par"], [{"texte": f"Message de {_qui(personne)} (conversation {r['id']}) : {' / '.join(textes)}"}],
-                "reprise_message", variables=[_qui(personne)])
+            try:
+                await self.conversations.envoyer_de_soi_meme(
+                    r["par"], [{"texte": f"Message de {_qui(personne)} (conversation {r['id']}) : {' / '.join(textes)}"}],
+                    "reprise_message", variables=[_qui(personne)])
+            except Exception as e:  # l'humain garde la main : la console lit le message dans le fil
+                log.warning("message non relayé à l'équipe : %s", str(e)[:200])
         return True
 
     async def contexte(self, personne: str) -> str:
-        """Ce que l'agent doit savoir d'une conversation que l'équipe vient de lui rendre (le Contexte, une seule fois)."""
+        """Ce que l'agent doit savoir d'une conversation que l'équipe lui a rendue (le Contexte, pendant un jour) : ce que
+        l'équipe a dit, ce que la personne a écrit depuis ; pourquoi elle lui revient, au premier tour."""
         if not personne:
             return ""
-        finies = await asyncio.to_thread(self.reprises.a_relire, personne)
-        if not finies:
+        r = await asyncio.to_thread(self.reprises.a_relire, personne)
+        if r is None:
             return ""
-        dits = []
+        dits, ecrits = [], []
         if self.fil is not None:
-            depuis = min(r["cree"] for r in finies)
-            dits = [m["texte"] for m in reversed(await asyncio.to_thread(self.fil.messages, personne, 50))
-                    if m.get("genre") == "reprise" and (m.get("quand") or 0) >= depuis][-10:]
-        r = finies[-1]
-        pourquoi = "l'équipe te la rend" if r["etat"] == "rendue" else "personne de l'équipe ne l'a prise à temps : excuse-toi et aide de ton mieux"
+            fil = [m for m in await asyncio.to_thread(self.fil.messages, personne, 50) if (m.get("quand") or 0) >= r["cree"]]
+            dits = [m for m in fil if m.get("genre") == "reprise"][-10:]
+            depuis = dits[-1]["quand"] if dits else r["cree"]
+            ecrits = [m["texte"] for m in fil if m.get("sens") == "recu" and m.get("genre") != "bouton"
+                      and depuis < m["quand"] <= r["fin"]][-10:]
+        pourquoi = "l'équipe te l'a rendue" if r["etat"] == "rendue" else "personne de l'équipe n'a pu lui répondre à temps"
+        if not r["relue"] and r["etat"] == "expiree":
+            pourquoi += (" ; elle a reçu un mot d'excuse, aide-la de ton mieux" if r["prevenue"] == 2
+                         else " : excuse-toi et aide-la de ton mieux")
         lignes = [f"Cette conversation avait été confiée à l'équipe ({r['motif']}) ; {pourquoi}."]
         if dits:
-            lignes.append("Ce que l'équipe a écrit à la personne : " + " | ".join(f"« {d[:400]} »" for d in dits))
+            lignes.append("Ce que l'équipe a écrit à la personne : " + " | ".join(f"« {d['texte'][:400]} »" for d in dits))
+        if ecrits:
+            lignes.append("Ce que la personne a écrit ensuite, sans réponse : " + " | ".join(f"« {e[:400]} »" for e in ecrits))
         return "<reprise>\n" + "\n".join(lignes) + "\n</reprise>"

@@ -49,15 +49,20 @@ class Refus(Exception):
         self.details = details
 
 
-def catalogue() -> dict:
+def offerts(env: dict) -> tuple[str, ...]:
+    """Les modèles qu'un client peut choisir : ceux de Mistral AI une fois sa clé posée (MISTRAL_API_KEY)."""
+    return tuple(m for m in MODELES if not m.startswith("mistral-") or env.get("MISTRAL_API_KEY"))
+
+
+def catalogue(modeles: tuple[str, ...] = MODELES) -> dict:
     """Ce qu'une interface peut proposer, par rôle. Rien n'y est figé côté écrans."""
     return {
         "metiers": {m: list(o) for m, o in METIERS.items()},
         "champs_client": list(CHAMPS_CLIENT),
         "zones": list(ZONES),
         "zones_porte": list(ZONES_PORTE),
-        "modeles": list(MODELES),
-        "modeles_detail": [{"id": m, **MODELES_DETAIL[m]} for m in MODELES],
+        "modeles": list(modeles),
+        "modeles_detail": [{"id": m, **MODELES_DETAIL[m]} for m in modeles],
     }
 
 
@@ -84,7 +89,7 @@ def erreurs(e: ValidationError) -> list[dict]:
     return en_francais(e)
 
 
-def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | None) -> Config:
+def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | None, modeles: tuple[str, ...] = MODELES) -> Config:
     """La configuration qui résulte de ces changements, validée par le noyau.
 
     `zone_en_service` : la zone de la version en service, s'il y en a une. Changer de
@@ -106,9 +111,13 @@ def appliquer(role: str, base: dict, changements: dict, zone_en_service: str | N
                 raise Refus(400, "modeles : {principal, secours}")
             if autres := sorted(set(ch["modeles"]) - {"principal", "secours"}):  # le modèle de l'oral reste à MEGGA
                 raise Refus(403, "réglages réservés à MEGGA : " + ", ".join(f"modeles.{k}" for k in autres))
-            hors = [m for m in ch["modeles"].values() if m is not None and m not in MODELES]
+            hors = [m for m in ch["modeles"].values() if m is not None and m not in modeles]
             if hors or ch["modeles"].get("principal", "x") is None:
-                raise Refus(400, "modeles : choisissez dans la liste (" + ", ".join(MODELES) + ") ; le secours peut être vide")
+                raise Refus(400, "modeles : choisissez dans la liste (" + ", ".join(modeles) + ") ; le secours peut être vide")
+            # Derrière un modèle européen, le secours se choisit : celui d'avant pourrait tourner hors de l'UE.
+            if str(ch["modeles"].get("principal")).startswith("mistral-") and "secours" not in ch["modeles"] \
+                    and not str((base.get("modeles") or {}).get("secours")).startswith("mistral-"):
+                raise Refus(400, "modeles : avec un modèle européen, choisissez aussi le secours (européen, un autre, ou aucun)")
         if "metier" in ch and "outils" not in ch:
             # Changer de métier retire les outils qu'il ne permet pas.
             permis = METIERS.get(ch["metier"], ())

@@ -46,8 +46,8 @@ def test_les_scenarios_sont_bien_formes(metier):
         for critere in c["criteres"]:
             if not critere.get("juge"):
                 banc.automatique(critere, trace)  # un critère automatique connu, qui ne lève pas
-        if c.get("config"):  # ses réglages font une configuration valide
-            configuration.lire({**CONF.model_dump(mode="json"), **c["config"]})
+        if c.get("config"):  # ses réglages font une configuration valide (le transfert, avec le rôle gestionnaire)
+            configuration.lire({**CONF.model_dump(mode="json"), "roles": {"gestionnaire": {}, "visiteur": {}}, **c["config"]})
         if "documents" in c:  # les documents rangés avant le cas : des titres et des textes
             assert c["documents"] and all(d.get("titre") and d.get("texte") for d in c["documents"]), c["id"]
     assert ("I01" in {c["id"] for c in cas}) == (metier == "immobilier")
@@ -131,7 +131,9 @@ def test_le_banc_dans_l_atelier(tmp_path):
     r = t.post("/atelier/clients/exemple/versions/1/banc", headers=MEGGA, json={"k": 1})
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["version"] == 1 and d["cas"] == len(banc.scenarios("general")) and 0 <= d["score"] <= 1
+    assert d["version"] == 1 and d["cas"] == len(banc.scenarios("general")) - 1 and 0 <= d["score"] <= 1
+    # sans rôle gestionnaire, ce client ne peut pas passer la main : le cas N08 est écarté, pas compté
+    assert [e["id"] for e in d["ecartes"]] == ["N08"]
     # le score reste avec le brouillon, lisible du client
     assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["banc"]["cas"] == d["cas"]
 

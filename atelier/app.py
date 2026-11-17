@@ -125,6 +125,11 @@ def metier_inconnu(agent: dict | None, metier: str) -> bool:
 class Identite:
     role: str  # « megga » ou « client »
     client: str | None = None
+    jeton: str | None = None  # le début de l'empreinte du jeton d'un client : qui, parmi ses jetons
+
+    def nom(self) -> str:
+        """Qui agit, tel que le noyau le note (une décision de la console) : « megga » ou « client:<jeton> »."""
+        return "megga" if self.role == "megga" else f"client:{self.jeton}"
 
 
 async def bd(f, *a, **k):
@@ -170,7 +175,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             return Identite("megga")
         client = jetons.client(jeton)
         if client:
-            return Identite("client", client)
+            return Identite("client", client, stockage.Jetons._empreinte(jeton)[:12])
         raise Refus(401, "jeton refusé")
 
     def megga(qui: Identite) -> None:
@@ -241,7 +246,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if base is None:
             raise Refus(404, "aucune version de base")
         changements = corps.get("changements")
-        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident))
+        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident),
+                                regles.offerts(env))
         return conf, base["version"]
 
     def preparer(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
@@ -259,7 +265,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     @r.get("/catalogue")
     def catalogue(qui: Identite = Depends(identite)):
-        return regles.catalogue()
+        return regles.catalogue(regles.offerts(env))
 
     @r.get("/clients")
     async def lister(qui: Identite = Depends(identite)):
@@ -722,7 +728,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(400, "accord : true ou false")
         await bd(suivable, qui, ident, True)
         try:
-            return await porte.decider(ident, numero, accord)
+            return await porte.decider(ident, numero, accord, qui.nom())
         except PorteErreur as e:
             if e.statut in (400, 404, 409):
                 raise Refus(e.statut, "décision refusée", {"texte": e.texte}) from e
@@ -760,7 +766,12 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         """Efface tout ce que la base garde d'une personne, à sa demande ; `?confirmer=oui`, rien ne se récupère."""
         if requete.query_params.get("confirmer") != "oui":
             raise Refus(400, "l'effacement est définitif : confirmez avec ?confirmer=oui")
-        return await droits(qui, ident, "DELETE", personne)
+        fait = await droits(qui, ident, "DELETE", personne)
+        # qui l'a demandé, au journal du client ; jamais le numéro, qui vient d'être effacé
+        demande = "de MEGGA" if qui.role == "megga" else "du client"
+        await bd(canal.journal.noter, ident, "effacement", None, f"données d'une personne effacées, à la demande {demande}")
+        log.info("données d'une personne de %s effacées (%s)", ident, qui.role)
+        return fait
 
     @r.get("/clients/{ident}/leads")
     async def leads(ident: str, requete: Request, qui: Identite = Depends(identite)):
@@ -797,7 +808,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     # Cloudflare, ils s'ajoutent sur son serveur (python -m noyau.connaissances), rien n'entrant chez lui.
 
     async def base_du_client(qui: Identite, ident: str, methode: str, chemin: str = "", corps: dict | None = None) -> dict:
-        await bd(suivable, qui, ident, True)
+        if not (await bd(suivable, qui, ident))[1]:
+            raise Refus(409, "les documents d'une installation hors Cloudflare s'ajoutent sur son serveur : "
+                             "python -m noyau.connaissances ajouter <fichier> [titre] (et lister, retirer <n>)")
         try:
             return await porte.connaissances(ident, methode, chemin, corps)
         except PorteErreur as e:

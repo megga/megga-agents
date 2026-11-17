@@ -51,6 +51,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import signal
 import time
 from collections import OrderedDict
@@ -59,6 +60,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import api as entree_api
+from . import accueil as accueils
 from . import approbations, reprises
 from . import config as configuration
 from . import licence as licences
@@ -68,9 +70,11 @@ from . import suivi as suivi_agent
 from . import version as version_image
 from .agent import construire, modele
 from .environnement import charger
+from .garde import TROP, TROP_JOUR
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
+from .typographie import nettoyer
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .approbations import Gardien
@@ -274,7 +278,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         from .reprises import Transfert
 
         transfert = Transfert(stockage.Reprises(env["DATABASE_URL"]), fil, approbations.equipe(personnes.gestionnaires),
-                              conf.nom_agent)
+                              conf.nom_agent, conf.langue)
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
@@ -348,14 +352,20 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     async def prevenir_equipe(demande: dict) -> None:
         """Une action attend un accord : chaque gestionnaire reçoit la demande, avec Accepter et Refuser, une fois
-        fini le tour de la personne qui l'a faite (sa réponse part d'abord)."""
-        numeros = approbations.equipe(personnes.gestionnaires)
-        qui = demande["personne"]
-        corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui if qui.startswith('api:') else '+' + qui} : "
+        fini le tour de la personne qui l'a faite (sa réponse part d'abord). Sans le rôle « gestionnaire », personne
+        n'y répondrait sur WhatsApp (noyau/roles.py : tout le monde est « public ») : seule la console décide.
+        Un aperçu coupé part sans Accepter : on n'accorde pas ce qu'on n'a pas lu, la console montre tout."""
+        numeros = approbations.equipe(personnes.gestionnaires) if "gestionnaire" in personnes.roles else []
+        qui = demande["personne"]  # déjà « +41… » (ou « api:… »), comme les conversations le nomment
+        corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui} : "
                  f"{demande['outil']}.\n{approbations.apercu(demande['arguments'])}")
-        message = {"liste": {"corps": corps, "bouton": "Répondre", "section": f"Demande {demande['id']}", "lignes": [
-            {"id": f"{approbations.PREFIXE}{demande['id']}:oui", "titre": "Accepter", "description": demande["outil"]},
-            {"id": f"{approbations.PREFIXE}{demande['id']}:non", "titre": "Refuser"}]}}
+        if approbations.entier(demande["arguments"]) and len(corps) <= 1024:
+            message = {"liste": {"corps": corps, "bouton": "Répondre", "section": f"Demande {demande['id']}", "lignes": [
+                {"id": f"{approbations.PREFIXE}{demande['id']}:oui", "titre": "Accepter", "description": demande["outil"]},
+                {"id": f"{approbations.PREFIXE}{demande['id']}:non", "titre": "Refuser"}]}}
+        else:
+            message = {"texte": f"{corps}\n\nCette demande est trop longue pour être lue en entier ici : "
+                                "consultez-la et décidez dans la console."}
         for n in numeros:
             conversations.apres_le_tour(qui, lambda n=n: conversations.envoyer_de_soi_meme(
                 n, [message], "approbation", variables=[conf.nom_agent, demande["outil"]]))
@@ -371,6 +381,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if transfert is not None:  # l'équipe répond par les conversations ; un tour s'arrête si elle a la main
         transfert.conversations = conversations
         conversations.reprise = transfert.garde
+        conversations.echeances.append(transfert.echeance)  # les conversations oubliées, à l'heure dite
     if leads is not None:  # l'équipe est prévenue d'une demande après le tour de la personne
         leads.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
@@ -409,6 +420,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Les lignes du journal d'audit de ces tours, écrites en arrière-plan (noyau/approbations.py)
         if restantes := await gardien.vider(delai_vider):
             log.warning("arrêt avec %d ligne(s) du journal d'audit non écrite(s)", restantes)
+        # Les leads en route vers le webhook du client (noyau/connecteurs.py)
+        if leads is not None and (restants := await leads.vider(delai_vider)):
+            log.warning("arrêt avec %d lead(s) non transmis au webhook", restants)
 
     def a_relire() -> bool:
         """Une autre configuration est à servir : poussée et acceptée, retirée par le client, ou la précédente
@@ -711,7 +725,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return erreur(400, "etat : " + ", ".join(ETATS_APPROBATION))
         demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
         return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
-                              "apercu": approbations.apercu(d["arguments"])} for d in demandes]}
+                              "apercu": approbations.apercu(d["arguments"], None)} for d in demandes]}
 
     @app.get("/interne/suivi/valeur")
     async def interne_valeur(requete: Request):
@@ -720,14 +734,19 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if (refus := lisible(requete)) is not None:
             return refus
         depuis = date(requete.query_params.get("depuis"))
-        actives = await asyncio.to_thread(fil.personnes, depuis)
-        transmises = {r["personne"] for r in (await asyncio.to_thread(transfert.reprises.lister, None, 5000) if transfert else [])
-                      if r["cree"] >= depuis}
-        resolues = len(actives - transmises)
+        # Des conversations (douze heures sans message les séparent, comme l'accueil), du public seulement, auxquelles
+        # l'agent a répondu (ni débit ni plafond) ; transmise si une reprise de l'équipe était en cours pendant.
+        fenetres = await asyncio.to_thread(fil.fenetres, depuis, accueils.INACTIVITE, (nettoyer(TROP), nettoyer(TROP_JOUR)))
+        roles = {p: await asyncio.to_thread(personnes.role, p) for p in {f["personne"] for f in fenetres}}
+        actives = [f for f in fenetres if f["repondue"] and roles[f["personne"]] in ("public", "visiteur")]
+        equipe = await asyncio.to_thread(transfert.reprises.lister, None, 5000) if transfert else []
+        transmises = [f for f in actives if any(r["personne"] == f["personne"] and r["cree"] <= f["fin"]
+                                                and (r["fin"] is None or r["fin"] >= f["debut"]) for r in equipe)]
+        resolues = len(actives) - len(transmises)
         lus = await asyncio.to_thread(leads.magasin.lister, depuis, 5000) if leads is not None else []
         demandes = [d for d in (await asyncio.to_thread(gardien.demandes.lister, None, 5000) if gardien.demandes else [])
                     if d["cree"] >= depuis]
-        return {"conversations": len(actives), "resolues_sans_humain": resolues, "transmises": len(transmises & actives),
+        return {"conversations": len(actives), "resolues_sans_humain": resolues, "transmises": len(transmises),
                 "taux_sans_humain": round(resolues / len(actives), 3) if actives else None,
                 "leads": len(lus), "leads_chauds": sum(1 for l in lus if l["score"] >= 4),
                 "actions_faites": sum(1 for d in demandes if d["etat"] == "faite"),
@@ -743,6 +762,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return Response("refusé", status_code=401)
         if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
             return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
+        personne = reprises._qui(personne)  # « 41… » comme « +41… », tel que la base le garde
         return {"personne": personne, "donnees": await asyncio.to_thread(stockage.donnees_personne, env["DATABASE_URL"], personne)}
 
     @app.delete("/interne/personnes/{personne}")
@@ -751,9 +771,11 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return Response("refusé", status_code=401)
         if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
             return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
-        effacees = await asyncio.to_thread(stockage.effacer_personne, env["DATABASE_URL"], personne)
-        log.info("données d'une personne effacées à sa demande (%s tables)", len(effacees))
-        return {"personne": personne, "effacees": effacees}
+        personne = reprises._qui(personne)
+        fait = await asyncio.to_thread(stockage.effacer_personne, env["DATABASE_URL"], personne)
+        log.info("données d'une personne effacées à sa demande (%s tables, %s sous empreinte)", len(fait["effacees"]),
+                 len(fait["pseudonymisees"]))
+        return {"personne": personne, **fait}
 
     @app.get("/interne/suivi/leads")
     async def interne_leads(requete: Request):
@@ -805,20 +827,23 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     @app.post("/interne/approbations/{ident}")
     async def interne_decider(ident: str, requete: Request):
-        """Une décision de la console : {accord: true|false} ; l'action accordée est faite tout de suite."""
+        """Une décision de la console : {accord: true|false, par?} ; l'action accordée est faite tout de suite.
+        `par` : qui décide dans l'atelier (« megga », « client:<jeton> »), noté avec la décision."""
         if not interne(requete):
             return Response("refusé", status_code=401)
         if gardien.demandes is None:
             return Response("base absente", status_code=503)
         try:
             d = await requete.json()
-            accord = d["accord"]
-        except (ValueError, KeyError, TypeError):
+            accord, par = d["accord"], d.get("par") or ""
+        except (ValueError, KeyError, TypeError, AttributeError):
             return erreur(400, "{accord: true|false}")
         if not isinstance(accord, bool) or not ident.isdigit() or len(ident) > 10:
             return erreur(400, "{accord: true|false}")
+        if not isinstance(par, str) or (par and not re.fullmatch(r"[a-z0-9:]{1,60}", par)):
+            return erreur(400, "par : megga, ou client:<jeton>")
         try:
-            return await gardien.decider(int(ident), accord, "console")
+            return await gardien.decider(int(ident), accord, f"console:{par}" if par else "console")
         except ValueError as e:
             return erreur(409, str(e))
 

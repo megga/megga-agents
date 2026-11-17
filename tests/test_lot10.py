@@ -10,6 +10,7 @@ import pytest
 import yaml
 from sqlalchemy import update
 from test_lot6_pilote import MEGGA, activer, canal, nouvelle_version, releve_signe  # noqa: F401 (canal : fixture)
+from test_lot9_4 import dns_public  # noqa: F401 (fixture : les webhooks des essais résolvent vers une adresse publique)
 
 from atelier import gabarits, regles
 from atelier.regles import Refus
@@ -303,6 +304,19 @@ def test_les_anciens_textes_restent_ceux_d_un_modele():
     for g in gabarits.GABARITS.values():
         assert regles.consignes_de_gabarit(g["reglages"]["consignes"])
     assert not regles.consignes_de_gabarit("Consignes sur mesure de MEGGA.")
+
+
+def test_chaque_modele_a_le_role_gestionnaire_que_demande_le_transfert():
+    """Le transfert passe la main à l'équipe et demande le rôle gestionnaire (relecture du lot 9.3) : chaque modèle règle
+    le gestionnaire et le visiteur, avec les outils de l'agent. Le pack immobilier les suit ; des rôles déjà réglés restent."""
+    for g in gabarits.lister():
+        conf = configuration.lire(gabarits.nouvelle_config(g["id"], {"id": "essai", "entreprise": "Essai", "zone": "suisse"}, "Lea"))
+        assert conf.transfert and set(conf.les_roles()) == {"gestionnaire", "visiteur"}, g["id"]
+        assert all(r.outils == ("rappels", "connaissances", "leads") for r in conf.les_roles().values()), g["id"]
+    immo = gabarits.reglages_pour("immobilier", {"zone": "suisse", "catalogue": "https://agence.example/flux.json"})
+    assert immo["roles"]["visiteur"]["outils"] == ["rappels", "immobilier", "connaissances", "leads"]
+    assert gabarits.GABARITS["immobilier"]["reglages"]["roles"]["visiteur"]["outils"] == ["rappels", "connaissances", "leads"]
+    assert "roles" not in gabarits.reglages_pour("garage", {"zone": "suisse", "roles": {"gestionnaire": {}, "partenaire": {}}})
 
 
 def test_l_immobilier_garde_son_pack_et_le_garage_le_retire():
