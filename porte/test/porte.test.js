@@ -122,6 +122,14 @@ test("l'objet ne garde que les secrets prévus, sans les rendre", async () => {
   await assert.rejects(a.poserSecrets({ AUTRE: "y" }));
 });
 
+test("la clé du vocal (VOCAL_CLE) se range avec les autres secrets du client", async () => {
+  const stock = new Map([["secrets", { DATABASE_URL: "postgresql://x" }]]);
+  const ctx = { storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) }, container: { running: false } };
+  const a = new AgentEurope(ctx, {});
+  assert.deepEqual(await a.poserSecrets({ VOCAL_CLE: "v".repeat(40) }), ["VOCAL_CLE"]);
+  assert.deepEqual(stock.get("secrets"), { DATABASE_URL: "postgresql://x", VOCAL_CLE: "v".repeat(40) });
+});
+
 test("les simples accusés de Meta ne réveillent pas le conteneur ; un envoi refusé, si", () => {
   const statut = (s) => ({ object: "whatsapp_business_account", entry: [{ changes: [{ field: "messages", value: { metadata: { phone_number_id: "100000000000001" }, statuses: [{ status: s }] } }] }] });
   for (const s of ["sent", "delivered", "read"]) assert.deepEqual(numerosDe(statut(s)), []);
