@@ -28,6 +28,7 @@ Un modèle Meta est le seul message permis hors des 24 heures. Ceux-ci remplacen
 | `suivi_visiteur_en` | `fsp_agent_suivi` (en) | un visiteur | Hello, Four Seasons Properties has received your enquiry about {{1}}. We will get back to you very soon. Reply here if you would like to add anything. | |
 | `ouverture` | `fsp_agent_ouverture` | un contact | Bonjour {{1}}, Four Seasons Properties souhaite vous transmettre {{2}}. Touchez le bouton pour le recevoir. | Recevoir |
 | `ouverture_en` | `fsp_agent_ouverture` (en) | un contact | Hello {{1}}, Four Seasons Properties would like to send you {{2}}. Tap the button to receive it. | Receive |
+| `bonjour` | `fsp_agent_bonjour` (marketing) | le gestionnaire | Bonjour, voici votre mot du matin, comme vous l'avez demandé : {{1}}. Belle journée à vous. | |
 
 Ce que valent les variables, par exemple :
 - `message` : le nom de l'agent, « Alix » ;

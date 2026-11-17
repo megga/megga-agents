@@ -8,6 +8,10 @@ from pydantic import ValidationError
 
 # Par champ (chemin sans les rangs de liste), puis par genre d'erreur de pydantic.
 PAR_CHAMP: dict[str, dict[str, str]] = {
+    "bonjour": {
+        "string_pattern_mismatch": "L'heure du mot du matin : HH:MM, par exemple 08:00.",
+        "string_type": "L'heure du mot du matin : HH:MM entre guillemets, par exemple \"08:00\".",
+    },
     "nom_agent": {
         "missing": "Donnez un prénom à votre agent.",
         "string_too_short": "Donnez un prénom à votre agent.",

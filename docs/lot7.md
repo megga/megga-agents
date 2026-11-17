@@ -65,6 +65,10 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 
 Le courtier demande « avec qui as-tu parlé aujourd'hui ? » : l'outil `activite` (groupe visiteurs) liste les personnes qui ont écrit (la table `megga_contacts`, qui garde désormais leur nom WhatsApp, colonne `nom` ajoutée d'elle-même), avec leur numéro, leur rôle et ce qu'elles ont écrit (le fil, `megga_fil`) ; `qui` donne le détail d'une personne. Ni les gestionnaires, ni les logiciels par API. La page « Alix » de la gestion reste à faire : elle lira la même chose par une route du socle.
 
+## Le mot du matin (16.11.2026)
+
+`packs/immobilier/bonjour.py` : si la configuration a `bonjour: "HH:MM"`, chaque jour à cette heure (heure du client), chaque gestionnaire reçoit un mot d'encouragement plein de bonne humeur, écrit par Claude et différent chaque jour (les dix derniers lui sont rappelés), ou une phrase de secours. L'outil `mot_du_matin` (groupe travail) l'arrête, le reprend ou change l'heure. Réveillé plus de trois heures trop tard, il saute le jour. Hors des 24 heures, il ne part que par un modèle Meta `bonjour` s'il est réglé ; il n'est jamais gardé pour plus tard.
+
 ## 7.4 Les partenaires et les visiteurs
 
 Quatre groupes d'outils de plus, par rôle (`Role.outils`) ; ceux qui agissent au nom d'un compte de gestion (`annonces`, `partenaires`, `visiteurs`) ne vont qu'au rôle gestionnaire, la configuration refuse le reste.
