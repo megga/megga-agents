@@ -21,6 +21,7 @@ export async function inscrire(id: string, fiche: { prenom: string; metier: stri
     method: "PUT",
     headers: { ...enteteAgents(), "Content-Type": "application/json" },
     body: JSON.stringify(fiche),
+    signal: AbortSignal.timeout(10_000), // un serveur bloqué ne fige pas la création
   });
   if (!r.ok) throw new Error(`le serveur d'agents refuse l'inscription (${r.status})`);
 }

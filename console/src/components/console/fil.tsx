@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { T } from "@/lib/textes";
 import { Fleche } from "./icones";
 import { Tete } from "./tete";
-import type { AgentVu, Bulle } from "./types";
+import type { AgentVu, Bulle, Memoire } from "./types";
 
 type MessageAgui = { id: string; role: string; content?: unknown };
 
@@ -31,8 +31,8 @@ export function Fil({
   onChange,
 }: {
   agent: AgentVu;
-  memoire: MessageAgui[] | undefined;
-  onChange: (id: string, messages: MessageAgui[]) => void;
+  memoire: Memoire | undefined;
+  onChange: (id: string, memoire: Memoire) => void;
 }) {
   const { agent, isReady } = useAgent({ agentId: a.id });
   const { copilotkit } = useCopilotKit();
@@ -43,11 +43,15 @@ export function Fil({
   const fond = useRef<HTMLDivElement>(null);
   const zone = useRef<HTMLTextAreaElement>(null);
 
-  // Le fil de cet agent est gardé par la console tant que la page reste ouverte.
+  // Le fil de cet agent est gardé par la console tant que la page reste ouverte. Quand CopilotKit repart
+  // (un agent de plus), l'agent reprend la même conversation : le serveur y retrouve ce qui a été dit.
   useEffect(() => {
     if (!isReady || restaure.current) return;
     restaure.current = true;
-    if (memoire?.length && !agent.messages.length) agent.setMessages(memoire as never);
+    if (memoire && !agent.messages.length) {
+      agent.threadId = memoire.threadId;
+      agent.setMessages(memoire.messages as never);
+    }
   }, [isReady, agent, memoire]);
 
   const messages = bulles(agent.messages as MessageAgui[]);
@@ -55,8 +59,8 @@ export function Fil({
   const attend = enCours && messages.at(-1)?.role !== "assistant";
 
   useEffect(() => {
-    if (restaure.current) onChange(a.id, [...(agent.messages as MessageAgui[])]);
-  }, [a.id, agent.messages, agent.messages.length, enCours, onChange]);
+    if (restaure.current && agent.messages.length) onChange(a.id, { threadId: agent.threadId, messages: [...(agent.messages as MessageAgui[])] });
+  }, [a.id, agent, agent.messages, agent.messages.length, agent.threadId, enCours, onChange]);
 
   const dernier = messages.at(-1)?.texte;
   useLayoutEffect(() => {
@@ -81,17 +85,23 @@ export function Fil({
     if (!t || enCours) return;
     if (!isReady) {
       enAttente.current = true;
+      // Toujours pas prêt au bout de 10 secondes : on le dit, et le message partira s'il le devient.
+      setTimeout(() => enAttente.current && setSouci(true), 10_000);
       return;
     }
     setTexte("");
     if (zone.current) zone.current.style.height = "auto";
     setSouci(false);
     agent.addMessage({ id: crypto.randomUUID(), role: "user", content: t } as never);
+    const avant = agent.messages.length;
     try {
       await copilotkit.runAgent({ agent });
     } catch {
-      setSouci(true);
+      return setSouci(true);
     }
+    // Une erreur du modèle peut finir le tour sans lever d'exception : sans réponse, on le dit aussi.
+    const reponses = (agent.messages as MessageAgui[]).slice(avant);
+    if (!reponses.some((m) => m.role === "assistant" && texteDe(m.content).trim())) setSouci(true);
   }
 
   function taille(el: HTMLTextAreaElement) {

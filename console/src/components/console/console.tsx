@@ -9,9 +9,9 @@ import { Palette } from "./palette";
 import { Rail } from "./rail";
 import { Studio } from "./studio";
 import { Tete } from "./tete";
-import type { AgentVu } from "./types";
+import type { AgentVu, Memoire } from "./types";
 
-type Messages = { id: string; role: string; content?: unknown }[];
+
 
 export function Console({ entreprise, agentsInitiaux }: { entreprise: string; agentsInitiaux: AgentVu[] }) {
   const [agents, setAgents] = useState(agentsInitiaux);
@@ -22,7 +22,7 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
   const [nouveau, setNouveau] = useState<string | null>(null);
   const [bulle, setBulle] = useState<string | null>(null);
   const [apercus, setApercus] = useState<Record<string, string>>({});
-  const [fils, setFils] = useState<Record<string, Messages>>({});
+  const [fils, setFils] = useState<Record<string, Memoire>>({});
   const minuteur = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const dire = useCallback((m: string) => {
@@ -52,8 +52,9 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
     return () => removeEventListener("keydown", touche);
   }, [ouvrirPalette]);
 
-  const garder = useCallback((id: string, messages: Messages) => {
-    setFils((f) => (f[id] === messages ? f : { ...f, [id]: messages }));
+  const garder = useCallback((id: string, m: Memoire) => {
+    const messages = m.messages;
+    setFils((f) => ({ ...f, [id]: m }));
     const dernier = bulles(messages).at(-1);
     if (dernier) setApercus((a) => (a[id] === dernier.texte ? a : { ...a, [id]: dernier.texte }));
   }, []);

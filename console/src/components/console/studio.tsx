@@ -43,6 +43,7 @@ export function Studio({ ouvert, onFermer, onCree, onErreur }: {
   }
 
   async function creer() {
+    if (envoi) return; // Entrée deux fois de suite : un seul agent
     if (!prenom.trim()) return refuser("prenom");
     if (metier === null) return refuser("metier");
     setEnvoi(true);

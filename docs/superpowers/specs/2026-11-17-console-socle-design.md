@@ -52,8 +52,8 @@ Il n'existe encore aucun écran pour les clients : l'atelier (lot 5) est une API
 - Une table `agent` dans la même base : `id`, `utilisateur`, `prenom`, `metier`, `couleur`, `yeux`, `epingle`, `cree_le`. Un compte voit seulement ses agents.
 - Les métiers : la liste fixe des huit identifiants du lot 10 (`generaliste`, `immobilier`, `sante`, `hotellerie`, `juridique`, `commerce`, `fiduciaire`, `garage`), avec les noms de la maquette. Un test vérifie qu'elle reste égale aux gabarits du lot 10 tant qu'ils ne sont pas fusionnés (copie des titres), puis la console les lira à `GET /atelier/gabarits`.
 - La création : prénom (20 caractères au plus, comme la maquette) et métier obligatoires ; couleur et yeux facultatifs (rouge et marron par défaut). L'agent est inscrit auprès du serveur d'agents, puis s'ouvre dans le fil avec le message d'accueil de la maquette.
-- Épingler : trois agents au plus, comme la maquette. Un agent épinglé quitte la liste des conversations (jamais deux fois à l'écran).
-- Le fil de chaque agent est gardé tant que la page reste ouverte ; un message écrit avant que CopilotKit soit prêt part dès qu'il l'est.
+- Épingler : trois agents au plus, comme la maquette. Un agent épinglé quitte la liste des conversations (jamais deux fois à l'écran), sauf sur téléphone, où les tuiles ne s'affichent pas.
+- Le fil de chaque agent (ses messages et son identifiant de conversation) est gardé tant que la page reste ouverte : quand CopilotKit repart (un agent de plus), l'agent reprend la même conversation et se souvient de ce qui a été dit. Un message écrit avant que CopilotKit soit prêt part dès qu'il l'est ; une panne ou un silence de l'agent se dit.
 
 ### La conversation (CopilotKit et AG-UI)
 
@@ -70,6 +70,7 @@ L'atelier ne sait pas encore servir plusieurs agents par compte ni parler AG-UI 
 - Les consignes viennent du moteur, sans le modifier : `atelier.gabarits.reglages_pour` et `noyau.agent.consignes`. Tant que le lot 10 n'est pas fusionné, un métier inconnu de l'image prend les consignes du généraliste (et le serveur le dit dans son journal).
 - Le modèle : Claude (`ANTHROPIC_API_KEY`) ; sans clé, un modèle d'essai local qui répond sans réseau (les tests l'utilisent).
 - Protégé par un jeton partagé avec la console (`AGENTS_JETON`) ; il n'écoute que sur `127.0.0.1`.
+- Sans outil dans l'essai, il reçoit une consigne de plus : ne rien promettre (rappel, réservation, rendez-vous), recueillir et proposer de transmettre.
 
 ## Ce qui manque à l'API (noté dans la PR, pas codé dans le moteur)
 

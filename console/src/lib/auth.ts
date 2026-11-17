@@ -44,7 +44,12 @@ export function auth() {
 /** Les tables de Better Auth, créées au premier appel (et complétées après une mise à jour). */
 export function migrer(): Promise<void> {
   if (!globale.migre) {
-    globale.migre = getMigrations(auth().options).then(({ runMigrations }) => runMigrations());
+    globale.migre = getMigrations(auth().options)
+      .then(({ runMigrations }) => runMigrations())
+      .catch((e) => {
+        globale.migre = undefined; // un échec n'est pas gardé : la prochaine requête réessaie
+        throw e;
+      });
   }
   return globale.migre;
 }

@@ -55,3 +55,29 @@ def test_chaque_metier_repond_au_fil_de_l_eau(client, metier):
     assert types[0] == "RUN_STARTED" and types[-1] == "RUN_FINISHED"
     texte = "".join(e.get("delta", "") for e in evenements if e["type"] == "TEXT_MESSAGE_CONTENT")
     assert "Avez-vous de la place jeudi ?" in texte
+
+
+def test_il_se_souvient_de_la_conversation(client):
+    client.put("/agents/agent-memoire", json={"prenom": "Lou", "metier": "garage", "entreprise": "Garage du Lac"}, headers=ENTETE)
+
+    def tour(texte, run):
+        e = {**entree(texte), "runId": run}
+        with client.stream("POST", "/agents/agent-memoire/agui", json=e, headers=ENTETE) as flux:
+            evenements = [json.loads(l[5:]) for l in flux.iter_lines() if l.startswith("data:")]
+        return "".join(x.get("delta", "") for x in evenements if x["type"] == "TEXT_MESSAGE_CONTENT")
+
+    assert "message" not in tour("Ma voiture fait un bruit.", "t1").split("équipe.")[1]
+    assert "C'est votre 2e message." in tour("C'est une Clio.", "t2")
+
+
+def test_inscriptions_simultanees_sans_perte(client):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def inscrire(i):
+        return client.put(f"/agents/agent-{i:04d}", json={"prenom": "Lou", "metier": "commerce", "entreprise": "E"}, headers=ENTETE).status_code
+
+    with ThreadPoolExecutor(16) as pool:
+        assert set(pool.map(inscrire, range(60))) == {200}
+    import serveur
+
+    assert len([k for k in serveur.lire_registre() if k.startswith("agent-0")]) == 60

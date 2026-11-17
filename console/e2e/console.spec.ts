@@ -3,6 +3,12 @@ import { COMPTE_ESSAI } from "./compte";
 
 // Le parcours d'un client : inscription, création d'un agent, une question, sa réponse au fil de l'eau.
 test("de l'inscription à la première réponse d'un agent", async ({ page }) => {
+  // La page ne parle qu'à la console : ni télémétrie de CopilotKit, ni polices ou scripts d'ailleurs.
+  const ailleurs: string[] = [];
+  page.on("request", (r) => {
+    const h = new URL(r.url()).hostname;
+    if (!["localhost", "127.0.0.1"].includes(h) && !r.url().startsWith("data:")) ailleurs.push(r.url());
+  });
   await page.goto("/");
   await expect(page).toHaveURL(/\/connexion$/);
   await expect(page.getByRole("heading", { name: "Connexion" })).toBeVisible();
@@ -55,6 +61,14 @@ test("de l'inscription à la première réponse d'un agent", async ({ page }) =>
   await expect(rail.getByRole("button", { name: /Alix/ })).toHaveCount(1);
   await rail.getByRole("button", { name: "Alix", exact: true }).click();
   await expect(page.getByTestId("fil").getByText(/Bien reçu.*Anglet/)).toBeVisible();
+  // Il se souvient de la conversation, même après la création de Léa (CopilotKit a redémarré entre-temps).
+  await page.getByLabel("Écrivez à Alix").fill("Avec un balcon, si possible.");
+  await page.getByLabel("Écrivez à Alix").press("Enter");
+  await expect(page.getByTestId("fil").getByText(/Avec un balcon.*C'est votre 2e message\./)).toBeVisible();
+  // Une panne du modèle se dit, sans rester muette.
+  await page.getByLabel("Écrivez à Alix").fill("ESSAI-PANNE");
+  await page.getByLabel("Écrivez à Alix").press("Enter");
+  await expect(page.getByText("Pas de réponse pour l'instant. Réessayez dans un instant.")).toBeVisible();
   await page.mouse.move(900, 400);
   await page.waitForTimeout(2000);
   await page.screenshot({ path: "captures/console-clair.png" });
@@ -77,6 +91,22 @@ test("de l'inscription à la première réponse d'un agent", async ({ page }) =>
   await page.getByLabel("Mot de passe").fill(COMPTE_ESSAI.motDePasse);
   await page.getByRole("button", { name: "Se connecter" }).click();
   await expect(page.getByRole("navigation", { name: "Vos agents" }).getByText("Léa", { exact: true })).toBeVisible();
+  expect(ailleurs).toEqual([]);
+});
+
+test("sur téléphone, un agent épinglé reste dans la liste", async ({ page }) => {
+  await page.goto("/connexion");
+  await page.getByLabel("Courriel").fill(COMPTE_ESSAI.courriel);
+  await page.getByLabel("Mot de passe").fill(COMPTE_ESSAI.motDePasse);
+  await page.getByRole("button", { name: "Se connecter" }).click();
+  const rail = page.getByRole("navigation", { name: "Vos agents" });
+  await expect(rail.getByRole("button", { name: /Léa/ })).toHaveCount(1);
+  await page.setViewportSize({ width: 390, height: 844 });
+  // Alix est épinglé (premier essai) : ses tuiles sont masquées, sa ligne réapparaît, une seule fois.
+  await expect(rail.getByRole("button", { name: /^Alix/ }).filter({ visible: true })).toHaveCount(1);
+  await rail.getByRole("button", { name: /^Alix/ }).filter({ visible: true }).click();
+  await expect(page.getByLabel("Écrivez à Alix")).toBeVisible();
+  await page.screenshot({ path: "captures/telephone.png" });
 });
 
 test("les routes de la console refusent qui n'est pas connecté", async ({ request }) => {

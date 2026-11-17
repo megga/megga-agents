@@ -69,12 +69,11 @@ export function Rail(p: Props) {
 
           <TitreRail>{T.conversations}</TitreRail>
           <div className="flex w-full flex-none flex-col">
-            {/* Un agent épinglé n'est plus dans la liste : jamais deux fois la même information. */}
-            {p.agents
-              .filter((a) => !a.epingle)
-              .map((a) => (
-                <LigneAgent key={a.id} agent={a} {...p} />
-              ))}
+            {/* Un agent épinglé quitte la liste (jamais deux fois la même information), sauf sur téléphone,
+                où les tuiles des épinglés ne s'affichent pas : il y reste, sinon on ne le trouverait plus. */}
+            {p.agents.map((a) => (
+              <LigneAgent key={a.id} agent={a} {...p} />
+            ))}
           </div>
         </>
       )}
@@ -94,7 +93,7 @@ function LigneAgent({ agent: a, actif, nouveau, apercus, onChoisir, onEpingler }
   const apercu = apercus[a.id] ?? T.apercuAccueil(a.prenom, m?.qui ?? "");
   return (
     <MenuAgent agent={a} onEpingler={onEpingler}>
-    <div className="group relative w-full px-2.5 max-[760px]:px-0">
+    <div className={"group relative w-full px-2.5 max-[760px]:px-0" + (a.epingle ? " min-[761px]:hidden" : "")}>
       <button
         type="button"
         onClick={() => onChoisir(a.id)}

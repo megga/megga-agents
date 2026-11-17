@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -38,6 +39,11 @@ journal = logging.getLogger("megga.console.agents")
 
 # Les huit métiers du lot 10 (atelier/gabarits/ sur la branche megga/lot-10-modeles).
 METIERS = ("generaliste", "immobilier", "sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage")
+# L'agent de l'essai n'a aucun outil (ni rappels, ni catalogue, ni transfert) : qu'il ne promette rien de ce qu'il ne fait pas.
+ESSAI = (
+    "Dans cet essai, tu n'as aucun outil : ne promets ni rappel, ni réservation, ni rendez-vous ferme. "
+    "Recueille la demande et propose de la transmettre à l'équipe."
+)
 IDENT = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
 DOSSIER = Path(os.environ.get("AGENTS_DONNEES") or Path(__file__).resolve().parent.parent / ".donnees")
@@ -55,9 +61,15 @@ class ModeleEssai(Model):
     vus: list = field(default_factory=list)
 
     def _repondre(self, messages):
-        dernier = next((m for m in reversed(messages or []) if getattr(m, "role", "") == "user"), None)
-        texte = str(getattr(dernier, "content", "") or "")
-        return ModelResponse(role="assistant", content=f"Bien reçu\u00a0: «\u00a0{texte}\u00a0». Je transmets à l'équipe.")
+        des_gens = [m for m in (messages or []) if getattr(m, "role", "") == "user"]
+        texte = str(getattr(des_gens[-1], "content", "") or "") if des_gens else ""
+        if texte == "ESSAI-PANNE":  # les essais de bout en bout simulent ainsi une panne du modèle
+            raise RuntimeError("panne simulée du modèle d'essai")
+        reponse = f"Bien reçu\u00a0: «\u00a0{texte}\u00a0». Je transmets à l'équipe."
+        # Il compte les messages de la conversation qu'il voit : les essais vérifient ainsi qu'il s'en souvient.
+        if len(des_gens) > 1:
+            reponse += f" C'est votre {len(des_gens)}e message."
+        return ModelResponse(role="assistant", content=reponse)
 
     def invoke(self, messages=None, **kw):
         return self._repondre(messages)
@@ -84,6 +96,10 @@ class Inscription(BaseModel):
     entreprise: str = Field(min_length=1, max_length=120)
 
 
+# Les inscriptions arrivent en parallèle (FastAPI les sert dans plusieurs fils) : une à la fois.
+VERROU = threading.Lock()
+
+
 def lire_registre() -> dict:
     try:
         return json.loads(REGISTRE.read_text())
@@ -92,7 +108,10 @@ def lire_registre() -> dict:
 
 
 def ecrire_registre(r: dict) -> None:
-    REGISTRE.write_text(json.dumps(r, ensure_ascii=False, indent=1))
+    """Écrit à côté, puis remplace : le registre n'est jamais lu à moitié écrit."""
+    provisoire = REGISTRE.with_suffix(".json.tmp")
+    provisoire.write_text(json.dumps(r, ensure_ascii=False, indent=1))
+    os.replace(provisoire, REGISTRE)
 
 
 def reglages(metier: str) -> dict:
@@ -121,7 +140,7 @@ def construire(ident: str, fiche: dict) -> Agent:
         id=ident,
         name=fiche["prenom"],
         model=m,
-        instructions=consignes(config),
+        instructions=[*consignes(config), ESSAI],
         db=SqliteDb(db_file=str(DOSSIER / "sessions.sqlite")),
         add_history_to_context=True,
         num_history_runs=12,
@@ -152,9 +171,10 @@ def inscrire(ident: str, corps: Inscription):
         raise HTTPException(400, "identifiant invalide")
     if corps.metier not in METIERS:
         raise HTTPException(400, "métier inconnu")
-    r = lire_registre()
-    r[ident] = corps.model_dump()
-    ecrire_registre(r)
+    with VERROU:
+        r = lire_registre()
+        r[ident] = corps.model_dump()
+        ecrire_registre(r)
     return {"id": ident, "en_service": True}
 
 
