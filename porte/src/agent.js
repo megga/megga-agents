@@ -41,6 +41,26 @@ export async function jetonInterne(admin, nom) {
 // Les secrets propres à un client, posés par la route d'administration : sa base (exigée), et pour un client
 // qui a des rôles et une gestion de site (lot 7.1) ses gestionnaires et la clé de sa gestion, et celle de son site
 // pour /site/… (lot 7.4).
+// Cloudflare refuse au conteneur une variable d'environnement de plus de 16 000 octets (journal du 17.11.2026 :
+// « the size of the env variable exceeds the limit of 16000 bytes »). Une configuration plus longue (consignes,
+// accueil, oral) part en parties, CLIENT_CONFIG_1 à CLIENT_CONFIG_<n>, que le noyau recolle (noyau/app.py).
+// Une partie : au plus 3 500 caractères, donc 14 000 octets en UTF-8, coupée entre deux caractères entiers.
+export const OCTETS_MAX_VARIABLE = 15000;
+const CARACTERES_PAR_PARTIE = 3500;
+
+/** La configuration en une variable, ou en parties si elle dépasse la limite d'une variable. */
+export function variablesDeConfiguration(config) {
+  if (new TextEncoder().encode(config).length <= OCTETS_MAX_VARIABLE) return { CLIENT_CONFIG: config };
+  const caracteres = Array.from(config);
+  const env = {};
+  let n = 0;
+  for (let i = 0; i < caracteres.length; i += CARACTERES_PAR_PARTIE) {
+    env[`CLIENT_CONFIG_${++n}`] = caracteres.slice(i, i + CARACTERES_PAR_PARTIE).join("");
+  }
+  env.CLIENT_CONFIG_PARTIES = String(n);
+  return env;
+}
+
 export const SECRETS_CLIENT_REQUIS = ["DATABASE_URL"];
 export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
@@ -360,7 +380,7 @@ class AgentClient extends Conteneur {
     if (!client) throw new Error("client inconnu ou inactif");
     const secrets = (await this.ctx.storage.get("secrets")) ?? {};
     for (const k of SECRETS_CLIENT_REQUIS) if (!secrets[k]) throw new Error(`secret du client manquant : ${k}`);
-    const env = { CLIENT_CONFIG: client.config, ...secrets, INTERNE_TOKEN: await this.jeton() };
+    const env = { ...variablesDeConfiguration(client.config), ...secrets, INTERNE_TOKEN: await this.jeton() };
     for (const k of SECRETS_MEGGA) if (this.env[k]) env[k] = this.env[k];
     // Internet : Meta, les modèles et la base. Le resserrer hôte par hôte viendra avec les outils.
     return env;

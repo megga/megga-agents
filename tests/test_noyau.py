@@ -209,3 +209,13 @@ def test_les_mineurs_du_noyau(tmp_path):
     j.noter("tour_echec", quand=1.0)
     j.noter("tour_echec")
     assert j.purger(time.time() - 86400) == 1 and j.totaux(0)["tour_echec"]["nombre"] == 1
+
+
+def test_la_configuration_en_parties_se_recolle():
+    """La porte passe une configuration de plus de 16 000 octets en parties (limite de Cloudflare, 17.11.2026)."""
+    from noyau.app import configuration_en_parties
+
+    assert configuration_en_parties({}) is None
+    assert configuration_en_parties({"CLIENT_CONFIG_PARTIES": "2", "CLIENT_CONFIG_1": '{"a": "Gen', "CLIENT_CONFIG_2": 'ève"}'}) == '{"a": "Genève"}'
+    with pytest.raises(RuntimeError, match="une partie manque"):
+        configuration_en_parties({"CLIENT_CONFIG_PARTIES": "2", "CLIENT_CONFIG_1": "{"})
