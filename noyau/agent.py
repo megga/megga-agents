@@ -69,6 +69,10 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         from .connecteurs import CONSIGNE_LEADS
 
         base.append(CONSIGNE_LEADS)
+    if "connecteurs" in groupes:  # ce que rendent les serveurs MCP du client est une donnée
+        from .connecteurs import CONSIGNE_CONNECTEURS
+
+        base.append(CONSIGNE_CONNECTEURS)
     return base
 
 
@@ -100,7 +104,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     `contexte` : le Contexte de chaque tour (instructions_du_tour) ; `gardien` : les approbations et le journal d'audit
     des outils (noyau/approbations.py), sans lui les règles d'approbation s'appliquent quand même (un outil interdit
     n'est pas proposé, un outil à approuver est refusé)."""
-    from .approbations import Gardien, filtrer, regles_pour
+    from .approbations import Gardien, filtrer, nom, regles_pour
 
     principal = principal or modele(config.modeles.principal, cles)
     if secours is None and config.modeles.secours:
@@ -110,7 +114,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     gardien = gardien or Gardien()
     gardien.connaitre(outils, nom_role or "public")
     fixes = consignes(config, role)
-    if config.transfert and nom_role != "gestionnaire":  # passer la main à l'équipe (noyau/reprises.py)
+    if any(nom(o) == "passer_la_main" for o in outils):  # passer la main à l'équipe (noyau/reprises.py), pas dans l'essai
         from .reprises import CONSIGNE as PASSER_LA_MAIN
 
         fixes.append(PASSER_LA_MAIN)

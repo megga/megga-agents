@@ -1249,7 +1249,11 @@ class Approbations:
     Une demande garde l'outil et ses arguments, pour être faite telle quelle une fois accordée, au nom de la personne
     qui l'a demandée. Ses états : attente, puis accordee (en cours), faite ou echec ; refusee ; expiree (48 heures sans
     réponse). Une décision ne se prend qu'une fois (écriture conditionnelle) : deux gestionnaires qui touchent en même
-    temps ne la font pas deux fois. `relu` : la personne a été prévenue de l'issue (le Contexte de son tour suivant)."""
+    temps ne la font pas deux fois. `relu` : la personne a été prévenue de l'issue (le Contexte de son tour suivant).
+    Ses arguments sont vidés dès qu'elle est terminée (faite, en échec, refusée, expirée) ; elle est oubliée trois mois
+    après, comme le journal d'audit."""
+
+    FIN = ("faite", "echec", "refusee", "expiree")
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1277,6 +1281,7 @@ class Approbations:
     def demander(self, personne: str, role: str, outil: str, arguments: dict) -> int:
         """Une nouvelle demande ; une ValueError si la personne en a déjà trop qui attendent."""
         t = self._t
+        self.expirer()  # celles qui ont expiré ne comptent plus
         with self._e.begin() as c:
             attente = c.execute(select(func.count()).where(t.c.personne == personne, t.c.etat == "attente")).scalar() or 0
             if attente >= APPROBATIONS_EN_ATTENTE_MAX:
@@ -1296,7 +1301,8 @@ class Approbations:
         self.expirer()
         with self._e.begin() as c:
             fait = c.execute(update(t).where(t.c.id == int(ident), t.c.etat == "attente")
-                             .values(etat="accordee" if accord else "refusee", decide=time.time(), par=str(par)[:PERSONNE])).rowcount
+                             .values(etat="accordee" if accord else "refusee", decide=time.time(), par=str(par)[:PERSONNE],
+                                     **({} if accord else {"arguments": "{}"}))).rowcount
             if not fait:
                 return None
             return self._ligne(c.execute(select(t).where(t.c.id == int(ident))).first())
@@ -1304,13 +1310,16 @@ class Approbations:
     def finir(self, ident: int, etat: str, resultat: str) -> None:
         """L'issue d'une demande accordée : faite ou echec, avec ce que l'outil a rendu."""
         with self._e.begin() as c:
-            c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, resultat=str(resultat)[:2000]))
+            c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, resultat=str(resultat)[:2000], arguments="{}"))
 
     def expirer(self, maintenant: float | None = None) -> int:
+        """Les demandes sans réponse en 48 heures expirent ; les terminées depuis trois mois sont oubliées."""
         t = self._t
-        avant = (maintenant or time.time()) - APPROBATION_DELAI
+        maintenant = maintenant or time.time()
         with self._e.begin() as c:
-            return c.execute(update(t).where(t.c.etat == "attente", t.c.cree < avant).values(etat="expiree", decide=time.time())).rowcount
+            c.execute(delete(t).where(t.c.etat.in_(self.FIN), t.c.decide < maintenant - AUDIT_JOURS * 86400))
+            return c.execute(update(t).where(t.c.etat == "attente", t.c.cree < maintenant - APPROBATION_DELAI)
+                             .values(etat="expiree", decide=time.time(), arguments="{}")).rowcount
 
     def lister(self, etat: str | None = None, limite: int = 100) -> list[dict]:
         """Les demandes, les plus récentes d'abord ; `etat` : seulement celles-là."""
@@ -1325,9 +1334,9 @@ class Approbations:
     def a_relire(self, personne: str) -> list[dict]:
         """Les demandes de cette personne dont l'issue ne lui a pas encore été dite ; marquées dites."""
         t = self._t
-        fin = ("faite", "echec", "refusee", "expiree")
+        self.expirer()  # la personne apprend aussi celles qui ont expiré
         with self._e.begin() as c:
-            lignes = [self._ligne(l) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relu == 0, t.c.etat.in_(fin))
+            lignes = [self._ligne(l) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relu == 0, t.c.etat.in_(self.FIN))
                                                        .order_by(t.c.id))]
             if lignes:
                 c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relu=1))
@@ -1364,14 +1373,25 @@ class Connaissances:
             Column("vecteur", LargeBinary, nullable=False),
         )
 
+    def _verifier(self, c, titre: str, passages: int) -> None:
+        d, p = self._d, self._p
+        if (c.execute(select(func.count()).select_from(d)).scalar() or 0) >= DOCUMENTS_MAX:
+            raise ValueError(f"déjà {DOCUMENTS_MAX} documents : retirez-en d'abord")
+        if (c.execute(select(func.count()).select_from(p)).scalar() or 0) + passages > PASSAGES_MAX:
+            raise ValueError(f"la base dépasserait {PASSAGES_MAX} passages : retirez des documents d'abord")
+        if c.execute(select(d.c.id).where(d.c.titre == titre[:200]).limit(1)).first():  # un envoi repris
+            raise ValueError(f"un document intitulé « {titre[:200]} » est déjà dans la base : retirez-le d'abord pour le remplacer")
+
+    def verifier(self, titre: str, passages: int) -> None:
+        """Une ValueError si le document dépasse les bornes du client ou porte le titre d'un document déjà rangé."""
+        with self._e.connect() as c:
+            self._verifier(c, titre, passages)
+
     def ajouter(self, titre: str, source: str | None, genre: str, taille: int, modele: str, passages: list[tuple[str, bytes]]) -> int:
-        """Un document et ses passages, d'un coup ; une ValueError au-delà des bornes du client."""
+        """Un document et ses passages, d'un coup ; une ValueError au-delà des bornes du client, ou en doublon."""
         d, p = self._d, self._p
         with self._e.begin() as c:
-            if (c.execute(select(func.count()).select_from(d)).scalar() or 0) >= DOCUMENTS_MAX:
-                raise ValueError(f"déjà {DOCUMENTS_MAX} documents : retirez-en d'abord")
-            if (c.execute(select(func.count()).select_from(p)).scalar() or 0) + len(passages) > PASSAGES_MAX:
-                raise ValueError(f"la base dépasserait {PASSAGES_MAX} passages : retirez des documents d'abord")
+            self._verifier(c, titre, len(passages))
             ident = int(c.execute(insert(d).values(titre=titre[:200], source=source, genre=genre[:10], taille=int(taille),
                                                    passages=len(passages), ajoute=time.time())).inserted_primary_key[0])
             if passages:
@@ -1399,13 +1419,14 @@ class Connaissances:
 
 REPRISE_OUVERTE_S = 24 * 3600  # une conversation transmise que personne ne prend revient à l'agent
 REPRISE_PRISE_S = 72 * 3600  # une conversation prise, sans message de l'équipe depuis, aussi
+RELIRE_S = 24 * 3600  # l'agent relit ce que l'équipe a dit pendant le jour qui suit la fin
 
 
 class Reprises:
     """Les conversations confiées à l'équipe (table megga_reprises, noyau/reprises.py) : ouverte (personne ne l'a prise),
     prise (par un gestionnaire, ou « console »), puis rendue à l'agent, ou expiree. Une seule en cours par personne.
-    `prevenue` : la personne a reçu, une fois, « un membre de l'équipe vous répond » ; `relue` : l'agent a lu, au tour
-    qui suit la fin, ce que l'équipe a dit."""
+    `prevenue` : la personne a reçu, une fois, « un membre de l'équipe vous répond » (1), puis, à l'expiration, le mot
+    d'excuse (2) ; `relue` : l'agent a lu, au tour qui suit la fin, pourquoi elle lui revient."""
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1425,11 +1446,30 @@ class Reprises:
             Column("relue", Integer, nullable=False, default=0),
         )
 
-    def _expirer(self, c, maintenant: float) -> None:
+    def _oubliees(self, maintenant: float):
         t = self._t
-        c.execute(update(t).where(or_(and_(t.c.etat == "ouverte", t.c.cree < maintenant - REPRISE_OUVERTE_S),
-                                      and_(t.c.etat == "prise", t.c.dernier < maintenant - REPRISE_PRISE_S)))
-                  .values(etat="expiree", fin=maintenant))
+        return or_(and_(t.c.etat == "ouverte", t.c.cree < maintenant - REPRISE_OUVERTE_S),
+                   and_(t.c.etat == "prise", t.c.dernier < maintenant - REPRISE_PRISE_S))
+
+    def _expirer(self, c, maintenant: float) -> None:
+        c.execute(update(self._t).where(self._oubliees(maintenant)).values(etat="expiree", fin=maintenant))
+
+    def expirer(self, maintenant: float) -> list[dict]:
+        """À l'échéance : les conversations oubliées, rendues à l'agent (« expiree ») ; la personne reçoit le mot d'excuse."""
+        t = self._t
+        with self._e.begin() as c:
+            ids = [l.id for l in c.execute(select(t.c.id).where(self._oubliees(maintenant)))]
+            if ids:
+                c.execute(update(t).where(t.c.id.in_(ids)).values(etat="expiree", fin=maintenant, prevenue=2))
+            return [dict(l._mapping) for l in c.execute(select(t).where(t.c.id.in_(ids)))] if ids else []
+
+    def prochaine(self) -> float | None:
+        """L'heure de la prochaine expiration, ou None."""
+        t = self._t
+        with self._e.connect() as c:
+            ouverte = c.execute(select(func.min(t.c.cree)).where(t.c.etat == "ouverte")).scalar()
+            prise = c.execute(select(func.min(t.c.dernier)).where(t.c.etat == "prise")).scalar()
+        return min([h for h in (ouverte and ouverte + REPRISE_OUVERTE_S, prise and prise + REPRISE_PRISE_S) if h], default=None)
 
     def ouvrir(self, personne: str, role: str, motif: str, resume: str) -> tuple[int, bool]:
         """(identifiant, nouvelle) : celle déjà en cours pour cette personne, sinon une nouvelle."""
@@ -1474,14 +1514,18 @@ class Reprises:
             l = c.execute(select(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")))).first()
             if l is None:
                 return None
-            c.execute(update(t).where(t.c.id == l.id).values(etat="prise", par=l.par or str(par)[:PERSONNE], dernier=maintenant))
+            if not c.execute(update(t).where(t.c.id == l.id, t.c.etat.in_(("ouverte", "prise")))
+                             .values(etat="prise", par=l.par or str(par)[:PERSONNE], dernier=maintenant)).rowcount:
+                return None
             return dict(c.execute(select(t).where(t.c.id == l.id)).first()._mapping)
 
-    def rendre(self, ident: int) -> dict | None:
-        """Rendue à l'agent si elle était en cours ; None sinon."""
+    def rendre(self, ident: int, par: str | None = None) -> dict | None:
+        """Rendue à l'agent si elle était en cours ; None sinon. Avec `par`, une conversation prise ne se rend que par
+        celui qui l'a prise."""
         t, maintenant = self._t, time.time()
+        qui = or_(t.c.etat == "ouverte", t.c.par == par) if par is not None else t.c.id == int(ident)
         with self._e.begin() as c:
-            if not c.execute(update(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")))
+            if not c.execute(update(t).where(t.c.id == int(ident), t.c.etat.in_(("ouverte", "prise")), qui)
                              .values(etat="rendue", fin=maintenant)).rowcount:
                 return None
             return dict(c.execute(select(t).where(t.c.id == int(ident))).first()._mapping)
@@ -1491,16 +1535,17 @@ class Reprises:
         with self._e.begin() as c:
             return c.execute(update(self._t).where(self._t.c.id == int(ident), self._t.c.prevenue == 0).values(prevenue=1)).rowcount > 0
 
-    def a_relire(self, personne: str) -> list[dict]:
-        """Les reprises finies de cette personne que l'agent n'a pas encore lues ; marquées lues."""
-        t = self._t
+    def a_relire(self, personne: str) -> dict | None:
+        """La dernière reprise de cette personne finie depuis moins d'un jour (RELIRE_S), telle qu'avant d'être lue
+        (`relue`) ; marquée lue."""
+        t, maintenant = self._t, time.time()
         with self._e.begin() as c:
-            self._expirer(c, time.time())
-            lignes = [dict(l._mapping) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relue == 0,
-                                                                         t.c.etat.in_(("rendue", "expiree"))).order_by(t.c.id))]
-            if lignes:
-                c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relue=1))
-        return lignes
+            self._expirer(c, maintenant)
+            l = c.execute(select(t).where(t.c.personne == personne, t.c.etat.in_(("rendue", "expiree")),
+                                          t.c.fin >= maintenant - RELIRE_S).order_by(t.c.id.desc())).first()
+            if l is not None and not l.relue:
+                c.execute(update(t).where(t.c.id == l.id).values(relue=1))
+        return dict(l._mapping) if l else None
 
     def lister(self, etat: str | None = None, limite: int = 100) -> list[dict]:
         t = self._t
@@ -1512,7 +1557,10 @@ class Reprises:
 
 class Leads:
     """Les leads d'un client (table megga_leads, noyau/connecteurs.py) : la fiche que l'agent a faite d'une personne qui
-    a un vrai besoin, et ce qu'est devenu son envoi au webhook du client (garde, envoye, echec)."""
+    a un vrai besoin, et ce qu'est devenu son envoi au webhook du client (garde, envoye, echec). Gardés un an
+    (CONSERVATION) : les plus anciens s'effacent au démarrage et à chaque nouveau lead."""
+
+    CONSERVATION = 365 * 86400
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1530,8 +1578,25 @@ class Leads:
             Column("etat", String(10), nullable=False),
             Column("erreur", String(120), nullable=True),
         )
+        self.purger()
+
+    def purger(self) -> int:
+        with self._e.begin() as c:
+            return c.execute(delete(self._t).where(self._t.c.cree < time.time() - self.CONSERVATION)).rowcount
+
+    def completer(self, ident: int, personne: str, fiche: dict) -> dict | None:
+        """Le lead `ident` de cette personne, complété de ce que `fiche` précise ; sa fiche entière, ou None."""
+        t, champs = self._t, ("besoin", "score", "budget", "delai", "lieu", "nom")
+        with self._e.begin() as c:
+            ligne = c.execute(select(t).where(t.c.id == int(ident), t.c.personne == personne[:PERSONNE])).first()
+            if ligne is None:
+                return None
+            nouvelle = {k: fiche.get(k) or ligne._mapping[k] for k in champs}
+            c.execute(update(t).where(t.c.id == int(ident)).values(etat="garde", erreur=None, **nouvelle))
+            return nouvelle
 
     def noter(self, personne: str, fiche: dict) -> int:
+        self.purger()
         with self._e.begin() as c:
             return int(c.execute(insert(self._t).values(personne=personne[:PERSONNE], cree=time.time(), etat="garde",
                                                         **{k: fiche.get(k, "") for k in ("besoin", "budget", "delai", "lieu", "nom")},
