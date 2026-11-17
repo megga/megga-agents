@@ -721,7 +721,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(400, "l'effacement est définitif : confirmez avec ?confirmer=oui")
         fait = await droits(qui, ident, "DELETE", personne)
         # qui l'a demandé, au journal du client ; jamais le numéro, qui vient d'être effacé
-        await bd(canal.journal.noter, ident, "effacement", None, f"données d'une personne effacées, à la demande de {qui.role}")
+        demande = "de MEGGA" if qui.role == "megga" else "du client"
+        await bd(canal.journal.noter, ident, "effacement", None, f"données d'une personne effacées, à la demande {demande}")
         log.info("données d'une personne de %s effacées (%s)", ident, qui.role)
         return fait
 

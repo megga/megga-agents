@@ -278,7 +278,7 @@ def test_l_atelier(tmp_path):
     assert t.get("/atelier/clients/exemple/personnes/nimporte", headers=client).status_code == 400
     assert porte.appels == [("GET", "+41790000001"), ("DELETE", "+41790000001")]
     journal = stockage.JournalPilotage(f"sqlite:///{tmp_path}/atelier.db").lire("exemple")
-    assert [(j["evenement"], j["detail"]) for j in journal] == [("effacement", "données d'une personne effacées, à la demande de client")]
+    assert [(j["evenement"], j["detail"]) for j in journal] == [("effacement", "données d'une personne effacées, à la demande du client")]
     # le client règle sa mention de l'IA, ses minutes et ses modèles
     r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {
         "mention_ia": True, "minutes_par_conversation": 8, "modeles": {"principal": "mistral-large-latest", "secours": "claude-sonnet-5-5"}}})
