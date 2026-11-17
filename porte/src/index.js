@@ -23,6 +23,8 @@
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
+//   POST /admin/clients/:id/oublier          {personne} sa conversation repart à neuf, le fil reste (jeton ADMIN_TOKEN)
+//   GET  /admin/clients/:id/rappels?personne= ses rappels en attente ; POST …/rappels/annuler {personne, id}
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
@@ -77,6 +79,8 @@ export async function recevoir(requete, env, ctx) {
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
+  const entretien = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(oublier|rappels|rappels\/annuler)$/);
+  if (entretien) return entretenir(requete, env, entretien[1], entretien[2], url);
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
   if (suivi && requete.method === "GET") return suivre(requete, env, suivi[1], suivi[2] ?? "", url.searchParams);
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
@@ -317,6 +321,37 @@ async function clients(requete, env, seul) {
 }
 
 /** Le suivi d'un client : la porte ne lit rien elle-même, elle transmet à son conteneur et rend la réponse. */
+/**
+ * L'entretien d'une conversation (jeton ADMIN_TOKEN, audit du 17.11.2026) : POST …/oublier {personne}, GET
+ * …/rappels?personne=+…, POST …/rappels/annuler {personne, id}. Transmis au conteneur avec le jeton interne.
+ */
+async function entretenir(requete, env, id, quoi, url) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const methode = quoi === "rappels" ? "GET" : "POST";
+  if (requete.method !== methode) return texte("méthode", 405);
+  const client = await clientParId(env.ANNUAIRE, id);
+  const agent = client && agentDe(env, client);
+  if (!agent) return texte("client inconnu", 404);
+  let corps = {};
+  if (methode === "POST") {
+    try {
+      corps = (await requete.json()) ?? {};
+    } catch {
+      return texte("corps", 400);
+    }
+  }
+  const personne = quoi === "rappels" ? (url.searchParams.get("personne") ?? "") : String(corps.personne ?? "");
+  const action = quoi === "oublier" ? "oublier" : quoi === "rappels" ? "rappels" : "annuler";
+  try {
+    const { statut, donnees } = await agent.entretenir(action, personne, String(corps.id ?? ""));
+    return json(donnees, statut);
+  } catch (e) {
+    const message = String(e?.message ?? e).slice(0, 200);
+    const mal = ["personne", "identifiant de rappel"].includes(message);
+    return json({ erreur: mal ? message : "conteneur injoignable" }, mal ? 400 : 503);
+  }
+}
+
 async function suivre(requete, env, id, chemin, params) {
   if (!autorise(requete, env)) return texte("refusé", 401);
   const client = await clientParId(env.ANNUAIRE, id);

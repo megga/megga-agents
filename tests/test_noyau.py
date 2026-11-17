@@ -164,7 +164,7 @@ def test_le_fil_et_l_oral_restent_chez_claude(monkeypatch):
     assert configuration.Modeles(principal="deepseek-v4-pro", secours=None).petit() == "deepseek-v4-pro"
     assert configuration.Modeles(oral="claude-sonnet-5-5").petit() == "claude-sonnet-5-5"
     noms = []
-    monkeypatch.setattr(app, "modele", lambda nom, cles: noms.append(nom))
+    monkeypatch.setattr(app, "modele", lambda nom, cles, **k: noms.append(nom))
     monkeypatch.setattr("agno.agent.Agent.__init__", lambda self, **k: None)
     import asyncio
 

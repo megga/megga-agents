@@ -1100,6 +1100,8 @@ def outils(s: Services) -> list:
                 await s.exp.texte(personne, f"{legende}\n{ref}")
             else:
                 await s.exp.document(personne, str(ref).rsplit("/", 1)[-1], lien=s.gestion.lien_signe("videos", str(ref)), legende=legende)
+            if s.conversations is not None:
+                s.conversations.noter_envoi(personne, "video", legende)
         return f"{len(choisies)} vidéo(s) envoyée(s) dans la conversation. Dis-le en une phrase."
 
     # Montrer, chercher
@@ -1507,6 +1509,8 @@ def outils(s: Services) -> list:
             nom = fiches.nom_de_fichier(fiche.get("titre"), langue)
         media = await s.exp.televerser(pdf, "application/pdf", nom)
         await s.exp.document(personne, nom, media_id=media, legende=court(fiche.get("titre"), 1024))
+        if s.conversations is not None:
+            s.conversations.noter_envoi(personne, "document", nom)
         quoi = "anonyme" if version == "anonyme" else "avec logo et coordonnées"
         return (f"Fiche PDF envoyée dans la conversation ({nom}, {quoi}{', sans prix' if sans_prix else ''}, "
                 f"{'anglais' if langue == 'en' else 'français'}, {n_photos} photo(s)). Dis-le en une phrase, sans répéter son contenu.")

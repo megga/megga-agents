@@ -40,6 +40,9 @@ Routes :
   DELETE /interne/cles/{id}      retire une clé
   POST /interne/rappels  envoie les rappels échus, rend l'heure du prochain (jeton INTERNE_TOKEN)
   POST /interne/vider    attend la fin des tours en cours, avant un redémarrage (jeton INTERNE_TOKEN)
+  POST /interne/oublier  {personne} sa conversation repart à neuf, le fil reste (jeton INTERNE_TOKEN)
+  GET  /interne/rappels/{personne}   ses rappels en attente (jeton INTERNE_TOKEN)
+  POST /interne/rappels/annuler      {personne, id} annule l'un d'eux (jeton INTERNE_TOKEN)
   GET  /interne/suivi[?depuis=]                 volumes, modèles, échecs (jeton INTERNE_TOKEN)
   GET  /interne/suivi/conversations[?limite=]   les personnes qui ont écrit
   GET  /interne/suivi/conversations/{personne}  ses derniers messages, reçus et envoyés
@@ -149,7 +152,8 @@ def _reecriture(conf, cles):
     from agno.agent import Agent
 
     nom = conf.modeles.petit()
-    oral = Agent(model=modele(nom, cles), instructions=consignes_orales(conf), telemetry=False, markdown=False)
+    oral = Agent(model=modele(nom, cles, temperature=conf.modeles.temperature_oral), instructions=consignes_orales(conf),
+                 telemetry=False, markdown=False)
 
     async def reecrire(demande: str) -> str:
         sortie = await oral.arun(demande)
@@ -667,6 +671,46 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if not interne(requete):
             return Response("refusé", status_code=401)
         return {"restantes": await finir_les_tours(delai_vider)}
+
+    # L'entretien d'une conversation, par la porte (jeton interne) : la repartir à neuf, voir et annuler ses rappels
+    # (audit du 17.11.2026 : des affirmations fausses restées dans l'historique, un rappel en double).
+    PERSONNE = re.compile(r"\+\d{6,20}")
+
+    async def corps_json(requete: Request) -> dict:
+        try:
+            d = json.loads(await requete.body() or b"{}")
+        except ValueError:
+            return {}
+        return d if isinstance(d, dict) else {}
+
+    @app.post("/interne/oublier")
+    async def interne_oublier(requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        personne = str((await corps_json(requete)).get("personne") or "")
+        if not PERSONNE.fullmatch(personne):
+            return erreur(400, "personne : un numéro au format +41…")
+        await conversations.oublier(personne)
+        return {"oubliee": True}
+
+    @app.get("/interne/rappels/{personne}")
+    async def interne_rappels_de(personne: str, requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if not PERSONNE.fullmatch(personne) or rappels is None:
+            return erreur(404, "introuvable")
+        lignes = await asyncio.to_thread(rappels.lister, personne)
+        return {"rappels": [{"id": l["id"], "quand": l["quand"], "texte": l["texte"]} for l in lignes]}
+
+    @app.post("/interne/rappels/annuler")
+    async def interne_rappels_annuler(requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        d = await corps_json(requete)
+        personne, ident = str(d.get("personne") or ""), str(d.get("id") or "").strip()
+        if not PERSONNE.fullmatch(personne) or not ident or rappels is None:
+            return erreur(400, "personne et id")
+        return {"annule": bool(await asyncio.to_thread(rappels.annuler, personne, ident))}
 
     def lisible(requete: Request) -> Response | None:
         if not interne(requete):

@@ -135,6 +135,19 @@ modèle, qui sait que sa réponse sera dite, et l'écrit part en entier sur dema
 de cartes dans un vocal seul ; « en train d'écrire » relancé toutes les 20 s ; la marge de 10 minutes sur les 24 heures.
 Le vocal que l'agent dit de lui-même à un gestionnaire : `POST /vocal` (clé `VOCAL_CLE`), à la porte `/vocal/:client`.
 
+## L'audit du 17.11.2026 (des vocaux qui se contredisaient)
+
+Ce que l'agent disait de faux, et pourquoi : une capacité perdue pendant une panne (« je n'ai pas d'outil pour les
+vocaux »), redite pendant des heures parce qu'elle était dans son historique ; une consigne de langue prise pour une
+limite ; la réécriture pour l'oral qui ajoutait des phrases (température de DeepSeek par défaut) ; un rappel envoyé qu'il
+ne voyait pas, cru raté et reprogrammé ; un gestionnaire salué du prénom d'un autre. Les réglages ajoutés :
+`modeles.temperature_oral` (la réécriture pour l'oral) et, dans un rôle, `noms_du_profil` (qui écrit, d'après un mot de
+son profil WhatsApp). Sans réglage, rien ne change. Ce que l'agent envoie de lui-même (rappel, modèle Meta, message gardé)
+reste deux jours dans le Contexte ; une fiche ou une vidéo envoyée par un outil entre dans le fil. L'entretien d'une
+conversation, par la porte (jeton d'administration) : `POST /admin/clients/:id/oublier {personne}` (la conversation
+repart à neuf, le fil reste), `GET /admin/clients/:id/rappels?personne=` et `POST /admin/clients/:id/rappels/annuler
+{personne, id}`.
+
 ## Ce qui reste après le 7.4
 
 - Les modèles Meta (message, rappel, partenaire, livraison, demande, reponse_visiteur, suivi_visiteur, ouverture, veille, zone, rapprochement) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.

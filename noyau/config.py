@@ -47,6 +47,9 @@ class Modeles(Strict):
     # sinon le principal. Jamais le secours d'office : il ne sert qu'en panne, et ces textes portent les conversations
     # (relecture du 16.11.2026, I16). Un modèle DeepSeek (« deepseek-… ») y sert aussi.
     oral: str | None = None
+    # La température de la réécriture pour l'oral ; vide : celle du fournisseur (1 chez DeepSeek, plus inventive que
+    # l'ancienne Alix, à 0,7). Basse, le vocal redit la réponse écrite sans rien y ajouter (audit du 17.11.2026).
+    temperature_oral: float | None = Field(default=None, ge=0, le=1.5)
     # Le modèle du fil (noyau/fil.py) ; vide : celui de l'oral (petit()).
     fil: str | None = None
     # Claude, le modèle principal : les jetons d'une réponse, la réflexion adaptative et son effort (parité, D8).
@@ -151,6 +154,9 @@ class Role(Strict):
     par_dix_minutes: int | None = Field(default=None, ge=0, le=1000)
     # Le prénom tiré du profil WhatsApp, redit dans le Contexte de chaque tour (D11).
     prenom_du_profil: bool = False
+    # Les personnes connues de ce rôle, reconnues à un mot de leur profil WhatsApp : {mot: prénom à employer}
+    # ({"anne": "Anne", "annette": "Anne", "paul": "Paul"}). Le Contexte dit qui écrit (audit du 17.11.2026).
+    noms_du_profil: dict[str, str] = Field(default={}, max_length=20)
     # Ce que l'oral sait de plus de ces personnes (« elle le vouvoie, et parle de Greg à la troisième personne »).
     oral: str = Field(default="", max_length=2000)
     # Les paragraphes d'une réponse qui redisent l'accueil déjà parti, par motifs (expressions régulières) (D11).

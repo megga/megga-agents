@@ -22,6 +22,13 @@ GARDE_JOURNAL = 400 * 86400  # le journal du noyau (échecs, volumes) : un peu p
 ABANDON_RAPPEL = 24 * 3600  # un rappel encore en échec un jour après son heure est abandonné (noté au journal)
 ANNONCE_VALIDE = 12 * 3600  # un modèle « message » vaut pour ce qui s'ajoute pendant douze heures, tant que la personne n'a pas répondu
 VOCAL_RETENU = 24 * 3600  # le vocal envoyé de soi-même reste dans le Contexte un jour
+# Ce que l'agent envoie de lui-même (un rappel, un modèle Meta, un message gardé) n'entre pas dans son historique : il reste
+# deux jours dans le Contexte, les huit derniers (audit du 17.11.2026 : un rappel parti à 9 h 01, que l'agent a cru raté et
+# « reprogrammé » à 13 h, sans qu'on le lui demande).
+ENVOI_RETENU = 48 * 3600
+ENVOIS_RETENUS = 8
+GENRES_DE_SOI = {"rappel": "le rappel", "modele": "un modèle WhatsApp", "bonjour": "le mot du matin", "differe": "un message gardé",
+                 "document": "un document"}
 CHARGE_VOCAL = "vocal"  # ce que rend le bouton du modèle Meta « vocal » (« Écouter le message »)
 
 
@@ -40,12 +47,14 @@ class Envois:
         if fenetre_ouverte(dernier):
             await self.exp.texte(personne, texte)
             self._noter_fil(personne, "envoye", usage, texte)
+            await self._retenir_envoi(personne, usage, texte)
             return "libre"
         modele = self.conf.modeles_meta.get(usage)
         if modele:
             try:
                 await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(variable or texte)[:1000]])
                 self._noter_fil(personne, "envoye", "modele", texte[:1000])
+                await self._retenir_envoi(personne, usage, texte)
                 return "modele"
             except Exception as e:
                 # Un modèle suspendu, reclassé ou refusé : le rappel attend le prochain message, sans boucler toutes les
@@ -82,6 +91,7 @@ class Envois:
                 await self.exp.modele(personne, modele.nom, modele.langue, [nettoyer(v)[:1000] for v in (variables or [])],
                                       **({"charge": charge} if charge else {}))
                 self._noter_fil(personne, "envoye", "modele", " | ".join(variables or []))
+                await self._retenir_envoi(personne, "modele", f"{usage} : {' | '.join(variables or [])}")
                 return "modele"
             except Exception as e:
                 log.error("modèle refusé (%s) : %s", self.conf.id, str(e)[:200])
@@ -111,6 +121,40 @@ class Envois:
                 return "echec"
             await self.envoyer_de_soi_meme(personne, [{"vocal": texte}], "vocal", [self.conf.nom_agent])
             return "attente"
+
+    async def _retenir_envoi(self, personne: str, genre: str, texte: str) -> None:
+        """Ce que l'agent vient d'envoyer de lui-même, gardé deux jours pour le Contexte (ENVOI_RETENU)."""
+        if self.etats is None or not personne or personne.startswith("api:"):
+            return
+
+        async def garder():
+            maintenant = time.time()
+            avant = await asyncio.to_thread(self.etats.lire, personne, "de_soi") or []
+            gardes = [e for e in avant if isinstance(e, dict) and maintenant - float(e.get("quand") or 0) < ENVOI_RETENU]
+            gardes.append({"quand": maintenant, "genre": genre, "texte": " ".join(str(texte or "").split())[:300]})
+            await asyncio.to_thread(self.etats.ecrire, personne, "de_soi", gardes[-ENVOIS_RETENUS:])
+
+        await self._sans_echec(garder())
+
+    async def _envois_de_soi(self, personne: str) -> str:
+        """Pour le Contexte : ce que l'agent a envoyé de lui-même ces deux derniers jours, qui n'est pas dans son historique."""
+        if self.etats is None or not personne:
+            return ""
+        try:
+            gardes = await asyncio.to_thread(self.etats.lire, personne, "de_soi") or []
+        except Exception as e:
+            log.warning("envois de soi-même illisibles : %s", str(e)[:200])
+            return ""
+        from .rappels import date_longue
+
+        maintenant = time.time()
+        lignes = [f"{date_longue(float(e['quand']), self.conf.fuseau)}, {GENRES_DE_SOI.get(e.get('genre'), 'un message')} : « {e['texte']} »"
+                  for e in gardes if isinstance(e, dict) and e.get("texte") and maintenant - float(e.get("quand") or 0) < ENVOI_RETENU]
+        if not lignes:
+            return ""
+        return ("Ce que tu as envoyé de toi-même à cette personne ces deux derniers jours, hors de ta conversation : "
+                + " ; ".join(lignes) + ". Ces messages sont bien partis : ne les renvoie pas, ne les reprogramme pas, "
+                "ne dis pas qu'ils ont manqué.")
 
     async def _retenir_vocal(self, personne: str, texte: str) -> None:
         if self.etats is not None:
@@ -176,10 +220,12 @@ class Envois:
             elif m.get("document"):
                 await self.exp.document(personne, m.get("nom") or "document.pdf", media_id=m["document"], legende=m.get("legende", ""))
                 self._noter_fil(personne, "envoye", "document", m.get("legende") or m.get("nom") or "")
+                await self._retenir_envoi(personne, "document", m.get("legende") or m.get("nom") or "")
             elif m.get("liste"):
                 l = m["liste"]
                 await self.exp.liste(personne, nettoyer(l["corps"]), l["bouton"], l["section"], l["lignes"])
                 self._noter_fil(personne, "envoye", "liste", nettoyer(l["corps"]))
+                await self._retenir_envoi(personne, usage, nettoyer(l["corps"]))
             elif m.get("texte"):
                 texte = m["texte"] if m.get("secret") else self.remplaceur.texte(nettoyer(m["texte"]))
                 if m.get("apercu"):  # la carte d'une annonce : son lien avec son aperçu
@@ -188,6 +234,7 @@ class Envois:
                     await self.exp.texte(personne, texte)
                 # Un mot de passe ne se range jamais dans le fil (relu par la console et par le résumé du fil).
                 self._noter_fil(personne, "envoye", usage, "(mot de passe envoyé)" if m.get("secret") else texte)
+                await self._retenir_envoi(personne, usage, "(mot de passe envoyé)" if m.get("secret") else texte)
 
     async def _rappels_differes(self, personne: str, livres: dict | None = None, role: str | None = None) -> None:
         """Les rappels échus hors des 24 heures, sans modèle Meta, et les messages gardés : ils partent maintenant.
@@ -216,6 +263,7 @@ class Envois:
             texte = self.remplaceur.texte(nettoyer(phrases.rappel(r["texte"], tutoie)))
             await self.exp.texte(personne, texte)
             self._noter_fil(personne, "envoye", "rappel", texte)
+            await self._retenir_envoi(personne, "rappel", texte)
             await asyncio.to_thread(self.rappels.marquer, r["id"], "envoye")
             livres["n"] += 1
 
