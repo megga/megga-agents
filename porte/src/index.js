@@ -18,7 +18,7 @@
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
-//   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations]
+//   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations|/reprises|/leads]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   POST /admin/clients/:id/reprises/:n
 //                                  {action, texte?} : une conversation transmise, prise, répondue ou rendue (lot 9.3)

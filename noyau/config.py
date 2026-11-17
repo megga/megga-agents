@@ -21,11 +21,13 @@ VERSION = 1
 SANS_WHATSAPP_SCHEMA = 2
 ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
-METIERS: dict[str, tuple[str, ...]] = {"general": ("connaissances",), "immobilier": ("immobilier", "connaissances")}
+# Ceux du noyau, permis à tous les métiers : la base de documents (9.2), les leads et les connecteurs (9.4).
+GROUPES_DU_NOYAU = ("connaissances", "leads", "connecteurs")
+METIERS: dict[str, tuple[str, ...]] = {"general": GROUPES_DU_NOYAU, "immobilier": ("immobilier", *GROUPES_DU_NOYAU)}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
-OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": ("connaissances",),
+OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": GROUPES_DU_NOYAU,
                                                 "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                               "vitrine", "accueil", "marche", "travail", "connaissances")}
+                                                               "vitrine", "accueil", "marche", "travail", *GROUPES_DU_NOYAU)}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
 OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
@@ -106,7 +108,7 @@ class WhatsApp(Strict):
 GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
-REGLE_OUTIL = Literal["approbation", "interdit"]
+REGLE_OUTIL = Literal["approbation", "interdit", "auto"]
 NOM_OUTIL = re.compile(r"^[a-z][a-z0-9_]{1,59}$")
 APPROBATIONS_MAX = 60
 
@@ -121,6 +123,33 @@ def _approbations(v: dict[str, str]) -> dict[str, str]:
     return v
 
 
+class ServeurMcp(Strict):
+    """Un serveur MCP du client (noyau/connecteurs.py) : son CRM, son agenda, son outil métier.
+
+    `nom` préfixe ses outils (« crm_creer_contact ») ; `outils` : ceux qu'on propose à l'agent, nommés un à un (jamais
+    tous) ; ils attendent l'accord de l'équipe, sauf règle « auto » explicite (Config.approbations) ;
+    `jeton` : le numéro du secret qui l'ouvre (MCP_JETON_1 à 5), envoyé en « Authorization: Bearer »."""
+
+    nom: str = Field(pattern=r"^[a-z][a-z0-9]{1,15}$")
+    url: str = Field(pattern=r"^https://\S{4,500}$")
+    outils: tuple[str, ...] = Field(min_length=1, max_length=40)
+    jeton: int | None = Field(default=None, ge=1, le=5)
+
+    @field_validator("outils")
+    @classmethod
+    def noms_d_outils(cls, v):
+        if any(not NOM_OUTIL.fullmatch(n) for n in v):
+            raise ValueError("outils : leurs noms tels que le serveur les donne, en minuscules")
+        return v
+
+
+class Leads(Strict):
+    """Où part la fiche d'un lead (noyau/connecteurs.py) : un webhook https du client (son CRM, un tableur, Zapier),
+    signé par le secret LEADS_SECRET s'il est posé. Sans webhook, les leads restent dans la base et la console."""
+
+    webhook: str | None = Field(default=None, pattern=r"^https://\S{4,500}$")
+
+
 class Role(Strict):
     """Ce qu'un rôle reçoit en plus des consignes de l'agent : ses consignes à lui, et ses outils.
 
@@ -130,7 +159,7 @@ class Role(Strict):
 
     consignes: str = Field(default="", max_length=12000)
     outils: tuple[Literal["rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail",
-                         "connaissances"], ...] = ("rappels",)
+                         "connaissances", "leads", "connecteurs"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
     approbations: dict[str, REGLE_OUTIL] = {}
 
@@ -258,7 +287,7 @@ class Config(Strict):
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
     metier: Literal["general", "immobilier"] = "general"
     # Les packs actifs : « immobilier », « connaissances » (la base de documents du client, noyau/connaissances.py).
-    outils: tuple[Literal["immobilier", "connaissances"], ...] = ()
+    outils: tuple[Literal["immobilier", "connaissances", "leads", "connecteurs"], ...] = ()
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
     catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
     # Les rôles des personnes (gestionnaires, partenaires, visiteurs) ; sans eux, un seul agent pour tous.
@@ -271,6 +300,16 @@ class Config(Strict):
     approbations: dict[str, REGLE_OUTIL] = {}
     # Le transfert vers un humain (noyau/reprises.py) : l'agent peut confier une conversation à l'équipe.
     transfert: bool = False
+    # Les leads (groupe « leads ») et les serveurs MCP du client (groupe « connecteurs »), noyau/connecteurs.py.
+    leads: Leads | None = None
+    mcp: tuple[ServeurMcp, ...] = Field(default=(), max_length=10)
+
+    @field_validator("mcp")
+    @classmethod
+    def noms_uniques(cls, v):
+        if len({s.nom for s in v}) != len(v):
+            raise ValueError("mcp : un nom par serveur")
+        return v
 
     _approbations = field_validator("approbations")(classmethod(lambda cls, v: _approbations(v)))
 

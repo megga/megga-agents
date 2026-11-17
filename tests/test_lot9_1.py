@@ -251,6 +251,7 @@ class ModeleOutil(Model):
     name: str = "FauxOutil"
     provider: str = "essai"
     outil: str = "envoyer_fiche"
+    arguments: dict = field(default_factory=lambda: {"contact": "Mme Dupont"})
     vus: list = field(default_factory=list)
 
     def _repondre(self, messages):
@@ -259,7 +260,7 @@ class ModeleOutil(Model):
             self.vus.append(str(resultats[-1]))
             return ModelResponse(role="assistant", content=f"Voilà : {resultats[-1]}")
         return ModelResponse(role="assistant", content="", tool_calls=[{
-            "id": "appel-1", "type": "function", "function": {"name": self.outil, "arguments": json.dumps({"contact": "Mme Dupont"})}}])
+            "id": "appel-1", "type": "function", "function": {"name": self.outil, "arguments": json.dumps(self.arguments)}}])
 
     def invoke(self, messages=None, **kw):
         return self._repondre(messages)

@@ -43,8 +43,10 @@ _CHOIX = re.compile(r"^ap:(\d{1,10}):(oui|non)$")
 
 
 def regles_pour(conf, role=None) -> dict[str, str]:
-    """Les règles des outils pour un rôle : celles de la configuration, puis celles du rôle par-dessus."""
-    return {**conf.approbations, **(role.approbations if role is not None else {})}
+    """Les règles des outils pour un rôle : celles de la configuration, puis celles du rôle par-dessus. Les outils des
+    serveurs MCP du client (noyau/connecteurs.py) attendent l'accord de l'équipe, sauf règle « auto » explicite."""
+    mcp = {f"{s.nom}_{o}": APPROBATION for s in getattr(conf, "mcp", ()) for o in s.outils}
+    return {**mcp, **conf.approbations, **(role.approbations if role is not None else {})}
 
 
 def equipe(gestionnaires) -> list[str]:
@@ -118,12 +120,16 @@ class Gardien:
         self.notifier = notifier
         self.prevenir = prevenir
         self._outils: dict[tuple[str, str], object] = {}
+        self._boites: dict[str, list] = {}  # les boîtes d'outils (serveurs MCP) d'un rôle : leurs fonctions viennent à la connexion
         self._taches: set[asyncio.Task] = set()
 
     def connaitre(self, outils, role: str = "public") -> None:
         """Les outils d'un rôle, par nom : ce qu'une demande accordée fera (le même nom peut servir à deux rôles).
         Gardés par l'entrée validée d'Agno : les arguments vérifiés et convertis, comme pour un appel direct."""
         for o in outils:
+            if hasattr(o, "functions") and not callable(o):  # une boîte d'outils (un serveur MCP)
+                self._boites.setdefault(role, []).append(o)
+                continue
             n = nom(o)
             fonction = getattr(o, "entrypoint", o)
             if n and callable(fonction):
@@ -233,6 +239,10 @@ class Gardien:
     async def _faire(self, d: dict) -> tuple[str, str]:
         """L'action accordée, au nom de la personne qui l'a demandée : (faite ou echec, ce que l'outil a rendu)."""
         fonction = self._outils.get((d["role"], d["outil"]))
+        for boite in self._boites.get(d["role"], []) if fonction is None else []:
+            # un serveur MCP (connecteurs.BoiteMcp) : une session à part, ouverte et refermée pour cette seule action
+            if (fonction := getattr(boite, "appel", lambda _: None)(d["outil"])) is not None:
+                break
         if fonction is None:
             return "echec", "outil introuvable dans cette version de l'agent"
         arguments = dict(d["arguments"])

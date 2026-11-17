@@ -693,6 +693,14 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     # Le transfert vers un humain (lot 9.3, noyau/reprises.py) : la console prend une conversation, répond du numéro de
     # l'entreprise, puis la rend à l'agent. Comme les conversations, rien ne quitte une installation hors Cloudflare.
 
+    @r.get("/clients/{ident}/leads")
+    async def leads(ident: str, requete: Request, qui: Identite = Depends(identite)):
+        """Les leads de la période (lot 9.4, noyau/connecteurs.py) et ce qu'est devenu leur envoi au webhook du client."""
+        jours = jours_de(requete.query_params.get("jours"))
+        await bd(suivable, qui, ident, True)
+        lu = await lire_suivi(ident, "/leads", depuis=debut(jours), limite=limite_de(requete.query_params.get("limite")))
+        return {"periode_jours": jours, **lu}
+
     @r.get("/clients/{ident}/reprises")
     async def reprises(ident: str, requete: Request, qui: Identite = Depends(identite)):
         """Les conversations confiées à l'équipe ; `etat=ouverte` : celles que personne n'a encore prises."""

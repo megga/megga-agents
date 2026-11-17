@@ -449,3 +449,14 @@ test("le transfert vers un humain (lot 9.3) : la porte transmet prendre, répond
   assert.equal((await post({ action: "message", texte: 3 })).status, 400);
   assert.equal((await post({ action: "rendre" }, "faux")).status, 401);
 });
+
+test("les leads (lot 9.4) se lisent par le suivi", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({ fetch: async (u) => (vus.push(new URL(u).pathname + new URL(u).search), Response.json({ leads: [] })) });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  assert.deepEqual(await agent.suivre("/leads", "?depuis=1"), { statut: 200, donnees: { leads: [] } });
+  assert.deepEqual(vus, ["/interne/suivi/leads?depuis=1"]);
+});

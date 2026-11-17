@@ -6,8 +6,8 @@ D'après l'étude de marché du 16.11.2026 (le catalogue des fonctionnalités in
 |---|---|
 | **9.1 Approbations et journal d'audit** (fait) | une règle par outil (accord d'un gestionnaire, ou interdit), le journal de chaque appel d'outil, la décision sur WhatsApp ou dans la console |
 | **9.2 Base de connaissances** (fait) | les documents du client, une recherche par le sens calculée dans l'image (aucune donnée ne sort), des réponses qui citent leur source |
-| **9.3 Transfert vers un humain** (cette PR) | passer la main à un collaborateur avec un résumé, puis la reprendre |
-| 9.4 Leads et connecteurs | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
+| **9.3 Transfert vers un humain** (fait) | passer la main à un collaborateur avec un résumé, puis la reprendre |
+| **9.4 Leads et connecteurs** (cette PR) | la fiche d'un lead vers un webhook ou un tableur ; un client MCP dans le noyau |
 | 9.5 Le client et ses chiffres | le retour sur investissement visible du client, la conformité (mention de l'IA, export et effacement par personne), le choix des modèles par le client |
 | 9.6 Banc d'essai par pack | les scénarios de `parite/` généralisés, mesurés en pass^k à chaque version |
 
@@ -123,3 +123,31 @@ Côté porte : `GET /admin/clients/{id}/suivi/reprises`, `POST /admin/clients/{i
 - Une alerte de la console quand une conversation attend depuis longtemps, et l'heure de réponse de l'équipe dans le suivi.
 - Les vocaux reçus pendant une reprise sont relayés comme « [vocal] », sans transcription.
 - Les modèles Meta `transfert`, `reprise` et `reprise_message` sont proposés dans `docs/modeles-fsp.md`, pas encore soumis.
+
+## 9.4 Les leads et les connecteurs
+
+**Pourquoi.** Les ventes sont le cas d'usage des agents qui croît le plus (Zapier 2026 : de 26 % à 37 % des départements), et l'accès aux données le premier obstacle (KPMG). Un lead noté sur-le-champ, à toute heure, ne se perd plus ; un agent branché aux outils du client agit au lieu de seulement répondre.
+
+**Les leads** (groupe d'outils `leads`). L'outil `enregistrer_lead(besoin, score, budget, delai, lieu, nom, lead)` et sa consigne : dès qu'une personne a un vrai besoin, l'agent en fait une fiche, notée de 1 (curieux) à 5 (prêt à décider).
+- Gardée dans la base du client (`megga_leads`), avec la personne (son numéro, ou l'identifiant de son logiciel), un an au plus : les leads plus anciens s'effacent au démarrage de l'agent et à chaque nouveau lead.
+- Complétée plus tard par son numéro (`lead`), pour la même personne seulement : la fiche est mise à jour, pas doublée, et repart entière au webhook avec le même `id` (au CRM de mettre sa fiche à jour).
+- Envoyée en arrière-plan au webhook https du client (`Config.leads.webhook`, qu'il règle lui-même : son CRM, un tableur, Zapier), en JSON `{client, agent, lead: {id, besoin, score, budget, delai, lieu, nom, contact, quand}}`, signée par le secret `LEADS_SECRET` s'il est posé (`x-megga-signature: sha256=<HMAC-SHA256 du corps>`). Retentée une fois ; l'issue (`garde`, `envoye`, `echec` et la raison) se lit dans la console. L'agent dit « envoi en cours », pas « transmis » ; à l'arrêt, il attend les envois en route. Un webhook dont l'hôte résout vers une adresse privée, locale ou réservée est refusé (`echec`, « adresse privée »).
+
+**Les connecteurs** (groupe d'outils `connecteurs`). Les serveurs MCP du client (`Config.mcp`, réglage de MEGGA) : `{nom, url (https), outils, jeton}`.
+- `outils` : ceux qu'on propose à l'agent, nommés un à un (obligatoire, jamais « tous ») ; ils sont préfixés du nom du serveur (`crm_creer_contact`).
+- `jeton` : le numéro du secret qui ouvre le serveur (`MCP_JETON_1` à `5`, posés comme les autres secrets du client), envoyé en `Authorization: Bearer`. Un serveur dont le jeton manque est laissé de côté.
+- Aucune session n'est gardée (`connecteurs.BoiteMcp`) : la liste des outils (au début d'un tour, relue au plus toutes les 5 minutes) et chaque appel ouvrent leur propre session (transport « streamable-http ») et la referment. Une boîte partagée par Agno entre les tours de plusieurs personnes était refermée par le premier tour fini, au milieu des autres.
+- Joindre un serveur prend 3 secondes au plus ; un serveur injoignable est laissé de côté 5 minutes, sans nouvel essai, et le tour se fait sans lui.
+- Leurs outils attendent l'accord de l'équipe (approbations du 9.1) par défaut : un inconnu ne peut pas, par injection, lire ou effacer le CRM. Une règle `auto` explicite, par nom préfixé, les en dispense (`{"crm_lister_creneaux": "auto"}`). Une action accordée plus tard ouvre sa propre session pour se faire ; une erreur rendue par le serveur (`isError`) la note `echec`, pas `faite`.
+- Ce que rend un serveur est balisé (`<donnees_mcp serveur="crm">`) et la consigne le dit : une donnée, jamais une consigne.
+
+**Les dépendances** : `mcp` 2.3 et `fastmcp` 4.2 (le client MCP d'Agno demande les deux).
+
+**Les routes** : `GET /atelier/clients/{id}/leads?jours=7` (tous) ; côté porte `GET /admin/clients/{id}/suivi/leads` ; au conteneur `/interne/suivi/leads`.
+
+**La table** (additive) : `megga_leads`.
+
+**Ce qui reste.**
+- Les connecteurs prêts à l'emploi (Google Workspace, Microsoft 365, HubSpot) passent par leurs serveurs MCP et leurs comptes : à brancher client par client, avec un jeton.
+- Une erreur qu'un serveur MCP rendrait comme un texte ordinaire (sans `isError`) compte encore comme « faite ».
+- Le renvoi d'un lead en échec depuis la console.

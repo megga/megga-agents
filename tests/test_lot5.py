@@ -409,8 +409,9 @@ def test_essai_hors_whatsapp_et_a_part(atelier, tmp_path):
 def test_catalogue(atelier):
     nouveau_client(atelier)
     c = atelier.get("/atelier/catalogue", headers=jeton_client(atelier)).json()
-    # la base de connaissances (lot 9.2) va avec tous les métiers
-    assert c["metiers"] == {"general": ["connaissances"], "immobilier": ["immobilier", "connaissances"]}
+    # la base de connaissances (lot 9.2), les leads et les connecteurs (lot 9.4) vont avec tous les métiers
+    assert c["metiers"] == {"general": ["connaissances", "leads", "connecteurs"],
+                            "immobilier": ["immobilier", "connaissances", "leads", "connecteurs"]}
     assert "nom_agent" in c["champs_client"]
 
 
