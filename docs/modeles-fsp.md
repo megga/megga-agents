@@ -28,9 +28,11 @@ Un modèle Meta est le seul message permis hors des 24 heures. Ceux-ci remplacen
 | `suivi_visiteur_en` | `fsp_agent_suivi` (en) | un visiteur | Hello, Four Seasons Properties has received your enquiry about {{1}}. We will get back to you very soon. Reply here if you would like to add anything. | |
 | `ouverture` | `fsp_agent_ouverture` | un contact | Bonjour {{1}}, Four Seasons Properties souhaite vous transmettre {{2}}. Touchez le bouton pour le recevoir. | Recevoir |
 | `ouverture_en` | `fsp_agent_ouverture` (en) | un contact | Hello {{1}}, Four Seasons Properties would like to send you {{2}}. Tap the button to receive it. | Receive |
-| `transfert` (proposé) | `fsp_agent_transfert` | le gestionnaire | Bonjour, {{1}} vous transmet une conversation qui demande l'attention de l'équipe : {{2}}. Touchez le bouton pour la voir et la prendre en charge. | Voir la conversation |
-| `reprise` (proposé) | `fsp_agent_reprise` | un visiteur | Bonjour, un membre de l'équipe de Four Seasons Properties vous a répondu au sujet de votre échange avec {{1}}. Touchez le bouton pour lire sa réponse. | Lire la réponse |
-| `reprise_message` (proposé) | `fsp_agent_reprise_message` | le gestionnaire | Bonjour, {{1}} vous a écrit dans la conversation que vous avez prise en charge. Touchez le bouton pour lire son message. | Lire le message |
+| `transfert` | `fsp_agent_transfert` | le gestionnaire | Bonjour, {{1}} vous transmet une conversation qui demande l'attention de l'équipe : {{2}}. Touchez le bouton pour la voir et la prendre en charge. | Voir la conversation |
+| `reprise` | `fsp_agent_reprise` | un visiteur | Bonjour, un membre de l'équipe de Four Seasons Properties vous a répondu au sujet de votre échange avec {{1}}. Touchez le bouton pour lire sa réponse. | Lire la réponse |
+| `reprise_message` | `fsp_agent_reprise_message` | le gestionnaire | Bonjour, {{1}} vous a écrit dans la conversation que vous avez prise en charge. Touchez le bouton pour lire son message. | Lire le message |
+| `approbation` | `fsp_agent_approbation` | le gestionnaire | Bonjour, {{1}} attend votre accord avant de faire une action pour une personne qui lui a écrit : {{2}}. Touchez le bouton pour voir la demande et y répondre. | Voir la demande |
+| `approbation_reponse` | `fsp_agent_approbation_reponse` | la personne | Bonjour, l'équipe a répondu à la demande que vous avez faite à {{1}}. Touchez le bouton pour lire sa réponse. | Lire la réponse |
 
 Ce que valent les variables, par exemple :
 - `message` : le nom de l'agent, « Alix » ;
@@ -41,7 +43,7 @@ Ce que valent les variables, par exemple :
 - `transfert` : « Alix », « réclamation sur une visite » ; `reprise` : « Alix » ; `reprise_message` : « +41 79 123 45 67 » ;
 - `livraison` : « G8LR-2DW8 » ; `reponse` : le début de la réponse ; `suivi` : « la villa MBOL-1E00 à Marbella » ; `ouverture` : « Marie Dupont », « une annonce ».
 
-Les trois modèles du transfert vers un humain (lot 9.3) sont proposés, pas encore soumis ni approuvés : à relire avant. Le mot d'excuse quand personne de l'équipe n'a répondu à temps n'a pas de modèle propre : le repli `message` l'annonce.
+Les trois modèles du transfert vers un humain (lot 9.3) et les deux des approbations (lot 9.1) sont relus par Julien et soumis à Meta le 17.11.2026, en attente de son avis (utilitaires). `approbation` : le nom de l'agent, puis l'action demandée (« envoyer une fiche »). Le mot d'excuse quand personne de l'équipe n'a répondu à temps n'a pas de modèle propre : le repli `message` l'annonce.
 
 L'anglais sert quand le socle connaît la langue de la personne : le suivi, le premier contact, la réponse à une question, et le message en attente qui les annonce. Tout ce qui va au gestionnaire reste en français ; le dossier d'un partenaire aussi (sa langue n'est pas gardée).
 
