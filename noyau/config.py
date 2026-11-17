@@ -51,6 +51,13 @@ class Modeles(Strict):
     # (relecture du 16.11.2026, I16).
     oral: str | None = None
 
+    @model_validator(mode="after")
+    def _secours_choisi(self):
+        # Derrière un modèle européen (Mistral AI), pas de secours d'office : celui par défaut tourne en Chine (lot 9.5).
+        if self.principal.startswith("mistral-") and "secours" not in self.model_fields_set:
+            raise ValueError("modeles.secours : avec un modèle européen, choisissez le secours (européen, un autre, ou aucun)")
+        return self
+
     def petit(self) -> str:
         """Le modèle de l'oral et du fil."""
         if self.oral:
@@ -108,7 +115,7 @@ class WhatsApp(Strict):
 GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
 
-REGLE_OUTIL = Literal["approbation", "interdit"]
+REGLE_OUTIL = Literal["approbation", "interdit", "auto"]
 NOM_OUTIL = re.compile(r"^[a-z][a-z0-9_]{1,59}$")
 APPROBATIONS_MAX = 60
 
@@ -126,12 +133,13 @@ def _approbations(v: dict[str, str]) -> dict[str, str]:
 class ServeurMcp(Strict):
     """Un serveur MCP du client (noyau/connecteurs.py) : son CRM, son agenda, son outil métier.
 
-    `nom` préfixe ses outils (« crm_creer_contact ») ; `outils` : ceux qu'on propose à l'agent (vide : tous, à éviter) ;
+    `nom` préfixe ses outils (« crm_creer_contact ») ; `outils` : ceux qu'on propose à l'agent, nommés un à un (jamais
+    tous) ; ils attendent l'accord de l'équipe, sauf règle « auto » explicite (Config.approbations) ;
     `jeton` : le numéro du secret qui l'ouvre (MCP_JETON_1 à 5), envoyé en « Authorization: Bearer »."""
 
     nom: str = Field(pattern=r"^[a-z][a-z0-9]{1,15}$")
     url: str = Field(pattern=r"^https://\S{4,500}$")
-    outils: tuple[str, ...] = Field(default=(), max_length=40)
+    outils: tuple[str, ...] = Field(min_length=1, max_length=40)
     jeton: int | None = Field(default=None, ge=1, le=5)
 
     @field_validator("outils")
@@ -335,6 +343,12 @@ class Config(Strict):
         for nom, r in self.les_roles().items():
             if nom != "gestionnaire" and (pris := [o for o in r.outils if o in OUTILS_GESTIONNAIRE]):
                 raise ValueError(f"Ces outils sont ceux des gestionnaires, pas du rôle {nom} : {', '.join(pris)}.")
+        return self
+
+    @model_validator(mode="after")
+    def transfert_a_l_equipe(self):
+        if self.transfert and "gestionnaire" not in self.les_roles():
+            raise ValueError("Le transfert vers un humain demande le rôle gestionnaire : c'est à l'équipe que l'agent passe la main.")
         return self
 
     def les_roles(self) -> dict[str, Role]:
