@@ -105,7 +105,13 @@ def capacites(conf, role) -> str:
     if getattr(conf, "bonjour", None) and "travail" in g:
         themes.append("Le mot du matin : chaque matin, un petit message plein de bonne humeur ; on peut l'arrêter ou changer l'heure.")
     if conf.voix.voix:
-        themes.append("La voix : comprendre les messages vocaux et répondre en vocal.")
+        # Dit sans détour (audit du 17.11.2026 : l'agent répétait « je n'ai pas d'outil pour les vocaux » dans des vocaux).
+        themes.append("La voix : je comprends les messages vocaux, et quand on m'écrit en vocal, ma réponse part d'elle-même en "
+                      "vocal, avec ma voix, sans outil à appeler ; à un message écrit, je réponds par écrit. C'est pareil pour "
+                      "toute personne qui m'écrit : toi, l'équipe, les partenaires, les visiteurs. Ce qui se copie (un lien, un "
+                      "numéro, une référence) part aussi par écrit après le vocal, et le détail complet si on me le demande.")
+    else:
+        themes.append("La voix : je comprends les messages vocaux, mais je réponds toujours par écrit (pas de voix réglée).")
     return "Tes capacités, telles qu'elles sont en service :\n" + "\n".join(f"{i}. {t}" for i, t in enumerate(themes, 1))
 
 

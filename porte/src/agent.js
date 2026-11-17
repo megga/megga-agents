@@ -310,6 +310,41 @@ class AgentClient extends Conteneur {
     return { statut: r.status, donnees };
   }
 
+  /**
+   * L'entretien d'une conversation (audit du 17.11.2026) : « oublier » la repart à neuf (le fil reste), « rappels » liste
+   * ses rappels en attente, « annuler » en annule un. `personne` : un numéro au format +….
+   */
+  async entretenir(action, personne, ident = "") {
+    if (!/^\+\d{6,20}$/.test(personne ?? "")) throw new Error("personne");
+    if (action === "annuler" && !/^[A-Za-z0-9_-]{1,80}$/.test(ident ?? "")) throw new Error("identifiant de rappel");
+    if (!["oublier", "rappels", "annuler"].includes(action)) throw new Error("action");
+    try {
+      await this.pret();
+    } catch (e) {
+      await this.noterAlerte("demarrage", e);
+      throw e;
+    }
+    const entetes = { "x-megga-interne": await this.jeton(), "content-type": "application/json" };
+    const port = this.ctx.container.getTcpPort(PORT);
+    const r =
+      action === "rappels"
+        ? await port.fetch(`http://container/interne/rappels/${encodeURIComponent(personne)}`, { headers: entetes })
+        : await port.fetch(`http://container/interne/${action === "oublier" ? "oublier" : "rappels/annuler"}`, {
+            method: "POST",
+            headers: entetes,
+            body: JSON.stringify(action === "oublier" ? { personne } : { personne, id: ident }),
+          });
+    const texte = await r.text();
+    let donnees;
+    try {
+      donnees = JSON.parse(texte);
+    } catch {
+      donnees = { erreur: texte.slice(0, 200) };
+    }
+    await this.veiller().catch(() => {});
+    return { statut: r.status, donnees };
+  }
+
   /** Les clés des logiciels (entrée par API), gardées en empreinte par le conteneur : lister, ajouter, retirer. */
   async cles(methode, chemin = "", corps = null) {
     if (!/^(\/[0-9a-f]{12})?$/.test(chemin)) throw new Error("chemin de clé");

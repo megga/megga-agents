@@ -28,19 +28,22 @@ REGLES = (
 TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.2026, I7)
 
 
-def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool = False, effort: str | None = None) -> Model:
+def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool = False, effort: str | None = None,
+           temperature: float | None = None) -> Model:
     """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek. Pour Claude : `jetons` par
-    réponse, la réflexion adaptative et son effort (Modeles.jetons, reflexion, effort ; parité D8)."""
+    réponse, la réflexion adaptative et son effort (Modeles.jetons, reflexion, effort ; parité D8). `temperature` : celle
+    de la réécriture pour l'oral (Modeles.temperature_oral) ; jamais avec la réflexion, que Claude refuse."""
     if nom.startswith("claude-"):
         from agno.models.anthropic import Claude
 
         return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=jetons,
                       thinking={"type": "adaptive"} if reflexion else None,
-                      output_config={"effort": effort} if effort else None)
+                      output_config={"effort": effort} if effort else None,
+                      temperature=None if reflexion else temperature)
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
-        return DeepSeek(id=nom, api_key=cles.get("DEEPSEEK_API_KEY"))
+        return DeepSeek(id=nom, api_key=cles.get("DEEPSEEK_API_KEY"), temperature=temperature)
     raise ValueError(f"modèle inconnu : {nom}")
 
 

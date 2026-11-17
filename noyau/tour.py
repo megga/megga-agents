@@ -562,6 +562,11 @@ class Conversations(Envois, Autour):
         if self.journal is not None:
             self._plus_tard(self.journal.noter, genre, quantite, detail, time.time())
 
+    def noter_envoi(self, personne: str, genre: str, texte: str) -> None:
+        """Un envoi fait par un outil pendant un tour (une fiche PDF, une vidéo) : dans le fil, que le suivi relit (audit du
+        17.11.2026 : quatre fiches annoncées, trois vues, et rien pour le vérifier)."""
+        self._noter_fil(personne, "envoye", genre, texte)
+
     def _noter_fil(self, personne: str, sens: str, genre: str, texte: str) -> None:
         if self.fil is not None:
             self._plus_tard(self.fil.noter, personne, sens, genre, texte or "", time.time())

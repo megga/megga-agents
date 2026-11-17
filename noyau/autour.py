@@ -111,13 +111,26 @@ class Autour:
         await self._sans_echec(asyncio.to_thread(self.etats.ecrire, personne, "session", s))
         return s["id"]
 
+    async def oublier(self, personne: str) -> None:
+        """La conversation de cette personne repart à neuf (une nouvelle session d'Agno) : ses anciens tours ne sont plus
+        relus, le fil (son résumé) reste. Après une panne qui lui a fait dire des choses fausses (audit du 17.11.2026 :
+        « je n'ai pas d'outil pour les vocaux », redit pendant des heures après le retour de la voix)."""
+        maintenant = time.time()
+        s = {"id": f"{personne}:{int(maintenant)}", "debut": maintenant, "derniere": maintenant}
+        self._sessions[personne] = s
+        if self.etats is not None:
+            await asyncio.to_thread(self.etats.ecrire, personne, "session", s)
+
     async def contexte(self, personne: str) -> str:
-        """Ce que le noyau ajoute au Contexte de chaque tour : le prénom du profil (Role.prenom_du_profil), les rappels
-        prévus (ReglageRappels.contexte), les souvenirs utiles (Memoire.outils), le vocal envoyé de soi-même."""
+        """Ce que le noyau ajoute au Contexte de chaque tour : le prénom du profil (Role.prenom_du_profil), qui écrit parmi
+        les personnes connues du rôle (Role.noms_du_profil), les rappels prévus (ReglageRappels.contexte), les souvenirs
+        utiles (Memoire.outils), le vocal et les messages envoyés de soi-même."""
         lignes = []
         r = self._role_conf(self._roles.get(personne))
         if r is not None and r.prenom_du_profil:
             lignes.append(accueils.ligne_profil(self._profils.get(personne), self.conf.nom_agent))
+        if r is not None and r.noms_du_profil:
+            lignes.append(accueils.nom_connu(self._profils.get(personne), r.noms_du_profil))
         if self.conf.rappels.contexte and self.rappels is not None:
             from .rappels import contexte as rappels_prevus
 
@@ -125,6 +138,7 @@ class Autour:
         if self.memoire is not None:
             lignes.append(await self.memoire.contexte(personne, self._entendus.get(personne, "")))
         lignes.append(await self._vocal_dit(personne))
+        lignes.append(await self._envois_de_soi(personne))
         return "\n".join(l for l in lignes if l)
 
     async def _ecouter(self, media_id: str) -> str:

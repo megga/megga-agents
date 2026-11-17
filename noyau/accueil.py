@@ -90,6 +90,22 @@ def ligne_profil(profil: str | None, nom_agent: str) -> str:
     return "Son profil WhatsApp ne donne pas de prénom (un surnom, une entreprise ou des signes) : aucun nom tant qu'elle ne s'est pas présentée."
 
 
+def _sans_accents(t: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFD", t) if unicodedata.category(c) != "Mn").lower()
+
+
+def nom_connu(profil: str | None, noms: dict[str, str]) -> str:
+    """Qui écrit, parmi les personnes connues d'un rôle (Role.noms_du_profil : un mot du profil WhatsApp, le prénom à
+    employer), d'après le nom de son profil. Un seul prénom reconnu, sinon rien : la consigne du rôle décide (audit du
+    17.11.2026 : un gestionnaire salué du prénom d'un autre)."""
+    mots = set(re.findall(r"\w+", _sans_accents(profil or "")))
+    trouves = {p for mot, p in noms.items() if _sans_accents(mot) in mots}
+    if len(trouves) != 1:
+        return ""
+    p = trouves.pop()
+    return f"C'est {p} qui t'écrit (d'après son profil WhatsApp) : emploie ce prénom."
+
+
 def _redit(p: str, motifs) -> bool:
     return any(re.search(m, p, re.I) for m in motifs)
 

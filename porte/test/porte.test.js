@@ -151,3 +151,66 @@ test("une configuration trop longue pour une variable part en parties, et se rec
   for (const p of parties) assert.ok(new TextEncoder().encode(p).length <= 16000 && new TextEncoder().encode(p).length <= OCTETS_MAX_VARIABLE);
   assert.equal(parties.join(""), longue);
 });
+
+test("l'entretien d'une conversation : jeton, méthode, client, transmis à l'objet du client", async () => {
+  const appels = [];
+  const e = {
+    ...env([]),
+    AGENTS_EUROPE: {
+      jurisdiction: (j) => ({
+        getByName: (nom) => ({
+          entretenir: async (action, personne, ident) => {
+            appels.push({ j, nom, action, personne, ident });
+            if (!/^\+\d{6,20}$/.test(personne)) throw new Error("personne");
+            return { statut: 200, donnees: { ok: action } };
+          },
+        }),
+      }),
+    },
+  };
+  const admin = { authorization: "Bearer admin", "content-type": "application/json" };
+  const r = (chemin, init = {}) => recevoir(new Request(`https://porte/admin/clients/${chemin}`, init), e);
+  assert.equal((await r("essai-eu/oublier", { method: "POST", body: '{"personne":"+41790000000"}' })).status, 401);
+  assert.equal((await r("essai-eu/oublier", { method: "GET", headers: admin })).status, 405);
+  assert.equal((await r("inconnu/oublier", { method: "POST", headers: admin, body: '{"personne":"+41790000000"}' })).status, 404);
+  assert.equal((await r("essai-eu/oublier", { method: "POST", headers: admin, body: "pas du json" })).status, 400);
+  assert.equal((await r("essai-eu/oublier", { method: "POST", headers: admin, body: '{"personne":"greg"}' })).status, 400);
+  assert.deepEqual(await (await r("essai-eu/oublier", { method: "POST", headers: admin, body: '{"personne":"+41790000000"}' })).json(), { ok: "oublier" });
+  assert.deepEqual(await (await r("essai-eu/rappels?personne=%2B41790000000", { headers: admin })).json(), { ok: "rappels" });
+  const annule = await r("essai-eu/rappels/annuler", { method: "POST", headers: admin, body: '{"personne":"+41790000000","id":"abc123"}' });
+  assert.deepEqual(await annule.json(), { ok: "annuler" });
+  assert.deepEqual(appels.at(-1), { j: "eu", nom: "essai-eu", action: "annuler", personne: "+41790000000", ident: "abc123" });
+});
+
+test("l'objet du client transmet l'entretien au conteneur, avec le jeton interne", async () => {
+  const vus = [];
+  let alarme = null;
+  const ctx = {
+    id: { name: "essai-eu" },
+    blockConcurrencyWhile: (f) => f(),
+    storage: { get: async () => undefined, put: async () => {}, getAlarm: async () => alarme, setAlarm: async (t) => { alarme = t; } },
+    container: {
+      running: true,
+      setInactivityTimeout: async () => {},
+      getTcpPort: () => ({
+        fetch: async (u, o = {}) => {
+          vus.push({ chemin: new URL(u).pathname, methode: o.method ?? "GET", jeton: o.headers["x-megga-interne"], corps: o.body ?? null });
+          return Response.json({ ok: true });
+        },
+      }),
+    },
+  };
+  const a = new AgentEurope(ctx, { ADMIN_TOKEN: "admin" });
+  a.demarrer = async () => {};
+  await assert.rejects(a.entretenir("oublier", "greg"), /personne/);
+  await assert.rejects(a.entretenir("annuler", "+41790000000", "x y"), /identifiant/);
+  assert.deepEqual(await a.entretenir("oublier", "+41790000000"), { statut: 200, donnees: { ok: true } });
+  await a.entretenir("rappels", "+41790000000");
+  await a.entretenir("annuler", "+41790000000", "abc123");
+  assert.deepEqual(vus.map((v) => [v.chemin, v.methode, v.corps]), [
+    ["/interne/oublier", "POST", '{"personne":"+41790000000"}'],
+    ["/interne/rappels/%2B41790000000", "GET", null],
+    ["/interne/rappels/annuler", "POST", '{"personne":"+41790000000","id":"abc123"}'],
+  ]);
+  assert.ok(vus.every((v) => /^[0-9a-f]{64}$/.test(v.jeton)) && alarme !== null);
+});
