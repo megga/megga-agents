@@ -21,12 +21,17 @@ def url(tmp_path):
     return f"sqlite:///{tmp_path}/client.db"
 
 
+# Le transfert demande le rôle gestionnaire (lot 9.3) : c'est à l'équipe que l'agent passe la main.
+ROLES_T = {"gestionnaire": {}, "visiteur": {}}
+
+
 def agent_whatsapp(url, **conf):
     from test_app import SECRET, FauxAgent, FauxExpediteur
 
     agent, exp = FauxAgent("Bonjour !"), FauxExpediteur()
+    agents = {n: agent for n in conf.get("roles") or {}} or None
     app = creer({"CLIENT_CONFIG": json.dumps({**CONF, **conf}), "DATABASE_URL": url, "META_APP_SECRET": SECRET, "INTERNE_TOKEN": "interne"},
-                agent=agent, expediteur=exp, attente=0.01, seuil_regard=30)
+                agent=agent, agents=agents, expediteur=exp, attente=0.01, seuil_regard=30)
     return app, agent, exp
 
 
@@ -92,7 +97,8 @@ def test_sans_reglage_pas_de_mention_et_avec_transfert_l_offre_d_un_humain(url, 
     with TestClient(app) as t:
         ecrire(app, t, "Bonjour", "wamid.1")
     assert [x[1] for x in exp.envois] == ["Bonjour !"]
-    app, _, exp = agent_whatsapp(f"sqlite:///{tmp_path}/autre.db", mention_ia=True, transfert=True, langue="en")
+    app, _, exp = agent_whatsapp(f"sqlite:///{tmp_path}/autre.db", mention_ia=True, transfert=True, langue="en",
+                                 roles=ROLES_T)
     with TestClient(app) as t:
         ecrire(app, t, "Hello", "wamid.3")
     assert exp.envois[0][1].endswith("You can ask to speak to a member of the team.")
@@ -204,8 +210,9 @@ def test_la_valeur_de_la_periode(url):
     leads = connecteurs.Leads(stockage.Leads(url))
     from test_app import FauxAgent, FauxExpediteur
 
-    app = creer({"CLIENT_CONFIG": json.dumps({**CONF, "outils": ["leads"], "transfert": True, "minutes_par_conversation": 6}),
-                 "DATABASE_URL": url, "INTERNE_TOKEN": "interne"}, agent=FauxAgent(), expediteur=FauxExpediteur(), leads=leads)
+    app = creer({"CLIENT_CONFIG": json.dumps({**CONF, "outils": ["leads"], "transfert": True, "roles": ROLES_T, "minutes_par_conversation": 6}),
+                 "DATABASE_URL": url, "INTERNE_TOKEN": "interne"}, agent=FauxAgent(),
+                agents={n: FauxAgent() for n in ROLES_T}, expediteur=FauxExpediteur(), leads=leads)
     maintenant = time.time()
     for p in ("+41790000001", "+41790000002", "+41790000003"):
         stockage.Fil(url).noter(p, "recu", "texte", "Bonjour", maintenant)
