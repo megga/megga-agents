@@ -46,4 +46,5 @@ next-env.d.ts
 /test-results/
 /playwright-report/
 /captures/
-/.next-e2e/
+# Les constructions des essais, où qu'elles soient
+.next-e2e/
