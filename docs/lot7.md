@@ -40,7 +40,7 @@ Une personne venue d'un logiciel par API est un visiteur ; des rôles sans visit
 - **Modifier** : `modifier_annonce` et `reecrire_annonce`, à confirmer (l'outil dit ce qui va changer, prix compris) ; `masquer_annonce`, `supprimer_annonce`, toujours à confirmer : `confirmer_action` refuse dans le tour même qui a préparé, et au-delà de 15 minutes (une action abandonnée ne se rejoue pas ; de même un brouillon prêt et un envoi à un contact).
 - **Garde-fous** (`garde.py`) : ni tiret long ni point médian ; jamais un nom de `gestion.noms_interdits` ni une consigne (« PDF », « brouillon ») dans un texte ; un titre ni trop court ni une liste de mots.
 - **Photos et documents** : `ajouter_photos`, `couverture_photo`, `ordonner_photos`, `retirer_photos`, `ajouter_document`, d'après les médias reçus (« média 3 ») et les numéros de `voir_annonce`.
-- **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
+- **Mots de passe** : `acces_annonce` (verrouiller, changer ; jamais déverrouiller depuis WhatsApp), `mot_de_passe_site` et `porte_site` (administrateur seulement ; les sites de `gestion.sites` et, depuis le 16.11.2026, le site principal de `gestion.principal`, qui fermé sans mot de passe dicté reprend le sien, jamais relu ni envoyé), `envoyer_mot_de_passe`. Un mot de passe part seul dans la conversation, jamais dans ce que lit le modèle.
 - **Vidéos** : `ajouter_video` (par lien) et `retirer_video`, à confirmer ; `envoyer_video`.
 - **À confirmer aussi** (décidé par Julien, 16.11.2026) : `retirer_photos`, et `supprimer_recherche_client` (`confirmer_action` avec « recherche-<id> », le nom du client montré). Une seule action attend à la fois : une autre préparée dans le même tour est refusée. Le oui part avec la version de l'annonce que le courtier a vue : si elle a changé entre-temps, rien n'est écrasé. Restent d'un seul appel, parce qu'ils ajoutent sans rien retirer ni changer de texte public : ranger des photos ou un document reçus, changer la couverture ou l'ordre des photos, une recherche de client, le propriétaire et le partage d'un bien privé.
 - **Montrer** : `montrer_biens` (carrousel, photos par lien signé), `message_client` (prêt à transférer), `formulaire_annonce` (le WhatsApp Flow de `gestion.formulaire_annonce`).
@@ -64,6 +64,10 @@ Pas encore : une vidéo reçue en fichier (la gestion range les fichiers vidéo 
 ## Le journal des conversations (16.11.2026)
 
 Le courtier demande « avec qui as-tu parlé aujourd'hui ? » : l'outil `activite` (groupe visiteurs) liste les personnes qui ont écrit (la table `megga_contacts`, qui garde désormais leur nom WhatsApp, colonne `nom` ajoutée d'elle-même), avec leur numéro, leur rôle et ce qu'elles ont écrit (le fil, `megga_fil`) ; `qui` donne le détail d'une personne. Ni les gestionnaires, ni les logiciels par API. La page « Alix » de la gestion reste à faire : elle lira la même chose par une route du socle.
+
+## Le mot du matin (16.11.2026)
+
+`packs/immobilier/bonjour.py` : si la configuration a `bonjour: "HH:MM"`, chaque jour à cette heure (heure du client), chaque gestionnaire reçoit un mot d'encouragement plein de bonne humeur, écrit par Claude et différent chaque jour (les dix derniers lui sont rappelés), ou une phrase de secours. L'outil `mot_du_matin` (groupe travail) l'arrête, le reprend ou change l'heure. Réveillé plus de trois heures trop tard, il saute le jour. Hors des 24 heures, il ne part que par un modèle Meta `bonjour` s'il est réglé ; il n'est jamais gardé pour plus tard.
 
 ## 7.4 Les partenaires et les visiteurs
 
@@ -118,6 +122,18 @@ Décidé par Julien (16.11.2026) : une route d'export dans Alix pour copier ses 
 - **La parité** (`parite/`) : les 36 cas du banc noté d'Alix en scénarios neutres (`cas.json` : qui écrit quoi, le temps qui passe, des critères vérifiés sur la trace ou lus par un juge). Les deux agents les jouent en local avec le vrai Claude : Alix par son propre banc (`alix.mjs`, sans rien modifier dans son dépôt), le socle tel que `creer` le construit, contre la vraie gestion du site servie en local (`socle.py`, `gestion.mjs`). Les mêmes critères et le même juge notent les deux (`noter.py`). Premier passage (16.11.2026, Claude Sonnet 5.5, juge Sonnet 5.5) : **Alix 89 / 100, socle 88 / 100** ; chacun gagne des cas que l'autre perd, à hauteur de ce que le juge varie d'un passage à l'autre (3 points pour Alix entre deux notations des mêmes traces). Le rapport : `docs/parite-7-7.md`. Pas de défaut du socle trouvé ; les écarts sont des choix de réponse du modèle (un visiteur qui revient n'est pas salué par son nom, une suite proposée différente). Un biais : le socle ne vide pas son historique avec le temps (Alix repart à neuf après 12 heures), les cas « le lendemain » (G06, G14, R01, M01, V08) lui sont plus faciles.
 - **La copie des données** : la route `GET /export` d'Alix (megga/fourseasonsproperties#132, en lecture seule, protégée par `EXPORT_CLE`, non déployée), jointe le temps de la copie par une adresse `workers.dev` ouverte puis refermée (décidé par Julien) ; l'import `python -m packs.immobilier.reprise export.json` (partenaires et leur règle, numéros bloqués, demandes et leurs choix, recherches gardées, souvenirs des gestionnaires dans la mémoire d'Agno, règles de travail, fil, veilles, zones, carnet du marché), une fois par base, identifiants gardés, dates converties ; refaite (`--encore`), elle ne double rien. Essayé sur un export produit par le vrai code d'Alix (`tests/donnees/export_alix.json`).
 - **Le numéro de test** et **la bascule** : la marche à suivre, les modèles Meta à soumettre et la décision qui reste (le numéro que le socle sert pour Four Seasons après la bascule) sont dans `docs/bascule-fsp.md`. Le mode relais d'Alix (transmettre au socle au lieu de répondre) est un second changement dans son dépôt, à faire seulement sur l'accord de Julien.
+
+## La parité du noyau (relecture du 17.11.2026)
+
+Ce que l'ancienne Alix faisait et que le noyau ne faisait plus, rétabli comme réglages (par défaut, rien ne change pour
+les autres clients) : `remplacements` (le filtre de noms au point d'envoi, `Expediteur._envoyer`), `historique`,
+`memoire` (retenir, oublier, souvenirs : `noyau/memoire.py`), `oral`, `photos`, `rappels`, `pieces_au_modele`,
+`reprendre_coupees`, `humeur` ; dans `modeles` : `jetons`, `reflexion`, `effort`, `fil` ; dans `voix` : `imposer_langue`,
+`balises` ; dans un rôle : `tutoiement`, `humeur`, `par_jour`, `par_dix_minutes`, `prenom_du_profil`, `oral`,
+`accueil_redit`. Sans réglage : une réponse vide est relancée une fois, sinon l'excuse ; un vocal est marqué pour le
+modèle, qui sait que sa réponse sera dite, et l'écrit part en entier sur demande ou sur un oui à l'offre du vocal ; pas
+de cartes dans un vocal seul ; « en train d'écrire » relancé toutes les 20 s ; la marge de 10 minutes sur les 24 heures.
+Le vocal que l'agent dit de lui-même à un gestionnaire : `POST /vocal` (clé `VOCAL_CLE`), à la porte `/vocal/:client`.
 
 ## Ce qui reste après le 7.4
 

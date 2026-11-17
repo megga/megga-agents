@@ -262,6 +262,22 @@ test("le site d'un client : transmis tel quel, refusé sans réveiller le conten
   assert.deepEqual(journal, []);
 });
 
+test("le vocal demandé par l'équipe : transmis tel quel au conteneur, qui vérifie sa clé", async () => {
+  const journal = [];
+  const e = await env(journal, () => Response.json({ etat: "parti" }));
+  const corps = JSON.stringify({ numero: "+41790000001", texte: "La villa est vendue." });
+  const vocal = (cle = CLE_SITE, id = "cabinet") => recevoir(new Request(`https://porte/vocal/${id}`, {
+    method: "POST", body: corps, headers: { authorization: `Bearer ${cle}`, "content-length": String(new TextEncoder().encode(corps).length) },
+  }), e);
+  const r = await vocal();
+  assert.equal(r.status, 200);
+  assert.deepEqual(journal, [{ j: "eu", nom: "cabinet", chemin: "/vocal", auth: `Bearer ${CLE_SITE}`, corps }]);
+  journal.length = 0;
+  assert.equal((await vocal("court")).status, 401);
+  assert.equal((await vocal(CLE_SITE, "inconnu")).status, 404);
+  assert.deepEqual(journal, []);
+});
+
 test("le journal des conversations, pour la gestion du site : lu, jamais gardé", async () => {
   const journal = [];
   const e = await env(journal, () => Response.json({ total: 1, personnes: [] }));

@@ -362,3 +362,30 @@ def test_l_accueil_ne_part_pas_si_le_tour_echoue(tmp_path):
     vus, (reponse, echec), accueil = tour_avec_accueil(tmp_path, agent)
     assert echec and reponse == EXCUSE
     assert [v for g, v in vus if g == "texte"] == []
+
+
+# Les remplacements du client (Config.remplacements) : aucun nom ne part avant son filtre
+
+
+def test_un_nom_filtre_ne_part_jamais_dans_le_flux():
+    """Le filtre d'Alix FSP tient sur deux mots (« Grégory Lyonnet » devient « Greg ») et le modèle peut couper le nom
+    entre deux morceaux : le texte attend donc la conclusion et part filtré, comme la réponse rendue. Les outils, eux,
+    partent pendant le tour."""
+    from noyau.tour import Conversations
+    from test_lot2 import Exp, conf
+    from test_parite_noyau import FILTRE
+
+    agent = AgentEnFlux(["Grégory ", "Lyon", "net vous ", "rappelle demain."], outils=["chercher_biens"])
+    c = Conversations(conf(remplacements=FILTRE), agent, Exp())
+    vus = []
+
+    async def sur_evenement(genre, valeur):
+        vus.append((genre, valeur))
+
+    reponse, echec = asyncio.run(c.repondre_api("api:site:anna", "Qui me rappelle ?", sur_evenement=sur_evenement))
+    assert not echec and reponse == "Greg vous rappelle demain."
+    textes = [v for g, v in vus if g == "texte"]
+    assert "".join(textes) == "Greg vous rappelle demain."
+    assert not any("Lyon" in t or "Grégory" in t for t in textes)
+    assert vus[0] == ("outil", {"outil": "chercher_biens", "etat": "debut"})  # avant le texte
+    assert agent.appels[0][2] is True  # le tour a bien été demandé en flux

@@ -16,20 +16,39 @@ metier: immobilier
 # Le fil (lot 7.6) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour (Julien, 13.11.2026 :
 # « qu'elle n'oublie plus la conversation en cours »).
 fil: true
+# Le mot du matin (Greg, 16.11.2026 : « tous les matins, un message d'encouragement, avec de la bonne humeur »).
+bonjour: "08:00"
 outils: []
 modeles:
   principal: claude-sonnet-5-5
   secours: deepseek-v4-pro
+# La voix d'Alix, celle du Worker fourseasons-alix avant la bascule : Elise (ElevenLabs), en français comme en
+# anglais, Eleven v4, stabilité 1, vitesse 1. Sans elle, Alix transcrit les vocaux mais répond par écrit (Greg,
+# 17.11.2026 : « je n’ai pas d’outils pour envoyer des messages vocaux »). En service dans l’atelier : version 6.
+voix:
+  voix: EST9Ui6982FZPSi7gCHi
+  modele: eleven_v4
+  stabilite: 1.0
+  vitesse: 1.0
 gestion:
   url: https://fourseasonsproperties.ch
   sites:
     marbella: https://fspmarbella.com
     dubai: https://fspdubai.com
+  # Le site de Genève s'ouvre au public et se referme comme les deux autres (Greg, 16.11.2026) ; fermé, il demande le
+  # mot de passe du site. Ce nom n'est le préfixe d'aucun bien.
+  principal:
+    geneve: https://fspgeneva.com
   # Jamais dans le texte d'une annonce (le 12.11.2026, un titre est parti en ligne avec deux prénoms).
   noms_interdits: [Greg, Grégory, Gregory, Julien, Alix]
   fiche: four-seasons-properties
   # Les biens de Marbella et de Dubaï sont publics : un visiteur en voit le prix et le lien. Ceux de Suisse, non.
   publics: [marbella, dubai]
+  # Les textes que le code écrit aux visiteurs et aux partenaires le nomment ainsi (« Greg a bien reçu votre demande… »,
+  # « Greg vous transmet la fiche… »), comme avant la bascule.
+  courtier: Greg
+  # Greg et Julien se tutoient : rappelé dans le Contexte de chaque tour, même si l'historique les vouvoie.
+  tutoiement: true
 # Le marché (lot 7.5) : les portails par région, les grands d'abord (recherche simple), puis les autres (avancée).
 marche:
   defaut: suisse
@@ -42,13 +61,21 @@ marche:
     dubai: {nom: Dubaï, simple: [propertyfinder.ae, bayut.com], autres: [dubizzle.com]}
 roles:
   gestionnaire:
-    consignes: >-
-      Tu parles à un courtier de l'agence. Tu l'aides à gérer les annonces du site, ses clients, ses partenaires et
-      les visiteurs, au nom de son compte de gestion. Rien ne part en ligne ni à quelqu'un sans son accord explicite.
-      Tu le tutoies.
-      Le marché : la région suisse par défaut, espagne pour Marbella, france pour la France voisine, dubai pour Dubaï,
-      prestige pour les portails de luxe internationaux. Les chiffres du carnet viennent de Greg (ventes, avis) ou des
-      portails (prix demandés) : dis toujours lesquels.
+    # Ce qui était propre à Greg dans les consignes d'Alix avant la bascule (alix/src/annonces.js, CONSIGNES_ANNONCES,
+    # et capacites.js), repris au plus près ; le reste est dans les consignes d'annonces du pack.
+    consignes: |-
+      Tu parles à un courtier de l'agence. Tu l'aides à gérer les annonces du site, ses clients, ses partenaires et les visiteurs, au nom de son compte de gestion. Rien ne part en ligne ni à quelqu'un sans son accord explicite.
+      TUTOIEMENT, RÈGLE ABSOLUE (Julien, 14.11.2026) : tu tutoies Greg (et Julien), dans chaque message et chaque vocal, sans exception : « tu », « ton », « ta », « tes », « toi », jamais « vous », « votre », « vos ». Les anciens messages de la conversation le vouvoient : c'est fini, ne les imite pas. Seuls les textes destinés à un client, un visiteur ou un partenaire (message à transférer, réponse préparée) gardent le vouvoiement.
+      Il s'appelle Greg : appelle-le toujours Greg, dans tes messages comme dans tes vocaux, et parle de lui ainsi à tout le monde. Jamais son prénom complet, jamais son nom de famille (Julien, 14.11.2026).
+      Les trois destinations se nomment toujours dans cet ordre : Genève, Dubaï, Marbella (Julien, 14.11.2026). Avec lui (et avec Julien), un ton chaleureux et simple, et tu le tutoies, toujours. Les visiteurs et les partenaires, eux, se vouvoient en français.
+      Chaque phrase va jusqu'au bout, bien construite et sans faute (« je transmets »), et se termine par sa ponctuation ; jamais un message qui s'arrête en route (Julien, 14.11.2026).
+      Écris comme une collègue vive et chaleureuse, pas comme un service client : jamais « je te confirme que », « n'hésite pas », « bien noté », « je reste à ta disposition », « certainly », « feel free to ». Commence par l'essentiel, en phrases simples.
+      La langue : réponds toujours dans la langue du dernier message de la personne, en français, en anglais ou en espagnol (Greg passe de l'une à l'autre). Un mot court, mal orthographié ou ambigu (« holas como estats », « ola », « hello ») : choisis la plus plausible de ces trois, avec le français pour seul repli ; jamais l'allemand, l'italien ni une autre langue que la personne n'a pas écrite en phrases claires.
+      Les trois sites de Four Seasons Properties : le site suisse, avec les biens de Suisse (et de Chamonix), où le mandat confidentiel est sous son propre mot de passe ; le site de Dubaï et le site de Marbella, chacun ses biens, publics, dont la fiche montre le quartier, jamais l'adresse. Une seule gestion pour les trois : un bien va sur le site de sa commune (le site suisse, sinon Dubaï ou Marbella). Après chaque changement, les trois sites se mettent à jour d'eux-mêmes en quelques minutes.
+      Hors de Suisse, c'est Marbella, Dubaï ou la France voisine : demande d'abord la confirmation, et pour Marbella ou Dubaï, le quartier.
+      Une fiche PDF à ses couleurs porte le logo Four Seasons Properties et ses coordonnées.
+      Ce que tu ne sais pas encore faire : dis-le franchement, et propose de le transmettre à Julien.
+      Le marché : la région suisse par défaut, espagne pour Marbella, france pour la France voisine, dubai pour Dubaï, prestige pour les portails de luxe internationaux. Les chiffres du carnet viennent de Greg (ventes, avis) ou des portails (prix demandés) : dis toujours lesquels.
     outils: [rappels, annonces, partenaires, visiteurs, marche, travail]
   partenaire:
     consignes: >-
@@ -74,7 +101,9 @@ roles:
       (les communes de la rive gauche à Genève, Nueva Andalucía, la Golden Mile ou Benahavís à Marbella, Palm
       Jumeirah, Downtown ou Dubai Hills à Dubaï) et peux en parler avec justesse, mais jamais tu n'inventes un fait
       sur un bien. Les destinations se nomment toujours dans cet ordre : Genève, Dubaï, Marbella, puis les Alpes
-      suisses et françaises. Son prénom : celui qu'elle donne prime ; sinon aucun nom. Chaque phrase va jusqu'au
+      suisses et françaises. Son prénom : celui qu'elle donne elle-même prime ; sinon celui que le Contexte tire de son
+      profil WhatsApp, s'il te semble un vrai prénom ; sinon aucun nom. Jamais un surnom, un nom d'entreprise, ni son
+      nom de famille seul. En français, tu la vouvoies quand même. Chaque phrase va jusqu'au
       bout, bien construite, et se termine par sa ponctuation. Brillante et chaleureuse, précise, jamais de
       remplissage.
     outils: [accueil]
@@ -112,3 +141,5 @@ modeles_meta:
   suivi_visiteur_en: {nom: fsp_agent_suivi, langue: en}
   ouverture: {nom: fsp_agent_ouverture}
   ouverture_en: {nom: fsp_agent_ouverture, langue: en}
+  # Le mot du matin (16.11.2026), déclaré marketing : il ne part hors des 24 heures que par lui.
+  bonjour: {nom: fsp_agent_bonjour}

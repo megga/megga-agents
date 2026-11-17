@@ -512,7 +512,7 @@ def test_la_mise_en_relation_et_la_question_au_courtier(monde):
     r = run(monde.o["repondre_visiteur"](Tour(GREG, "g1"), question=ident.lower(), message="Oui, visite possible samedi à 10 h."))
     assert r.startswith("Transmis à Anna Keller") and monde.exp.pour(VISITEUR, "texte")[-1][2] == "Oui, visite possible samedi à 10 h."
     ctx = run(monde.relations.visiteurs.contexte_visiteur(VISITEUR))
-    assert "Sa fiche a été transmise au courtier (Anna Keller, acheteur)" in ctx and "il a répondu « Oui, visite possible samedi à 10 h. »" in ctx
+    assert "Sa fiche a été transmise à Greg (Anna Keller, acheteur)" in ctx and "il a répondu « Oui, visite possible samedi à 10 h. »" in ctx
     # Plus de suivi pour une question répondue ; « je l'appelle » clôt sans rien envoyer
     assert monde.s.questions.lire(ident)["prevenir"] is None
     assert "Aucune question" in run(monde.o["repondre_visiteur"](Tour(GREG, "g1"), question="ZZZ", message="x"))
@@ -546,7 +546,8 @@ def test_le_visiteur_prevenu_apres_six_heures(monde):
     # La porte se réveille à l'heure du suivi, ou plus tôt pour le passage des recherches clients (8 h, 18 h).
     assert tot["prochain"] == min(q1["prevenir"], prochain_passage(debut, "Europe/Zurich"))
     suivis = [e[2] for e in monde.exp.pour(VISITEUR, "texte")]
-    assert suivis == ["Notre courtier a bien reçu votre demande concernant la villa de Cologny et reviendra vers vous personnellement demain."]
+    # Le courtier par son prénom (Config.gestion.courtier), comme avant la bascule (visiteurs/suivi.js).
+    assert suivis == ["Greg a bien reçu votre demande concernant la villa de Cologny et reviendra vers vous personnellement demain."]
     # Plus de suivi en attente : seul reste le passage des recherches clients.
     assert tard["prochain"] == encore["prochain"] == prochain_passage(q1["prevenir"] + 1, "Europe/Zurich") and monde.s.questions.lire(q1["id"])["prevenu"]
 

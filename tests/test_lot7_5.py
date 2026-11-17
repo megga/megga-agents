@@ -288,7 +288,7 @@ def test_la_configuration_du_marche(tmp_path):
     app = creer(env)
     noms = {getattr(t, "__name__", "") for t in app.state.conversations.agents["gestionnaire"].tools}
     assert {"chercher_marche", "surveiller_marche", "noter_marche", "analyser_marche", "suivre_zone", "comparer_bien", "clients_pour_bien"} <= noms
-    assert len(app.state.conversations.echeances) == 3  # les questions, le marché, les recherches clients
+    assert len(app.state.conversations.echeances) == 4  # les questions, le marché, le mot du matin, les recherches clients
     doc = next(t for t in app.state.conversations.agents["gestionnaire"].tools if getattr(t, "__name__", "") == "chercher_marche").__doc__
     assert "espagne (Espagne, Marbella)" in doc  # les régions viennent de la configuration
 

@@ -5,9 +5,10 @@ groupe ; les choix touchés traités sans le modèle ; ce qui se fait à l'heure
 from __future__ import annotations
 
 from .annonces import CONSIGNES as CONSIGNES_ANNONCES
-from .annonces import Services
+from .annonces import Services, contexte_annonces
 from .marche import CONSIGNES as CONSIGNES_MARCHE
 from .marche import Marche
+from .bonjour import Bonjour
 from .recherches import SuiviRecherches
 from .reseau import CONSIGNES_PARTENAIRES, CONSIGNES_VITRINE, PREFIXE_CHOIX, Reseau
 from .travail import CONSIGNES as CONSIGNES_TRAVAIL
@@ -39,7 +40,18 @@ class Relations:
         self.choix = {PREFIXE_CHOIX: self.reseau.choisir}
         # Les recherches des clients de la gestion, rapprochées le matin et le soir (demande d'un courtier, 16.11.2026).
         self.recherches = SuiviRecherches(s)
-        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else []), self.recherches.echeance]
+        # Le mot du matin, si l'agence l'a (Config.bonjour) ; il passe avant les recherches de 8 h.
+        self.bonjour = Bonjour(s)
+        self.echeances = [self.visiteurs.suivre_questions, *([self.marche.echeance] if self.marche else []), self.bonjour.echeance,
+                          self.recherches.echeance]
+
+    async def seconde_passe(self, role: str, personne: str, reponse: str, depuis: float) -> str | None:
+        """La consigne d'une seconde passe du même tour, ou None : un visiteur à qui la réponse annonce une transmission au
+        courtier que rien n'a faite depuis `depuis` (le début du tour). À lancer par le noyau (noyau/tour.py), qui seul
+        tient le tour ; sans lui, le tour suivant le sait par le Contexte du visiteur."""
+        if role != "visiteur":
+            return None
+        return await self.visiteurs.promesse_non_tenue(personne, reponse, depuis)
 
     def outils(self, groupes) -> list:
         par_groupe = {"partenaires": self.reseau.outils_gestionnaire, "visiteurs": self.visiteurs.outils_gestionnaire,
@@ -51,13 +63,15 @@ class Relations:
         if "travail" in groupes:
             if self.travail is None:
                 raise RuntimeError("outils de travail sans leur table")
-            par_groupe["travail"] = self.travail.outils
+            par_groupe["travail"] = lambda: [*self.travail.outils(), *(self.bonjour.outils() if self.bonjour.s.bonjour else [])]
         return [o for g in groupes if g in par_groupe for o in par_groupe[g]()]
 
     def contexte(self, groupes):
         """Le Contexte d'un tour pour une personne de ce rôle (async f(personne) -> texte), ou None."""
+        s = self.reseau.s
         par_groupe = {"partenaires": self.reseau.contexte_gestionnaire, "visiteurs": self.visiteurs.contexte_gestionnaire,
-                      "vitrine": self.reseau.contexte_partenaire, "accueil": self.visiteurs.contexte_visiteur}
+                      "vitrine": self.reseau.contexte_partenaire, "accueil": self.visiteurs.contexte_visiteur,
+                      "annonces": lambda personne: contexte_annonces(s, personne)}
         if self.marche is not None:
             par_groupe["marche"] = self.marche.contexte
         if self.travail is not None:

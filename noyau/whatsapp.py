@@ -19,10 +19,15 @@ import httpx
 # un message plus vieux que ce délai n'appelle pas de réponse automatique.
 FRAICHEUR_S = 15 * 60
 IGNORES = {"system", "request_welcome", "reaction"}
+# Ce que l'agent reçoit sans pouvoir l'ouvrir (Config.pieces_au_modele : le modèle en est averti).
+PIECES = {"location": "une position", "sticker": "un autocollant", "contacts": "une fiche contact", "video_note": "une vidéo ronde"}
 LIMITE_TEXTE = 4096
 # Au-delà de 24 heures après le dernier message de la personne, Meta n'accepte
 # plus qu'un modèle approuvé.
 FENETRE_S = 24 * 3600
+# Un message libre ne part que jusqu'à dix minutes avant la fin des 24 heures : Meta compte à sa façon, et un envoi
+# refusé à la dernière minute ne se rattrape pas (Alix FSP, demandes.js ; D16).
+MARGE_S = 10 * 60
 MEDIA_MAX = 16_000_000
 
 
@@ -180,24 +185,32 @@ def decrire_media(media: Media, n: int) -> str:
 
 
 def fenetre_ouverte(dernier_entrant: float | None, maintenant: float | None = None) -> bool:
-    """Un message libre est-il permis ? Seulement dans les 24 heures du dernier message reçu."""
-    return bool(dernier_entrant) and (maintenant or time.time()) - dernier_entrant < FENETRE_S
+    """Un message libre est-il permis ? Seulement dans les 24 heures du dernier message reçu, moins dix minutes."""
+    return bool(dernier_entrant) and (maintenant or time.time()) - dernier_entrant < FENETRE_S - MARGE_S
 
 
 class Expediteur:
     """Envoie au nom du numéro du client, avec le jeton de l'app Meta."""
 
-    def __init__(self, jeton: str, numero_id: str, version_graph: str, client: httpx.AsyncClient | None = None):
+    def __init__(self, jeton: str, numero_id: str, version_graph: str, client: httpx.AsyncClient | None = None,
+                 remplaceur=None):
         self._auth = {"authorization": f"Bearer {jeton}"}
         self._graph = f"https://graph.facebook.com/{version_graph}"
         self._numero = numero_id
         self._client = client or httpx.AsyncClient(timeout=30)
+        # Tout ce qui part passe par les remplacements du client (typographie.Remplaceur) : les outils des packs aussi.
+        self.remplaceur = remplaceur
+        # Les personnes qui attendent un vocal seul pendant ce tour : pas de cartes pour elles (noyau/tour.py, M5).
+        self.sans_cartes: set[str] = set()
 
     async def _envoyer(self, message: dict) -> dict:
+        corps = {"messaging_product": "whatsapp", **message}
+        if self.remplaceur:
+            corps = self.remplaceur.profond(corps)
         r = await self._client.post(
             f"{self._graph}/{self._numero}/messages",
             headers=self._auth,
-            json={"messaging_product": "whatsapp", **message},
+            json=corps,
         )
         if r.status_code >= 400:
             raise RuntimeError(f"Meta {r.status_code} {r.text[:300]}")
@@ -216,17 +229,16 @@ class Expediteur:
             })
         return r
 
-    async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:
-        """Un modèle approuvé par Meta, seul permis hors des 24 heures."""
+    async def modele(self, vers: str, nom: str, langue: str, variables: list[str], charge: str = "") -> dict:
+        """Un modèle approuvé par Meta, seul permis hors des 24 heures. `charge` : ce que rend son bouton de réponse rapide."""
+        composants = [{"type": "body", "parameters": [{"type": "text", "text": en_ligne(v)} for v in variables]}]
+        if charge:
+            composants.append({"type": "button", "sub_type": "quick_reply", "index": "0", "parameters": [{"type": "payload", "payload": charge}]})
         return await self._envoyer({
             "recipient_type": "individual",
             "to": chiffres(vers),
             "type": "template",
-            "template": {
-                "name": nom,
-                "language": {"code": langue},
-                "components": [{"type": "body", "parameters": [{"type": "text", "text": en_ligne(v)} for v in variables]}],
-            },
+            "template": {"name": nom, "language": {"code": langue}, "components": composants},
         })
 
     async def reaction(self, vers: str, message_id: str, emoji: str) -> dict:
@@ -317,7 +329,9 @@ class Expediteur:
         })
 
     async def carrousel(self, vers: str, corps: str, cartes: list[dict]) -> dict:
-        """De 2 à 10 cartes : [{image (lien), texte (160), bouton (20), url}]."""
+        """De 2 à 10 cartes : [{image (lien), texte (160), bouton (20), url}]. Jamais dans une réponse en vocal seul."""
+        if f"+{chiffres(vers)}" in self.sans_cartes:
+            raise RuntimeError("Pas de cartes dans une réponse vocale : résume-les à l'oral, et propose de les envoyer par écrit.")
         return await self._envoyer({
             "recipient_type": "individual", "to": chiffres(vers), "type": "interactive",
             "interactive": {
@@ -369,7 +383,7 @@ class SansWhatsApp:
     async def texte(self, vers: str, texte: str, apercu: bool = False) -> dict:
         self._refus()
 
-    async def modele(self, vers: str, nom: str, langue: str, variables: list[str]) -> dict:
+    async def modele(self, vers: str, nom: str, langue: str, variables: list[str], charge: str = "") -> dict:
         self._refus()
 
     async def reaction(self, vers: str, message_id: str, emoji: str) -> dict:

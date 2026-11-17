@@ -16,6 +16,7 @@ Variables d'environnement (jamais dans le dépôt) :
   MEGGA_LICENCE        chez le client : la licence signée par MEGGA (noyau/licence.py)
   GESTIONNAIRES, GESTION_CLE  les gens du client et la clé de la gestion de son site (lot 7.1)
   SITE_CLE             facultatif : la clé du site du client pour /site/… (32 caractères au moins, lot 7.4)
+  VOCAL_CLE            facultatif : la clé de /vocal, un vocal que l'agent dit de lui-même à un gestionnaire (32 caractères au moins)
 Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
   PILOTAGE             le réglage du pilotage chez le client (non, suivi, complet), le même que celui du pilote
@@ -33,6 +34,7 @@ Routes :
   POST /site/bien      le site signale un bien entré en ligne {reference} : rapprochement et réseau (clé SITE_CLE)
   POST /site/demande   une demande d'information laissée sur une fiche du site (clé SITE_CLE)
   GET  /site/journal   qui a écrit à l'agent, pour la page « Alix » de la gestion ([?jours=], clé SITE_CLE)
+  POST /vocal          {numero, texte} un vocal que l'agent dit de lui-même à un gestionnaire (clé VOCAL_CLE)
   GET  /interne/cles             les clés des logiciels, sans empreinte (jeton INTERNE_TOKEN)
   POST /interne/cles             {id, logiciel, empreinte, par_minute} une clé créée par l'atelier
   DELETE /interne/cles/{id}      retire une clé
@@ -52,6 +54,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import signal
 import time
 from collections import OrderedDict
@@ -67,12 +70,15 @@ from . import pilotage as pilotages
 from . import stockage
 from . import suivi as suivi_agent
 from . import version as version_image
+from . import humeur as humeurs
 from .agent import construire, modele
 from .environnement import charger
 from .oral import consignes as consignes_orales
+from .memoire import Memoire
 from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
+from .typographie import Remplaceur
 from .voix import Voie
 from .whatsapp import FENETRE_S, FRAICHEUR_S, Expediteur, SansWhatsApp, lire_echecs, lire_entrants, signature_valide
 
@@ -98,12 +104,14 @@ class Deja:
         return True
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None) -> list:
-    """Les outils du noyau (rappels) et ceux des packs que la configuration active ; `groupes` : ceux d'un rôle.
-    `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py), s'ils sont branchés ;
-    `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None) -> list:
+    """Les outils du noyau (rappels, et la mémoire si Memoire.outils) et ceux des packs que la configuration active ;
+    `groupes` : ceux d'un rôle. `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py),
+    s'ils sont branchés ; `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
-    liste = outils_rappels(rappels, conf.fuseau) if "rappels" in groupes else []
+    liste = outils_rappels(rappels, conf.fuseau, conf.rappels.heure) if "rappels" in groupes else []
+    if memoire is not None:
+        liste += memoire.outils()
     if "annonces" in groupes:
         if services is None:
             raise RuntimeError("outils d'annonces sans gestion du site (Config.gestion et GESTION_CLE)")
@@ -140,10 +148,10 @@ def _reecriture(conf, cles):
 
 
 def _resumeur(conf, cles):
-    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, celui de l'oral (Modeles.petit)."""
+    """Le modèle qui tient le fil (noyau/fil.py) : sans mémoire ni outils, Modeles.fil (sinon celui de l'oral)."""
     from agno.agent import Agent
 
-    nom = conf.modeles.petit()
+    nom = conf.modeles.du_fil()
 
     async def resumer(consigne: str, demande: str) -> str:
         sortie = await Agent(model=modele(nom, cles), instructions=[consigne], telemetry=False, markdown=False).arun(demande)
@@ -152,6 +160,45 @@ def _resumeur(conf, cles):
         return getattr(sortie, "content", "") or ""
 
     return resumer
+
+
+def _juge(conf, cles):
+    """Le juge des réactions d'humeur (noyau/humeur.py) : le petit modèle (Modeles.juge), sans mémoire ni outils."""
+    from agno.agent import Agent
+
+    agents = {g: Agent(model=modele(conf.modeles.juge(), cles), instructions=[humeurs.consigne(g, conf.nom_agent, conf.entreprise)],
+                       telemetry=False, markdown=False) for g in ("complice", "sobre")}
+
+    async def juger(texte: str, genre: str) -> str:
+        sortie = await agents[genre].arun(f"Message : « {texte[:2000]} »")
+        return "" if en_echec(sortie) else humeurs.lire(getattr(sortie, "content", "") or "", genre)
+
+    return juger
+
+
+DECRIRE = """Voici des photos envoyées par la personne, numérotées dans l'ordre (1, 2, 3…). Pour chacune, dis en français, en une ligne de quinze mots au plus, ce qu'on y voit d'utile : l'objet, le lieu ou la pièce, l'état, ce qui frappe. Rien que ce qui se voit sur la photo : pas de supposition, pas de superlatif. Une photo floue, un plan ou une capture d'écran : dis-le simplement."""
+DECRIRE_FORMAT = """Rends seulement un JSON : {"photos": ["ligne de la photo 1", "ligne de la photo 2", …]}, dans l'ordre."""
+
+
+def _descripteur(conf, cles):
+    """La description des photos reçues (Photos.decrire, D6) : le petit modèle, qui les voit ; une ligne par photo."""
+    from agno.agent import Agent
+
+    consigne = f"{conf.photos.consigne.strip() or DECRIRE}\n{DECRIRE_FORMAT}"
+    agent = Agent(model=modele(conf.modeles.juge(), cles), instructions=[consigne], telemetry=False, markdown=False)
+
+    async def decrire(images: list) -> list[str] | None:
+        sortie = await agent.arun(f"{len(images)} photo(s).", images=images)
+        if en_echec(sortie):
+            return None
+        brut = re.sub(r"^```(?:json)?\s*|\s*```$", "", str(getattr(sortie, "content", "") or "").strip())
+        try:
+            lignes = json.loads(brut).get("photos")
+        except (ValueError, AttributeError):
+            return None
+        return [str(l) for l in lignes] if isinstance(lignes, list) else None
+
+    return decrire
 
 
 def ensemble(*contextes):
@@ -170,7 +217,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
           quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
-          fil_tenu=None) -> FastAPI:
+          fil_tenu=None, juger=None, decrire=None, memoire=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -200,6 +247,14 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     cles = {k: env.get(k, "") for k in CLES}
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     construire_agents = agent is None
+    # Le Contexte du noyau (Conversations.contexte : prénom du profil, rappels prévus, souvenirs, vocal envoyé), lu à
+    # chaque tour ; les conversations naissent après les agents.
+    tenues: dict = {}
+
+    async def du_noyau(personne: str) -> str:
+        c = tenues.get("conversations")
+        return await c.contexte(personne) if c is not None else ""
+
     if construire_agents:
         rappels = rappels or stockage.Rappels(env["DATABASE_URL"])
         reecrire = reecrire or _reecriture(conf, cles)
@@ -220,7 +275,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if personnes is None:
         personnes = Personnes(conf)
     if expediteur is None:
-        expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph)
+        expediteur = (Expediteur(env.get("META_TOKEN", ""), conf.whatsapp.numero_id, conf.whatsapp.version_graph,
+                                 remplaceur=Remplaceur(conf.remplacements))
                       if conf.whatsapp else SansWhatsApp())
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
@@ -252,7 +308,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                 stockage.Reseau(url), personnes.bloques or stockage.Bloques(url), stockage.Questions(url),
                                 fuseau=conf.fuseau, memoires=memoires, assistante=Assistante(cle, conf.entreprise) if cle else None,
                                 a_whatsapp=conf.whatsapp is not None, carnet=stockage.Carnet(url), veilles=stockage.Veilles(url),
-                                reglage_marche=conf.marche, regles=stockage.Regles(url), rappels=rappels)
+                                reglage_marche=conf.marche, regles=stockage.Regles(url), rappels=rappels, bonjour=conf.bonjour)
             if conf.marche is not None:
                 from packs.immobilier.marche import Portails
 
@@ -266,14 +322,22 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if fil_tenu is None and conf.fil and fil is not None:
             from .fil import TenueDuFil
 
-            fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau)
+            fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau,
+                                  dans_l_historique=2 * conf.historique.tours)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels), contexte=du_fil)
+        # La mémoire par les outils du noyau (Memoire.outils), dans la base d'Agno.
+        if memoire is None and conf.memoire.outils:
+            memoire = Memoire(base, conf.fuseau, conf.memoire.montres)
+        if juger is None and (conf.humeur != "aucune" or any(r.humeur not in (None, "aucune") for r in conf.les_roles().values())):
+            juger = _juge(conf, cles)
+        if decrire is None and conf.photos.decrire:
+            decrire = _descripteur(conf, cles)
+        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
         # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
-        # chaque tour (le fil ; les demandes, les questions, les règles des packs).
-        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations),
+        # chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs).
+        agents = agents or {nom: construire(conf, base, cles, outils=outils_du_client(conf, rappels, role.outils, services, relations, memoire),
                                             role=role, nom_role=nom,
-                                            contexte=ensemble(du_fil, relations.contexte(role.outils) if relations else None))
+                                            contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None))
                             for nom, role in conf.les_roles().items()}
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
@@ -282,7 +346,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     conversations = Conversations(conf, agent, expediteur, voie, contacts, reecrire, attente, seuil_regard, rappels=rappels,
                                   journal=journal, fil=fil, agents=agents, medias=medias, differes=differes,
                                   choix=relations.choix if relations else None, echeances=relations.echeances if relations else None,
-                                  fil_tenu=fil_tenu, etats=stockage.Etats(env["DATABASE_URL"]) if env.get("DATABASE_URL") else None)
+                                  fil_tenu=fil_tenu, etats=stockage.Etats(env["DATABASE_URL"]) if env.get("DATABASE_URL") else None,
+                                  juger=juger, decrire=decrire, role_de=personnes.role, memoire=memoire,
+                                  seconde_passe=getattr(relations, "seconde_passe", None))
+    tenues["conversations"] = conversations
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
@@ -462,8 +529,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Les deux débits sont regardés avant d'en compter aucun : un refus n'use pas l'autre.
         if not debit_cles.libre(cle):
             return trop("clé", debit_cles.attente(cle))
-        if not conversations.debit.libre(qui):
-            return trop("personne", conversations.debit.attente(qui))
+        if not conversations.debit_libre(qui, role):
+            return trop("personne", conversations.debit_attente(qui, role))
         if (atteint := conversations.plafond.libre(qui, role)) is not None:  # le plafond du jour (relecture, I7)
             conversations.noter_plafond(atteint)
             attente = conversations.plafond.attente()
@@ -474,7 +541,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         tour = await conversations.repondre_api(qui, texte.strip(), role)
         if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue
             debit_cles.rendre(cle)
-            return trop("personne", conversations.debit.attente(qui))
+            return trop("personne", conversations.debit_attente(qui, role))
         reponse, echec = tour
         if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse
             return erreur(503, "l'agent n'a pas pu répondre", reponse=reponse)
@@ -567,6 +634,37 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if j is None:
             return erreur(503, "journal hors service")
         return JSONResponse(j, headers={"cache-control": "no-store"})
+
+    cle_vocal = env.get("VOCAL_CLE", "")
+
+    @app.post("/vocal")
+    async def vocal(requete: Request):
+        """Un vocal que l'agent dit de lui-même à un gestionnaire, à la demande de l'équipe (ancienne route /vocal d'Alix FSP) :
+        jamais en texte. Rend « parti », « attente » (hors des 24 heures : il part à son prochain message), « echec » ou
+        « sans voix »."""
+        if licence_echue():
+            return erreur(503, "licence échue")
+        if len(cle_vocal) < 32 or conf.whatsapp is None:
+            return erreur(404, "introuvable")
+        jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
+        if not hmac.compare_digest(jeton.encode(), cle_vocal.encode()):
+            return erreur(401, "clé refusée")
+        corps = await requete.body()
+        if len(corps) > entree_api.CORPS_MAX:
+            return erreur(413, "requête trop grosse")
+        try:
+            donnees = json.loads(corps)
+        except ValueError:
+            return erreur(400, "corps : du JSON")
+        numero = str((donnees or {}).get("numero") or "").strip() if isinstance(donnees, dict) else ""
+        texte = str((donnees or {}).get("texte") or "").strip()[:4000] if isinstance(donnees, dict) else ""
+        compte = personnes.compte(numero) if numero and not numero.startswith("api:") else None
+        if not compte or not texte:  # seulement à un gestionnaire, jamais à un visiteur
+            return erreur(400, "numero (un gestionnaire) et texte")
+        from .whatsapp import chiffres
+
+        etat = await conversations.vocal_de_soi_meme(f"+{chiffres(numero)}", texte)
+        return JSONResponse({"etat": etat}, status_code=200 if etat in ("parti", "attente") else 503)
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")
