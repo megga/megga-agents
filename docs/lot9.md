@@ -192,6 +192,8 @@ Un cas peut ajouter ses réglages (`config`) ; ceux du pack ne se jouent que pou
 - `python -m noyau.banc clients/x.yaml [k] [--juge claude-sonnet-5-5]` : en local, avec les clés en variables ; rend 0 si tout tient.
 - Le juge est Claude Sonnet 5.5 par défaut (`BANC_JUGE` le change dans l'atelier).
 
+Un cas dont les réglages ne vont pas à ce client (le transfert, pour un agent sans rôle gestionnaire) est écarté, ni joué ni compté : le rapport le nomme sous `ecartes`. Dans le banc, le transfert a un gestionnaire fictif, prévenu de rien.
+
 **Ce qui reste.**
 - Pas joué par la CI : il demande les vrais modèles. À lancer avant chaque mise en service d'un client, et à exiger plus tard avant `activer` (un seuil par client).
 - Des scénarios propres à chaque client (ses documents, ses outils), écrits avec lui à la mise en service accompagnée.
