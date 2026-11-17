@@ -13,10 +13,13 @@ from pathlib import Path
 
 from noyau import flux, stockage
 from noyau.agent import construire
+from noyau.api import DELAI_TOUR
 from noyau.app import outils_du_client
 from noyau.config import Config
 from noyau.tour import EXCUSE, en_echec
 
+DELAI = DELAI_TOUR  # secondes : au-delà, l'essai (un modèle ou un outil bloqué) est abandonné, comme un tour par API
+TROP_LONG = "l'essai a pris trop de temps : il a été arrêté"
 
 def role_d_essai(conf: Config, role: str | None) -> str | None:
     """Le rôle qu'on essaie : celui demandé, sinon le visiteur (la personne que l'agent rencontre le plus), sinon le

@@ -88,7 +88,8 @@ from noyau.suivi import PERSONNE
 
 from . import gabarits, regles
 from .couts import Tarifs, couts
-from .essai import essayer, role_d_essai
+from .essai import DELAI as DELAI_ESSAI
+from .essai import TROP_LONG, essayer, role_d_essai
 from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
@@ -119,7 +120,8 @@ async def bd(f, *a, **k):
     return await run_in_threadpool(f, *a, **k)
 
 
-def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
+def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None,
+          delai_essai: float = DELAI_ESSAI) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -352,26 +354,38 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         essais_du_jour[(ident, jour)] = n + 1
         if flux.demande(requete.headers.get("accept")):
             return essai_en_flux(ident, numero, conf, message, conversation, role)
-        reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai, role=role)
+        try:
+            reponse = await asyncio.wait_for(essayer(conf, numero, message, conversation, cles, essais,
+                                                     principal=principal_essai, role=role), delai_essai)
+        except TimeoutError as e:
+            log.error("essai trop long (%s v%s), abandonné après %.0f s", ident, numero, delai_essai)
+            raise Refus(504, TROP_LONG) from e
         await bd(versions.noter_essai, ident, numero)
         return {"version": numero, "conversation": conversation, "reponse": reponse}
 
     def essai_en_flux(ident: str, numero: int, conf: Config, message: str, conversation: str, role: str | None):
         """L'essai au fil de l'eau (noyau/flux.py), pour la console : le texte et les outils pendant le tour, puis
         « fin » avec la même réponse que l'essai d'un bloc. Les refus (version, message) restent des réponses JSON ;
-        l'essai va au bout, et compte comme essayé, même si la console se ferme."""
+        l'essai va au bout, et compte comme essayé, même si la console se ferme ; au-delà du délai, il est abandonné
+        (« erreur », statut 504) et ne compte pas."""
 
         async def tour(sur_evenement):
             try:
-                reponse = await essayer(conf, numero, message, conversation, cles, essais, principal=principal_essai,
-                                        role=role, sur_evenement=sur_evenement)
+                reponse = await asyncio.wait_for(essayer(conf, numero, message, conversation, cles, essais,
+                                                         principal=principal_essai, role=role,
+                                                         sur_evenement=sur_evenement), delai_essai)
                 await bd(versions.noter_essai, ident, numero)
                 return reponse
+            except TimeoutError:
+                log.error("essai en flux trop long (%s v%s), abandonné après %.0f s", ident, numero, delai_essai)
+                return TimeoutError
             except Exception as e:  # jamais l'erreur telle quelle
                 log.error("essai en flux en échec (%s v%s) : %s", ident, numero, str(e)[:200])
                 return None
 
         def conclure(reponse) -> str:
+            if reponse is TimeoutError:
+                return flux.evenement("erreur", {"erreur": TROP_LONG, "statut": 504})
             if reponse is None:
                 return flux.evenement("erreur", {"erreur": "l'essai n'a pas pu aller au bout", "statut": 500})
             return flux.evenement("fin", {"version": numero, "conversation": conversation, "reponse": reponse})

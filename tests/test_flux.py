@@ -278,3 +278,47 @@ def test_avec_un_vrai_agent_agno(sqlite):
     evenements = lire(r.text)
     assert evenements[-1] == ("fin", {"reponse": "Bonjour, voici *vos* biens."})
     assert any(g == "texte" for g, _ in evenements[:-1])
+
+
+# Un essai qui ne finit pas
+
+
+@dataclass
+class ModeleBloque(ModeleEnFlux):
+    """Un modèle (ou un outil) qui ne rend jamais la main."""
+
+    async def ainvoke(self, messages=None, **kw):
+        await asyncio.sleep(3600)
+
+    async def ainvoke_stream(self, *a, **kw):
+        await asyncio.sleep(3600)
+        yield ModelResponse(role="assistant", content="jamais")
+
+
+@pytest.fixture
+def atelier_bloque(tmp_path):
+    """L'atelier, avec un modèle d'essai bloqué et un délai d'essai court."""
+    from fastapi.testclient import TestClient
+
+    from atelier.app import creer as creer_atelier
+    from test_lot5 import ADMIN, CLE_PILOTAGE_TEXTE, FaussePorte
+
+    app = creer_atelier({"ADMIN_TOKEN": ADMIN, "DATABASE_URL": f"sqlite:///{tmp_path}/atelier.db", "ESSAIS_DIR": str(tmp_path / "essais"),
+                         "PILOTAGE_CLE": CLE_PILOTAGE_TEXTE}, porte=FaussePorte(), principal_essai=ModeleBloque(), delai_essai=0.2)
+    return TestClient(app)
+
+
+def test_un_essai_bloque_est_abandonne_apres_le_delai(atelier_bloque):
+    from test_lot5 import jeton_client, nouveau_client
+
+    t = atelier_bloque
+    nouveau_client(t)
+    client = jeton_client(t)
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers=client, json={"message": "Bonjour"})
+    assert r.status_code == 504 and r.json()["erreur"] == "l'essai a pris trop de temps : il a été arrêté"
+    # En flux : l'événement « erreur », et la ligne se ferme
+    r = t.post("/atelier/clients/exemple/versions/1/essai", headers={**client, **FLUX}, json={"message": "Bonjour"})
+    assert r.status_code == 200
+    assert lire(r.text)[-1] == ("erreur", {"erreur": "l'essai a pris trop de temps : il a été arrêté", "statut": 504})
+    # Un essai abandonné ne compte pas comme essayé
+    assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["essais"] == 0
