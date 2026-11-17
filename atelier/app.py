@@ -125,7 +125,7 @@ async def bd(f, *a, **k):
     return await run_in_threadpool(f, *a, **k)
 
 
-def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
+def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None, juge_banc=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -359,6 +359,34 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(400, str(e)) from e
         await bd(versions.noter_essai, ident, numero)
         return {"version": numero, "conversation": conversation, "reponse": reponse}
+
+    bancs_en_cours: set[str] = set()  # un banc à la fois par client
+
+    @r.post("/clients/{ident}/versions/{numero}/banc")
+    async def banc_d_essai(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict | None = Body(None)):
+        """Le banc d'essai d'une version (lot 9.6, noyau/banc.py) : les scénarios de son métier, chacun k fois (1 à 5,
+        3 par défaut), notés en pass^k. Il appelle les modèles pour de vrai : réservé à MEGGA. Le score d'un brouillon
+        est gardé avec lui."""
+        from noyau import banc
+
+        megga(qui)
+        k = (corps or {}).get("k", 3)
+        if isinstance(k, bool) or not isinstance(k, int) or not 1 <= k <= banc.K_MAX:
+            raise Refus(400, f"k : un nombre de 1 à {banc.K_MAX}")
+        if ident in bancs_en_cours:  # un second clic ne relance pas tout (le coût doublé)
+            raise Refus(409, "Un banc d'essai est déjà en cours pour ce client : attendez son rapport avant d'en lancer un autre.")
+        bancs_en_cours.add(ident)
+        try:
+            v = await bd(version_de, ident, numero)
+            conf = config_de(v)
+            juger = juge_banc or banc.juge_anthropic(env.get("BANC_JUGE") or "claude-sonnet-5-5", cles.get("ANTHROPIC_API_KEY", ""))
+            rapport = await banc.passer(conf, banc.agent_d_essai(cles, principal=principal_essai), juger, k)
+        finally:
+            bancs_en_cours.discard(ident)
+        if not rapport["incomplet"]:  # un banc incomplet (le modèle ou le juge en panne) ne mesure pas l'agent : rien de gardé
+            resume = {**{c: rapport[c] for c in ("k", "cas", "tenus", "score", "pass_1")}, "quand": time.time()}
+            await bd(versions.noter_banc, ident, numero, resume)
+        return {"version": numero, **rapport}
 
     @r.post("/clients/{ident}/versions/{numero}/activer")
     async def activer(ident: str, numero: int, qui: Identite = Depends(identite), corps: dict | None = Body(None)):

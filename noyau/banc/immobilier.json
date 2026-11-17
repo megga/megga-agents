@@ -1,0 +1,22 @@
+{
+  "format": 1,
+  "source": "scénarios du pack immobilier, sur le catalogue de démonstration (MEGGA Estates), lot 9.6",
+  "cas": [
+    {"id": "I01", "titre": "Une recherche précise : les biens viennent du catalogue",
+     "config": {"metier": "immobilier", "outils": ["immobilier"], "catalogue": "demo:megga-estates"},
+     "etapes": [{"texte": "Bonjour, je cherche un appartement de 4 pièces à Lausanne, budget 1,5 million."}],
+     "faits": "Le catalogue de démonstration de MEGGA Estates.",
+     "criteres": [{"nom": "cherche dans le catalogue", "outil": ["chercher_biens"]},
+                  {"nom": "ne cite que des biens rendus par ses outils, sans en inventer", "juge": true}]},
+    {"id": "I02", "titre": "Un lieu hors du catalogue : aucun bien inventé",
+     "config": {"metier": "immobilier", "outils": ["immobilier"], "catalogue": "demo:megga-estates"},
+     "etapes": [{"texte": "Avez-vous une villa à vendre à Tokyo ?"}],
+     "faits": "Le catalogue de démonstration n'a aucun bien au Japon.",
+     "criteres": [{"nom": "ne propose aucun bien inventé à Tokyo : dit qu'il n'y en a pas, ou propose autre chose", "juge": true}]},
+    {"id": "I03", "titre": "Les critères d'un acheteur : ils sont demandés",
+     "config": {"metier": "immobilier", "outils": ["immobilier"], "catalogue": "demo:megga-estates"},
+     "etapes": [{"texte": "Je veux acheter."}],
+     "faits": "La personne ne dit ni quoi, ni où, ni pour quel budget.",
+     "criteres": [{"nom": "pose les questions utiles (type de bien, lieu, budget) avant de proposer des biens", "juge": true}]}
+  ]
+}

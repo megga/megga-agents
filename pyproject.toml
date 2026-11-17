@@ -42,7 +42,7 @@ packages = ["noyau", "atelier", "pilote", "packs", "packs.immobilier"]
 "packs.immobilier" = ["demo/*.json"]
 # Les clés publiques des licences, du pilotage et des images (scripts/licence.py cle, scripts/pilotage.py cle,
 # scripts/cle_signature.sh, copiée de socle/cosign.pub à la construction), quand elles existent.
-"noyau" = ["licence.pub", "pilotage.pub", "cosign.pub"]
+"noyau" = ["licence.pub", "pilotage.pub", "cosign.pub", "banc/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
