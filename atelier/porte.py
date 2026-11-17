@@ -66,9 +66,9 @@ class Porte:
         d = await self._appel("GET", "/admin/clients", params=params)
         return {e["id"]: e for e in d.get("clients", [])}
 
-    async def decider(self, ident: str, numero: int, accord: bool) -> dict:
-        """Une demande d'accord d'un client (noyau/approbations.py), accordée (et faite) ou refusée."""
-        return await self._appel("POST", f"/admin/clients/{ident}/approbations/{int(numero)}", json={"accord": accord})
+    async def decider(self, ident: str, numero: int, accord: bool, par: str) -> dict:
+        """Une demande d'accord d'un client (noyau/approbations.py), accordée (et faite) ou refusée ; `par` : qui décide."""
+        return await self._appel("POST", f"/admin/clients/{ident}/approbations/{int(numero)}", json={"accord": accord, "par": par})
     async def connaissances(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
         """La base de connaissances d'un client, gardée dans sa base : lister, ajouter un document, en retirer un."""
         return await self._appel(methode, f"/admin/clients/{ident}/connaissances{chemin}", json=corps, timeout=120)

@@ -51,6 +51,7 @@ import hmac
 import json
 import logging
 import os
+import re
 import signal
 import time
 from collections import OrderedDict
@@ -322,14 +323,20 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
     async def prevenir_equipe(demande: dict) -> None:
         """Une action attend un accord : chaque gestionnaire reçoit la demande, avec Accepter et Refuser, une fois
-        fini le tour de la personne qui l'a faite (sa réponse part d'abord)."""
-        numeros = approbations.equipe(personnes.gestionnaires)
-        qui = demande["personne"]
-        corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui if qui.startswith('api:') else '+' + qui} : "
+        fini le tour de la personne qui l'a faite (sa réponse part d'abord). Sans le rôle « gestionnaire », personne
+        n'y répondrait sur WhatsApp (noyau/roles.py : tout le monde est « public ») : seule la console décide.
+        Un aperçu coupé part sans Accepter : on n'accorde pas ce qu'on n'a pas lu, la console montre tout."""
+        numeros = approbations.equipe(personnes.gestionnaires) if "gestionnaire" in personnes.roles else []
+        qui = demande["personne"]  # déjà « +41… » (ou « api:… »), comme les conversations le nomment
+        corps = (f"{conf.nom_agent} demande votre accord (demande {demande['id']}) pour {qui} : "
                  f"{demande['outil']}.\n{approbations.apercu(demande['arguments'])}")
-        message = {"liste": {"corps": corps, "bouton": "Répondre", "section": f"Demande {demande['id']}", "lignes": [
-            {"id": f"{approbations.PREFIXE}{demande['id']}:oui", "titre": "Accepter", "description": demande["outil"]},
-            {"id": f"{approbations.PREFIXE}{demande['id']}:non", "titre": "Refuser"}]}}
+        if approbations.entier(demande["arguments"]) and len(corps) <= 1024:
+            message = {"liste": {"corps": corps, "bouton": "Répondre", "section": f"Demande {demande['id']}", "lignes": [
+                {"id": f"{approbations.PREFIXE}{demande['id']}:oui", "titre": "Accepter", "description": demande["outil"]},
+                {"id": f"{approbations.PREFIXE}{demande['id']}:non", "titre": "Refuser"}]}}
+        else:
+            message = {"texte": f"{corps}\n\nCette demande est trop longue pour être lue en entier ici : "
+                                "consultez-la et décidez dans la console."}
         for n in numeros:
             conversations.apres_le_tour(qui, lambda n=n: conversations.envoyer_de_soi_meme(
                 n, [message], "approbation", variables=[conf.nom_agent, demande["outil"]]))
@@ -680,24 +687,27 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return erreur(400, "etat : " + ", ".join(ETATS_APPROBATION))
         demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
         return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
-                              "apercu": approbations.apercu(d["arguments"])} for d in demandes]}
+                              "apercu": approbations.apercu(d["arguments"], None)} for d in demandes]}
 
     @app.post("/interne/approbations/{ident}")
     async def interne_decider(ident: str, requete: Request):
-        """Une décision de la console : {accord: true|false} ; l'action accordée est faite tout de suite."""
+        """Une décision de la console : {accord: true|false, par?} ; l'action accordée est faite tout de suite.
+        `par` : qui décide dans l'atelier (« megga », « client:<jeton> »), noté avec la décision."""
         if not interne(requete):
             return Response("refusé", status_code=401)
         if gardien.demandes is None:
             return Response("base absente", status_code=503)
         try:
             d = await requete.json()
-            accord = d["accord"]
-        except (ValueError, KeyError, TypeError):
+            accord, par = d["accord"], d.get("par") or ""
+        except (ValueError, KeyError, TypeError, AttributeError):
             return erreur(400, "{accord: true|false}")
         if not isinstance(accord, bool) or not ident.isdigit() or len(ident) > 10:
             return erreur(400, "{accord: true|false}")
+        if not isinstance(par, str) or (par and not re.fullmatch(r"[a-z0-9:]{1,60}", par)):
+            return erreur(400, "par : megga, ou client:<jeton>")
         try:
-            return await gardien.decider(int(ident), accord, "console")
+            return await gardien.decider(int(ident), accord, f"console:{par}" if par else "console")
         except ValueError as e:
             return erreur(409, str(e))
 

@@ -1165,7 +1165,11 @@ class Approbations:
     Une demande garde l'outil et ses arguments, pour être faite telle quelle une fois accordée, au nom de la personne
     qui l'a demandée. Ses états : attente, puis accordee (en cours), faite ou echec ; refusee ; expiree (48 heures sans
     réponse). Une décision ne se prend qu'une fois (écriture conditionnelle) : deux gestionnaires qui touchent en même
-    temps ne la font pas deux fois. `relu` : la personne a été prévenue de l'issue (le Contexte de son tour suivant)."""
+    temps ne la font pas deux fois. `relu` : la personne a été prévenue de l'issue (le Contexte de son tour suivant).
+    Ses arguments sont vidés dès qu'elle est terminée (faite, en échec, refusée, expirée) ; elle est oubliée trois mois
+    après, comme le journal d'audit."""
+
+    FIN = ("faite", "echec", "refusee", "expiree")
 
     def __init__(self, url: str):
         self._e, self._t = _table(
@@ -1193,6 +1197,7 @@ class Approbations:
     def demander(self, personne: str, role: str, outil: str, arguments: dict) -> int:
         """Une nouvelle demande ; une ValueError si la personne en a déjà trop qui attendent."""
         t = self._t
+        self.expirer()  # celles qui ont expiré ne comptent plus
         with self._e.begin() as c:
             attente = c.execute(select(func.count()).where(t.c.personne == personne, t.c.etat == "attente")).scalar() or 0
             if attente >= APPROBATIONS_EN_ATTENTE_MAX:
@@ -1212,7 +1217,8 @@ class Approbations:
         self.expirer()
         with self._e.begin() as c:
             fait = c.execute(update(t).where(t.c.id == int(ident), t.c.etat == "attente")
-                             .values(etat="accordee" if accord else "refusee", decide=time.time(), par=str(par)[:PERSONNE])).rowcount
+                             .values(etat="accordee" if accord else "refusee", decide=time.time(), par=str(par)[:PERSONNE],
+                                     **({} if accord else {"arguments": "{}"}))).rowcount
             if not fait:
                 return None
             return self._ligne(c.execute(select(t).where(t.c.id == int(ident))).first())
@@ -1220,13 +1226,16 @@ class Approbations:
     def finir(self, ident: int, etat: str, resultat: str) -> None:
         """L'issue d'une demande accordée : faite ou echec, avec ce que l'outil a rendu."""
         with self._e.begin() as c:
-            c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, resultat=str(resultat)[:2000]))
+            c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, resultat=str(resultat)[:2000], arguments="{}"))
 
     def expirer(self, maintenant: float | None = None) -> int:
+        """Les demandes sans réponse en 48 heures expirent ; les terminées depuis trois mois sont oubliées."""
         t = self._t
-        avant = (maintenant or time.time()) - APPROBATION_DELAI
+        maintenant = maintenant or time.time()
         with self._e.begin() as c:
-            return c.execute(update(t).where(t.c.etat == "attente", t.c.cree < avant).values(etat="expiree", decide=time.time())).rowcount
+            c.execute(delete(t).where(t.c.etat.in_(self.FIN), t.c.decide < maintenant - AUDIT_JOURS * 86400))
+            return c.execute(update(t).where(t.c.etat == "attente", t.c.cree < maintenant - APPROBATION_DELAI)
+                             .values(etat="expiree", decide=time.time(), arguments="{}")).rowcount
 
     def lister(self, etat: str | None = None, limite: int = 100) -> list[dict]:
         """Les demandes, les plus récentes d'abord ; `etat` : seulement celles-là."""
@@ -1241,9 +1250,9 @@ class Approbations:
     def a_relire(self, personne: str) -> list[dict]:
         """Les demandes de cette personne dont l'issue ne lui a pas encore été dite ; marquées dites."""
         t = self._t
-        fin = ("faite", "echec", "refusee", "expiree")
+        self.expirer()  # la personne apprend aussi celles qui ont expiré
         with self._e.begin() as c:
-            lignes = [self._ligne(l) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relu == 0, t.c.etat.in_(fin))
+            lignes = [self._ligne(l) for l in c.execute(select(t).where(t.c.personne == personne, t.c.relu == 0, t.c.etat.in_(self.FIN))
                                                        .order_by(t.c.id))]
             if lignes:
                 c.execute(update(t).where(t.c.id.in_([l["id"] for l in lignes])).values(relu=1))
