@@ -240,25 +240,21 @@ test("l'objet d'un client : suivi avec le jeton interne, chemins bornés, lectur
   for (const mauvais of ["/../rappels", "/conversations/abc", "/autre"]) await assert.rejects(agent.suivre(mauvais), /chemin de suivi/);
 });
 
-test("un conteneur réveillé pour être lu se rendort vite, sauf si une conversation arrive", async () => {
+test("un conteneur réveillé pour être lu ne se rendort plus vite : la veille le garde éveillé", async () => {
   const a = ctx({ running: false });
   const sommeils = [];
   a.ctx.container.setInactivityTimeout = async (ms) => sommeils.push(ms);
   a.ctx.container.getTcpPort = () => ({ fetch: async () => Response.json({ tours: 0 }) });
+  let alarme = null;
+  a.ctx.storage.getAlarm = async () => alarme;
+  a.ctx.storage.setAlarm = async (t) => { alarme = t; };
   const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
   agent.demarrer = async () => {
     a.ctx.container.running = true;
   };
   await agent.suivre("");
-  assert.deepEqual(sommeils, [2 * 60 * 1000]);
-  // endormi de nouveau ; cette fois un message arrive pendant la lecture
-  a.ctx.container.running = false;
-  agent.demarrer = async () => {
-    a.ctx.container.running = true;
-    agent.activite = Date.now() + 1;
-  };
-  await agent.suivre("/conversations");
-  assert.deepEqual(sommeils, [2 * 60 * 1000]);
+  assert.deepEqual(sommeils, []); // plus de sommeil de 2 minutes (Julien, 17.11.2026)
+  assert.ok(alarme && alarme <= Date.now() + 4 * 60 * 1000);
 });
 
 test("les pannes d'un conteneur sont gardées, puis marquées résolues quand il répond de nouveau", async () => {
