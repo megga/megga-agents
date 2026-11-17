@@ -41,6 +41,7 @@ Les secrets restent chez lui : en variables, ou en fichiers montés par Docker, 
 | `GESTIONNAIRES` | facultatif, avec des rôles (lot 7.1) : les numéros des gens du client et leur compte dans la gestion du site, en JSON `{"+41…": "compte"}` |
 | `GESTION_CLE` | facultatif, avec une gestion de site (lot 7.1) : la clé partagée avec ce site |
 | `SITE_CLE` | facultatif (lot 7.4) : la clé du site du client pour `/site/bien` et `/site/demande` (un bien entré en ligne, une demande d'information), 32 caractères au moins ; sans elle, ces routes n'existent pas |
+| `VOCAL_CLE` | facultatif : la clé de `/vocal`, un vocal que l'agent dit de lui-même à un gestionnaire, à la demande de l'équipe, 32 caractères au moins ; sans elle, cette route n'existe pas |
 | `DATABASE_URL` | Helm seulement : la base Postgres du client (Compose fournit la sienne) |
 | `PILOTE_CLE` | le pilote seulement : la clé de l'installation (voir « Le pilotage par MEGGA ») |
 | `REGISTRE_COMPTE`, `REGISTRE_JETON` | le pilote seulement, avec les mises à jour : le compte et le jeton de lecture du registre, pour vérifier la signature d'une image (`pilote.env`) |

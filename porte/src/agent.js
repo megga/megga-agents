@@ -40,7 +40,8 @@ export async function jetonInterne(admin, nom) {
 }
 // Les secrets propres à un client, posés par la route d'administration : sa base (exigée), et pour un client
 // qui a des rôles et une gestion de site (lot 7.1) ses gestionnaires et la clé de sa gestion, et celle de son site
-// pour /site/… (lot 7.4).
+// pour /site/… (lot 7.4), et la clé du vocal que l'agent dit de lui-même à la demande de l'équipe (/vocal, VOCAL_CLE,
+// reprise d'Alix FSP le 17.11.2026).
 // Cloudflare refuse au conteneur une variable d'environnement de plus de 16 000 octets (journal du 17.11.2026 :
 // « the size of the env variable exceeds the limit of 16000 bytes »). Une configuration plus longue (consignes,
 // accueil, oral) part en parties, CLIENT_CONFIG_1 à CLIENT_CONFIG_<n>, que le noyau recolle (noyau/app.py).
@@ -62,7 +63,7 @@ export function variablesDeConfiguration(config) {
 }
 
 export const SECRETS_CLIENT_REQUIS = ["DATABASE_URL"];
-export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE"];
+export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE", "VOCAL_CLE"];
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 // L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
 const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
