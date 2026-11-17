@@ -81,6 +81,8 @@ jobs:
             sleep 1
           done
           docker logs atelier; exit 1
+      - name: Les modèles par métier de bout en bout, un client par modèle, un agent Garage devant un faux Claude
+        run: python3 tests/image/essai_modeles_metier.py megga-agents:essai
       - name: Le service de fiche PDF tourne dans l'image
         run: |
           echo '{"modele":"four-seasons-properties","fiche":{"langue":"fr","titre":"Essai","adresse":"","prix":"","accroche":"","description":[],"chiffres":[],"details":[],"equipements":[],"photos":[],"contact":null},"photos":[]}' \

@@ -21,14 +21,28 @@ Un modèle (« gabarit » dans le code) pré-remplit une configuration complète
 
 | Modèle | Pour |
 |---|---|
-| `generaliste` | accueillir les clients, répondre, retenir, programmer des rappels |
+| `generaliste` | accueillir les clients, répondre d'après les documents, noter leurs demandes, passer la main |
 | `immobilier` | une agence : demandes d'achat, de vente, de location, critères, rappels ; la recherche de biens s'ajoute quand MEGGA branche le catalogue de l'agence |
+| `sante` | l'accueil administratif d'un cabinet de santé : horaires, accès, documents à apporter, demandes de rendez-vous ; jamais d'avis médical, le 144 à tout signe d'urgence |
+| `hotellerie` | un hôtel ou un restaurant : horaires, accès, services, demandes de réservation et demandes particulières ; jamais de réservation confirmée ni de compensation |
+| `juridique` | le premier contact d'une étude d'avocats : domaine, faits essentiels, urgence, parties adverses, demande de consultation ; jamais d'avis ni de délai calculé |
+| `commerce` | le service après-vente d'une boutique : retours, échanges et garanties d'après la politique du commerce ; jamais de remboursement ni de geste promis |
+| `fiduciaire` | l'accueil d'une fiduciaire : accusé de réception des pièces, échéances et informations pratiques ; jamais de conseil fiscal ni de calcul d'impôt |
+| `garage` | l'accueil d'un garage : prise en charge du véhicule, rendez-vous notés pour l'atelier ; jamais de prix, de délai ni de diagnostic, et « ne pas rouler » au moindre doute sur la sécurité |
+
+Chaque modèle est un fichier (`atelier/gabarits/<id>.md`) : un en-tête (titre, description, métier, ton, ordre, source) et ses consignes, qui s'ajoutent au socle commun `_accueil.md`. Les huit sont ouverts à tous les clients ; `sante`, `juridique`, `fiduciaire` et `garage` attendent la relecture de professionnels, qui ne bloque pas la mise en service. Ils donnent les métiers `general`, `immobilier`, `sante`, `hotellerie`, `juridique`, `commerce`, `fiduciaire` et `garage` ; ils ajoutent les outils `connaissances` et `leads`, le transfert vers un humain et la mention de l'IA. `sante` et `garage` donnent des numéros d'urgence suisses et européens : ils sont refusés pour la zone `etats-unis` (`400`, « Ce modèle n'est pas encore disponible pour la zone États-Unis. »), à la création d'un client comme sur `POST /clients/{id}/gabarit`. Si on modifie plus tard le texte d'un modèle, son texte précédent va dans `atelier/gabarits/anciens.json` (sinon les clients créés avec lui paraîtraient avoir des consignes sur mesure de MEGGA).
+
+**Provenance et licence.** Six des huit textes s'inspirent d'agents du dépôt [agency-agents](https://github.com/msitarzewski/agency-agents) (licence MIT, commit `8ae6164602c95ca78828b148b9052460ee426885`) : `lister()` rend leur `source` (dépôt, chemins, commit, licence). `fiduciaire` et `garage` sont écrits par MEGGA, sans source. Le texte de la licence est gardé dans `atelier/gabarits/LICENCE-agency-agents.txt`.
+
+**L'alerte des demandes.** Quand l'agent note une demande (`enregistrer_lead`), chaque gestionnaire en est prévenu sur WhatsApp. Le réglage est `leads.alerte` (vrai par défaut, que le client peut couper). Hors des 24 heures, le modèle Meta `lead` annonce l'alerte, s'il est réglé. L'agent ne dit « l'équipe est prévenue » que si un gestionnaire peut la recevoir maintenant. La même personne qui complète sa demande dans les 30 minutes garde la même demande, sans seconde alerte. Voir `docs/lot10.md`.
+
+**Un métier que l'installation ne connaît pas.** Mettre en service, hors Cloudflare, une version dont le métier n'est pas dans le dernier relevé de l'installation est refusé (`409`) : il faut d'abord installer une image récente.
 
 Un modèle ne touche jamais à ce qui tient au client (identifiant, entreprise, zone, numéro WhatsApp) ni aux réglages avancés de MEGGA (modèles de langue, catalogue, modèles Meta). Les deux usages passent par le même moteur : le client qui construit son seul agent, et MEGGA pour tous les clients.
 
 ## Les erreurs
 
-Une configuration refusée rend, champ par champ, un message en français clair, prêt à montrer : « Le prénom doit faire 40 caractères au plus. », « Choisissez une voix dans la liste. », « Choisissez un métier : general ou immobilier. »…
+Une configuration refusée rend, champ par champ, un message en français clair, prêt à montrer : « Le prénom doit faire 40 caractères au plus. », « Choisissez une voix dans la liste. », « Choisissez un métier : general, immobilier, sante, hotellerie, juridique, commerce, fiduciaire ou garage. »…
 
 ```json
 {"erreur": "configuration invalide", "details": [{"champ": "nom_agent", "message": "Le prénom doit faire 40 caractères au plus."}]}

@@ -259,7 +259,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         from .connecteurs import Leads
 
         leads = Leads(stockage.Leads(env["DATABASE_URL"]), conf.leads.webhook if conf.leads else None,
-                      env.get("LEADS_SECRET", ""), conf.id, conf.nom_agent)
+                      env.get("LEADS_SECRET", ""), conf.id, conf.nom_agent,
+                      gestionnaires=approbations.equipe(personnes.gestionnaires), alerte=conf.leads.alerte if conf.leads else True)
     if boites_mcp is None and "connecteurs" in groupes_actifs:
         from .connecteurs import outils_mcp
 
@@ -383,6 +384,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         transfert.conversations = conversations
         conversations.reprise = transfert.garde
         conversations.echeances.append(transfert.echeance)  # les conversations oubliées, à l'heure dite
+    if leads is not None:  # l'équipe est prévenue d'une demande après le tour de la personne
+        leads.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")

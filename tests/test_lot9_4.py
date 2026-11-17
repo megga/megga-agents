@@ -89,7 +89,7 @@ def test_un_lead_part_au_webhook_signe(url):
         await fini(l)
         return r
 
-    assert asyncio.run(essai()) == "Lead 1 enregistré ; l'envoi à l'équipe commerciale est en cours."
+    assert asyncio.run(essai()) == "Demande 1 enregistrée ; l'envoi au logiciel de l'équipe est en cours."
     [requete] = recus
     corps = requete.content
     assert requete.headers["x-megga-signature"] == connecteurs.signature("secret-du-client", corps)
@@ -118,7 +118,7 @@ def test_un_webhook_en_panne_est_retente_puis_note(url, monkeypatch):
 def test_sans_webhook_et_les_refus(url):
     l = connecteurs.Leads(stockage.Leads(url))
     outil = l.outils()[0]
-    assert asyncio.run(outil("Une villa", 5, Contexte("+41790000001"))) == "Lead 1 enregistré pour l'équipe."
+    assert asyncio.run(outil("Une villa", 5, Contexte("+41790000001"))) == "Demande 1 enregistrée pour l'équipe."
     assert "score" in asyncio.run(outil("Une villa", 9, Contexte("+41790000001")))
     assert "besoin" in asyncio.run(outil("  ", 3, Contexte("+41790000001")))
     assert stockage.Leads(url).lister()[0]["etat"] == "garde"
@@ -137,7 +137,7 @@ def test_un_lead_se_complete_au_lieu_de_se_doubler(url):
         return r, autre
 
     r, autre = asyncio.run(essai())
-    assert r == "Lead 1 mis à jour ; l'envoi à l'équipe commerciale est en cours." and "introuvable" in autre
+    assert r == "Demande 1 complétée ; l'envoi au logiciel de l'équipe est en cours." and "introuvable" in autre
     [lead] = stockage.Leads(url).lister()
     assert (lead["score"], lead["budget"], lead["besoin"]) == (4, "1,5 M CHF", "Un 4 pièces à Nyon")
     assert [json.loads(x.content)["lead"]["id"] for x in recus] == [1, 1]  # le même id : le CRM met sa fiche à jour

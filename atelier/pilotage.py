@@ -186,7 +186,7 @@ class Pilotage:
             "accord": etat.get("accord"),
             # Le pilote installe-t-il les images lui-même (MISES_A_JOUR=oui) ? Sinon, le client les installe à la main.
             "mises_a_jour": etat.get("mises_a_jour"),
-            "agent": {k: agent[k] for k in ("ok", "erreur", "version", "revision", "schema", "licence") if k in agent},
+            "agent": {k: agent[k] for k in ("ok", "erreur", "version", "revision", "schema", "metiers", "licence") if k in agent},
             "configuration": config,
             # La version servie par l'installation n'est pas celle en service dans l'atelier ; inconnue sans relevé,
             # ou quand l'agent n'a pas répondu (il redémarre peut-être sur cette version).

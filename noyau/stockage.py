@@ -1584,17 +1584,6 @@ class Leads:
         with self._e.begin() as c:
             return c.execute(delete(self._t).where(self._t.c.cree < time.time() - self.CONSERVATION)).rowcount
 
-    def completer(self, ident: int, personne: str, fiche: dict) -> dict | None:
-        """Le lead `ident` de cette personne, complété de ce que `fiche` précise ; sa fiche entière, ou None."""
-        t, champs = self._t, ("besoin", "score", "budget", "delai", "lieu", "nom")
-        with self._e.begin() as c:
-            ligne = c.execute(select(t).where(t.c.id == int(ident), t.c.personne == personne[:PERSONNE])).first()
-            if ligne is None:
-                return None
-            nouvelle = {k: fiche.get(k) or ligne._mapping[k] for k in champs}
-            c.execute(update(t).where(t.c.id == int(ident)).values(etat="garde", erreur=None, **nouvelle))
-            return nouvelle
-
     def noter(self, personne: str, fiche: dict) -> int:
         self.purger()
         with self._e.begin() as c:
@@ -1605,6 +1594,29 @@ class Leads:
     def marquer(self, ident: int, etat: str, erreur: str = "") -> None:
         with self._e.begin() as c:
             c.execute(update(self._t).where(self._t.c.id == int(ident)).values(etat=etat, erreur=(erreur or None) and erreur[:120]))
+
+    def dernier(self, personne: str, depuis: float) -> dict | None:
+        """Le dernier lead de cette personne noté depuis `depuis` (time.time()), ou None."""
+        t = self._t
+        with self._e.connect() as c:
+            l = c.execute(select(t).where(t.c.personne == personne[:PERSONNE], t.c.cree >= depuis)
+                          .order_by(t.c.id.desc()).limit(1)).first()
+        return dict(l._mapping) if l else None
+
+    def completer(self, ident: int, personne: str, fiche: dict) -> dict | None:
+        """Le lead `ident` de cette personne, complété de ce que `fiche` précise : un champ donné non vide remplace
+        l'ancien, le score garde le plus haut des deux (lot 10). L'envoi au webhook repart de « garde » (la fiche a
+        changé). Rend la fiche entière, ou None si ce lead n'est pas celui de cette personne."""
+        t = self._t
+        with self._e.begin() as c:
+            l = c.execute(select(t).where(t.c.id == int(ident), t.c.personne == personne[:PERSONNE]).with_for_update()).first()
+            if l is None:
+                return None
+            avant = l._mapping
+            nouvelle = {"besoin": fiche.get("besoin") or avant["besoin"], "score": max(int(avant["score"]), int(fiche.get("score") or 0)),
+                        **{k: fiche.get(k) or avant[k] for k in ("budget", "delai", "lieu", "nom")}}
+            c.execute(update(t).where(t.c.id == int(ident)).values(**nouvelle, etat="garde", erreur=None))
+        return nouvelle
 
     def lister(self, depuis: float = 0, limite: int = 200) -> list[dict]:
         t = self._t

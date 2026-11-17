@@ -82,7 +82,7 @@ from noyau import api as entree_api
 from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
-from noyau.config import SANS_WHATSAPP_SCHEMA, Config
+from noyau.config import METIERS_D_AVANT, SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
 ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
@@ -107,6 +107,18 @@ def trop_ancienne(agent: dict | None, schema_minimum: int) -> bool:
     Inconnu (pas de relevé, agent muet) : on ne sait pas, faux ; l'installation jugera l'ordre elle-même."""
     schema = (agent or {}).get("schema")
     return isinstance(schema, int) and not isinstance(schema, bool) and schema < schema_minimum
+
+
+def metier_inconnu(agent: dict | None, metier: str) -> bool:
+    """L'agent d'une installation, d'après son dernier relevé, sert-il une image qui ne connaît pas ce métier ?
+    Une image d'avant ce lot ne dit pas ses métiers (ni une liste illisible) : elle ne connaît que ceux d'alors.
+    Inconnu (pas de relevé, agent muet) : on ne sait pas, faux ; l'installation jugera l'ordre elle-même."""
+    if not agent or "version" not in agent:
+        return False
+    connus = agent.get("metiers")
+    if not (isinstance(connus, list) and all(isinstance(m, str) for m in connus)):
+        connus = METIERS_D_AVANT
+    return metier not in connus
 
 
 @dataclass(frozen=True)
@@ -449,11 +461,13 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         renvoyée si l'installation ne la sert pas (refusée, en échec, expirée)."""
         if canal.cle is None:
             raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
+        agent = (await bd(installation_de, ident, courante) or {}).get("agent")
         if conf.whatsapp is None:
             # Deux versions soutenues : l'image précédente exige un numéro et refuserait l'ordre.
-            agent = (await bd(installation_de, ident, courante) or {}).get("agent")
             if trop_ancienne(agent, SANS_WHATSAPP_SCHEMA):
                 raise Refus(409, f"l'installation sert l'image {agent.get('version')}, qui exige un numéro WhatsApp : installez d'abord une image récente")
+        if metier_inconnu(agent, conf.metier):
+            raise Refus(409, f"l'installation sert l'image {agent.get('version')}, qui ne connaît pas le métier {conf.metier} : installez d'abord une image récente")
         en_cours = await bd(canal.en_cours, ident, numero)
         if en_cours is not None:
             raise Refus(409, f"l'ordre {en_cours} porte déjà cette version à l'installation")

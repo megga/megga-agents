@@ -79,7 +79,7 @@ CLE_MAJ = "mise_a_jour"  # la mise à jour d'image en cours, dans megga_reglages
 SANTE_REQUISE = 2  # relevés sains de suite sur la nouvelle image avant de la dire appliquée
 FENETRES = (1, 7, 30)  # les périodes du suivi, en jours
 # Ce que le pilote retient de /sante (rien de privé n'y est ; on ne garde que ce qu'on connaît).
-SANTE = ("ok", "version", "revision", "config", "schema", "installation", "zone", "licence", "configuration")
+SANTE = ("ok", "version", "revision", "config", "schema", "metiers", "installation", "zone", "licence", "configuration")
 
 
 class PiloteErreur(RuntimeError):

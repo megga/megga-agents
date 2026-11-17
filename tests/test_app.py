@@ -80,10 +80,12 @@ def attendre(app):
 def test_sante_sans_rien_de_prive():
     app, _, _ = serveur()
     r = TestClient(app).get("/sante")
+    from noyau.config import NOMS_METIERS
     from noyau.version import version
 
     assert r.json() == {"ok": True, "client": "exemple", "zone": "europe", "version": version(), "revision": "inconnue",
-                        "config": 1, "schema": stockage.SCHEMA_VERSION, "installation": "megga"}
+                        "config": 1, "schema": stockage.SCHEMA_VERSION, "installation": "megga",
+                        "metiers": list(NOMS_METIERS)}
 
 
 def test_signature_obligatoire():

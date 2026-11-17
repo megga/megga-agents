@@ -23,11 +23,16 @@ ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
 # Ceux du noyau, permis à tous les métiers : la base de documents (9.2), les leads et les connecteurs (9.4).
 GROUPES_DU_NOYAU = ("connaissances", "leads", "connecteurs")
-METIERS: dict[str, tuple[str, ...]] = {"general": GROUPES_DU_NOYAU, "immobilier": ("immobilier", *GROUPES_DU_NOYAU)}
+# Les deux métiers d'avant le lot 10, puis les six secteurs d'accueil : ceux-ci n'ont que les packs du noyau.
+METIERS_D_AVANT = ("general", "immobilier")
+NOMS_METIERS = (*METIERS_D_AVANT, "sante", "hotellerie", "juridique", "commerce", "fiduciaire", "garage")
+METIERS: dict[str, tuple[str, ...]] = {"general": GROUPES_DU_NOYAU, "immobilier": ("immobilier", *GROUPES_DU_NOYAU),
+                                       **{m: GROUPES_DU_NOYAU for m in NOMS_METIERS[2:]}}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
 OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": GROUPES_DU_NOYAU,
                                                 "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                               "vitrine", "accueil", "marche", "travail", *GROUPES_DU_NOYAU)}
+                                                               "vitrine", "accueil", "marche", "travail", *GROUPES_DU_NOYAU),
+                                                **{m: GROUPES_DU_NOYAU for m in NOMS_METIERS[2:]}}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
 OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
@@ -152,9 +157,11 @@ class ServeurMcp(Strict):
 
 class Leads(Strict):
     """Où part la fiche d'un lead (noyau/connecteurs.py) : un webhook https du client (son CRM, un tableur, Zapier),
-    signé par le secret LEADS_SECRET s'il est posé. Sans webhook, les leads restent dans la base et la console."""
+    signé par le secret LEADS_SECRET s'il est posé. Sans webhook, les leads restent dans la base et la console.
+    `alerte` : chaque gestionnaire est aussi prévenu sur WhatsApp quand l'agent note une demande (vrai par défaut)."""
 
     webhook: str | None = Field(default=None, pattern=r"^https://\S{4,500}$")
+    alerte: bool = True
 
 
 class Role(Strict):
@@ -292,7 +299,7 @@ class Config(Strict):
     # Le fil (noyau/fil.py) : ce qui sort de l'historique se fond dans un résumé relu à chaque tour.
     fil: bool = False
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
-    metier: Literal["general", "immobilier"] = "general"
+    metier: Literal[NOMS_METIERS] = "general"
     # Les packs actifs : « immobilier », « connaissances » (la base de documents du client, noyau/connaissances.py).
     outils: tuple[Literal["immobilier", "connaissances", "leads", "connecteurs"], ...] = ()
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.

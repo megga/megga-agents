@@ -7,9 +7,14 @@ WhatsApp). Un essai réussit si tous ses critères tiennent ; un cas compte dans
 k essais (pass^k, comme τ-bench). Le score de la version : la part de ses cas tenus à chaque fois.
 
 Les scénarios (`noyau/banc/<métier>.json`, généralisés du banc de parité d'Alix, `parite/`) :
-  {"id", "titre", "etapes": [{"texte"}], "faits", "config"?: {réglages ajoutés pour ce cas}, "criteres": [...]}
+  {"id", "titre", "etapes": [{"texte"}], "faits", "config"?: {réglages ajoutés pour ce cas},
+   "documents"?: [{"titre", "texte"}] (rangés dans la base d'essai avant le cas), "criteres": [...]}
 Un critère est vérifié sur la trace (« outil », « pas_outil », « motifs », « pas_motif ») ou lu par un juge (« juge »),
 un second modèle qui voit la conversation, les outils appelés et les faits du cas.
+
+Les cas qui rangent des documents demandent le modèle de recherche (noyau/connaissances.py) : celui de l'image, ou un
+dossier posé par `python socle/modele.py <dossier>` et donné par MEGGA_MODELE_DIR. Sans lui, le banc s'arrête avant de
+jouer.
 
   python -m noyau.banc <configuration.yaml> [k] [--juge claude-sonnet-5-5]
 """
@@ -180,7 +185,8 @@ async def noter(cas: dict, trace: dict, juger) -> dict:
 async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | None = None) -> dict:
     """Le banc d'une configuration : chaque cas k fois, une personne neuve à chaque fois.
 
-    `construire_agent(conf, dossier)` rend l'agent à essayer (dans une base d'essai à part, sous `dossier`) ;
+    `construire_agent(conf, dossier)` rend l'agent à essayer (dans une base d'essai à part, sous `dossier`) ; si le
+    cas porte des `documents`, `construire_agent(conf, dossier, documents)` les range avant l'essai ;
     `juger(cas, trace, criteres)` rend [{ok, raison}] pour les critères « juge ». Au premier essai incomplet (le modèle
     ou le juge en panne), le banc s'arrête : son rapport est marqué `incomplet`, sans score."""
     from . import config as configuration
@@ -198,7 +204,8 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
                 # ni compté.
                 ecartes.append({"id": c["id"], "titre": c["titre"], "raison": str(e)[:200]})
                 continue
-            agent = construire_agent(conf_du_cas, Path(dossier) / f"cas-{i}")
+            place = Path(dossier) / f"cas-{i}"
+            agent = construire_agent(conf_du_cas, place, c["documents"]) if c.get("documents") else construire_agent(conf_du_cas, place)
             essais = []
             for n in range(int(k)):
                 trace = await jouer(c, agent, f"banc-{c['id']}-{n}")
@@ -216,14 +223,16 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
             "incomplet": incomplet, "resultats": resultats, "ecartes": ecartes}
 
 
-def agent_d_essai(cles: dict, principal=None):
+def agent_d_essai(cles: dict, principal=None, vectoriseur=None):
     """Construit l'agent d'une version comme en service, dans une base d'essai à part (comme l'essai de l'atelier) :
-    avec des rôles, celui qui sert une personne nouvelle (le visiteur, noyau/roles.py)."""
+    avec des rôles, celui qui sert une personne nouvelle (le visiteur, noyau/roles.py).
 
-    def construire_agent(conf, dossier: Path):
+    Il a les documents du cas (rangés dans la base d'essai) et les demandes (leads), sans webhook ni alerte."""
+
+    def construire_agent(conf, dossier: Path, documents=None):
         from atelier.essai import role_d_essai
 
-        from . import stockage
+        from . import connaissances as savoir, connecteurs, stockage
         from .agent import construire
         from .app import outils_du_client
 
@@ -231,8 +240,18 @@ def agent_d_essai(cles: dict, principal=None):
         url = f"sqlite:///{dossier}/banc.db"
         nom_role = role_d_essai(conf, None)
         role = conf.les_roles().get(nom_role) if nom_role else None
-        groupes = tuple(g for g in role.outils if g == "rappels") if role is not None else None
-        outils = outils_du_client(conf, stockage.Rappels(url), groupes)
+        # Avec des rôles, ceux des groupes du rôle que le banc fournit lui-même : les rappels, les documents et les
+        # demandes. Les outils des packs demandent la gestion du site du client, que le banc n'a pas.
+        groupes = tuple(g for g in role.outils if g in ("rappels", "connaissances", "leads")) if role is not None else None
+        actifs = conf.outils if groupes is None else groupes
+        base = leads = None
+        if "connaissances" in actifs:
+            base = savoir.Base(stockage.Connaissances(url), vectoriseur)
+            for d in documents or []:
+                base.ajouter(d["titre"], d["texte"].encode(), "texte")
+        if "leads" in actifs:
+            leads = connecteurs.Leads(stockage.Leads(url))
+        outils = outils_du_client(conf, stockage.Rappels(url), groupes, connaissances=base, leads=leads)
         if conf.transfert:  # passer la main (lot 9.3) : dans le banc, l'équipe n'est prévenue de rien
             from .reprises import Transfert
 
@@ -263,8 +282,21 @@ def principal(argv: list[str]) -> int:
         argv = argv[:i] + argv[i + 2:]
     conf = configuration.lire(argv[0])
     k = int(argv[1]) if len(argv) > 1 else 3
+    cas = scenarios(conf.metier)
+    vectoriseur = None
+    if any(c.get("documents") for c in cas):
+        # Des cas rangent des documents : sans le modèle de recherche, ils échoueraient en route, après avoir payé les
+        # cas d'avant (relecture finale du lot 10, I3). Un seul modèle, chargé une fois pour tous les cas.
+        from .connaissances import Vectoriseur
+
+        vectoriseur = Vectoriseur()
+        if not vectoriseur.disponible():
+            print(f"Le modèle de recherche des documents est absent ({vectoriseur.dossier}) : des cas de ce banc rangent des "
+                  "documents. Posez-le avant de lancer le banc (python socle/modele.py <dossier>, puis "
+                  "MEGGA_MODELE_DIR=<dossier>), ou lancez le banc dans l'image, qui l'a déjà. Rien n'a été joué.")
+            return 2
     cles = {n: os.environ.get(n, "") for n in ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY")}
-    r = asyncio.run(passer(conf, agent_d_essai(cles), juge_anthropic(juge, cles["ANTHROPIC_API_KEY"]), k))
+    r = asyncio.run(passer(conf, agent_d_essai(cles, vectoriseur=vectoriseur), juge_anthropic(juge, cles["ANTHROPIC_API_KEY"]), k, cas))
     if r["incomplet"]:
         print(f"banc incomplet, sans score : {r['incomplet']}")
     for c in r["resultats"]:
