@@ -689,7 +689,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     # Cloudflare, ils s'ajoutent sur son serveur (python -m noyau.connaissances), rien n'entrant chez lui.
 
     async def base_du_client(qui: Identite, ident: str, methode: str, chemin: str = "", corps: dict | None = None) -> dict:
-        await bd(suivable, qui, ident, True)
+        if not (await bd(suivable, qui, ident))[1]:
+            raise Refus(409, "les documents d'une installation hors Cloudflare s'ajoutent sur son serveur : "
+                             "python -m noyau.connaissances ajouter <fichier> [titre] (et lister, retirer <n>)")
         try:
             return await porte.connaissances(ident, methode, chemin, corps)
         except PorteErreur as e:

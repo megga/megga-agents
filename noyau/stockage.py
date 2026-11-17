@@ -1280,14 +1280,25 @@ class Connaissances:
             Column("vecteur", LargeBinary, nullable=False),
         )
 
+    def _verifier(self, c, titre: str, passages: int) -> None:
+        d, p = self._d, self._p
+        if (c.execute(select(func.count()).select_from(d)).scalar() or 0) >= DOCUMENTS_MAX:
+            raise ValueError(f"déjà {DOCUMENTS_MAX} documents : retirez-en d'abord")
+        if (c.execute(select(func.count()).select_from(p)).scalar() or 0) + passages > PASSAGES_MAX:
+            raise ValueError(f"la base dépasserait {PASSAGES_MAX} passages : retirez des documents d'abord")
+        if c.execute(select(d.c.id).where(d.c.titre == titre[:200]).limit(1)).first():  # un envoi repris
+            raise ValueError(f"un document intitulé « {titre[:200]} » est déjà dans la base : retirez-le d'abord pour le remplacer")
+
+    def verifier(self, titre: str, passages: int) -> None:
+        """Une ValueError si le document dépasse les bornes du client ou porte le titre d'un document déjà rangé."""
+        with self._e.connect() as c:
+            self._verifier(c, titre, passages)
+
     def ajouter(self, titre: str, source: str | None, genre: str, taille: int, modele: str, passages: list[tuple[str, bytes]]) -> int:
-        """Un document et ses passages, d'un coup ; une ValueError au-delà des bornes du client."""
+        """Un document et ses passages, d'un coup ; une ValueError au-delà des bornes du client, ou en doublon."""
         d, p = self._d, self._p
         with self._e.begin() as c:
-            if (c.execute(select(func.count()).select_from(d)).scalar() or 0) >= DOCUMENTS_MAX:
-                raise ValueError(f"déjà {DOCUMENTS_MAX} documents : retirez-en d'abord")
-            if (c.execute(select(func.count()).select_from(p)).scalar() or 0) + len(passages) > PASSAGES_MAX:
-                raise ValueError(f"la base dépasserait {PASSAGES_MAX} passages : retirez des documents d'abord")
+            self._verifier(c, titre, len(passages))
             ident = int(c.execute(insert(d).values(titre=titre[:200], source=source, genre=genre[:10], taille=int(taille),
                                                    passages=len(passages), ajoute=time.time())).inserted_primary_key[0])
             if passages:
