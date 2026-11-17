@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -43,7 +44,7 @@ IMAGES_MAX = 5  # photos montrées au modèle dans un même tour
 IMAGE_MAX = 5_000_000  # octets, au-delà le modèle ne la voit pas (elle reste numérotée)
 # La mention de l'IA au début d'une conversation (Config.mention_ia, lot 9.5).
 MENTIONS_IA = {
-    "fr": ("Vous échangez avec {agent}, l'assistant virtuel de {entreprise} : une intelligence artificielle.",
+    "fr": ("Vous échangez avec {agent}, l'assistant virtuel {d_entreprise} : une intelligence artificielle.",
            " Vous pouvez demander à parler à une personne de l'équipe."),
     "en": ("You are chatting with {agent}, the virtual assistant of {entreprise}: an artificial intelligence.",
            " You can ask to speak to a member of the team."),
@@ -255,19 +256,27 @@ class Conversations:
         return True
 
     async def _mention(self, personne: str) -> str:
-        """La mention de l'IA (Config.mention_ia, lot 9.5) à dire si une conversation commence (rien depuis douze heures)."""
-        if not self.conf.mention_ia or self.contacts is None:
+        """La mention de l'IA (Config.mention_ia, lot 9.5), due tant qu'elle n'est pas partie dans cette conversation :
+        marquée quand elle part (stockage.Etats, « mention_ia »), oubliée quand une conversation commence (rien depuis
+        douze heures). Un tour qui s'arrête avant de répondre (illisible, débit…) la laisse au suivant."""
+        if not self.conf.mention_ia or self.contacts is None or self.etats is None:
             return ""
         try:
             dernier = await asyncio.to_thread(self.contacts.dernier, personne)
+            if dernier is None or time.time() - dernier > accueils.INACTIVITE:
+                await asyncio.to_thread(self.etats.ecrire, personne, "mention_ia", None)
+            elif await asyncio.to_thread(self.etats.lire, personne, "mention_ia"):
+                return ""
         except Exception as e:
             log.warning("contact illisible : %s", str(e)[:200])
-            dernier = None
-        if dernier is not None and time.time() - dernier <= accueils.INACTIVITE:
-            return ""
         ia, humain = MENTIONS_IA.get(self.conf.langue, MENTIONS_IA["fr"])
+        e = self.conf.entreprise
+        d_entreprise = ("d'" if re.match(r"[aeiouâàéèêëîïôöûùü]", e, re.I) else "de ") + e  # « d'Agence », « de Brun »
         # l'offre de parler à une personne, seulement si l'agent sait passer la main (Config.transfert, lot 9.3)
-        return ia.format(agent=self.conf.nom_agent, entreprise=self.conf.entreprise) + (humain if self.conf.transfert else "")
+        return ia.format(agent=self.conf.nom_agent, entreprise=e, d_entreprise=d_entreprise) + (humain if self.conf.transfert else "")
+
+    async def _mention_dite(self, personne: str) -> None:
+        await self._sans_echec(asyncio.to_thread(self.etats.ecrire, personne, "mention_ia", time.time()))
 
     async def _repondre(self, personne: str, messages: list[Entrant], role: str = "public", premier: bool = False,
                         mention: str = "") -> None:
@@ -301,8 +310,8 @@ class Conversations:
             if not choisis:
                 await self._ecrire(personne, NON_COMPRIS if sourd else NON_LU)
             return
-        if mention:  # dite avant toute réponse, une fois par conversation
-            await self._ecrire(personne, mention)
+        if mention and await self._ecrire(personne, mention):  # dite avant toute réponse, une fois par conversation
+            await self._mention_dite(personne)
         bienvenue = self._bienvenue(role, entendu, messages[-1].profil) if premier else ""
         if bienvenue:
             await self._ecrire(personne, bienvenue)
@@ -404,6 +413,8 @@ class Conversations:
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
                 reponse = nettoyer(masquer_secrets((f"{mention}\n\n" if mention else "") + brute))
+                if mention:
+                    await self._mention_dite(personne)
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:
@@ -435,14 +446,16 @@ class Conversations:
             self.noter_journal("voix_echec", detail=type(e).__name__)
             return False
 
-    async def _ecrire(self, personne: str, texte: str) -> None:
+    async def _ecrire(self, personne: str, texte: str) -> bool:
         envoye = nettoyer(masquer_secrets(texte))
         try:
             await self.exp.texte(personne, envoye)
             self._noter_fil(personne, "envoye", "texte", envoye)
+            return True
         except Exception as e:
             log.error("envoi en échec (%s) : %s", self.conf.id, str(e)[:200])
             self.noter_journal("envoi_echec", detail=type(e).__name__)
+            return False
 
     def _plus_tard(self, f, *args) -> None:
         """Une écriture de suivi, en arrière-plan : jamais sur le chemin d'une réponse, jamais en échec visible."""

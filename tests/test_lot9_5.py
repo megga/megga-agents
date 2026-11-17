@@ -64,7 +64,7 @@ def test_la_mention_de_l_ia_au_debut_d_une_conversation(url):
         ecrire(app, t, "Bonjour", "wamid.1")
         ecrire(app, t, "Encore moi", "wamid.2")
     textes = [x[1] for x in exp.envois]
-    assert textes[0] == "Vous échangez avec Alix, l'assistant virtuel de Entreprise exemple : une intelligence artificielle."
+    assert textes[0] == "Vous échangez avec Alix, l'assistant virtuel d'Entreprise exemple : une intelligence artificielle."
     assert textes[1:] == ["Bonjour !", "Bonjour !"]  # une fois par conversation, pas à chaque message
 
 
@@ -77,6 +77,25 @@ def test_sans_reglage_pas_de_mention_et_avec_transfert_l_offre_d_un_humain(url, 
     with TestClient(app) as t:
         ecrire(app, t, "Hello", "wamid.3")
     assert exp.envois[0][1].endswith("You can ask to speak to a member of the team.")
+
+
+def test_la_mention_attend_une_vraie_reponse(url):
+    from test_app import attendre, signe
+
+    app, _, exp = agent_whatsapp(url, mention_ia=True, entreprise="Brun Immobilier")
+    lieu = json.dumps({"object": "whatsapp_business_account", "entry": [{"changes": [{"field": "messages", "value": {
+        "metadata": {"phone_number_id": "100000000000001"},
+        "messages": [{"from": "41790000000", "id": "wamid.0", "type": "location", "timestamp": str(int(time.time())),
+                      "location": {"latitude": 46.2, "longitude": 6.1}}]}}]}]}).encode()
+    with TestClient(app) as t:
+        assert t.post("/whatsapp", content=lieu, headers=signe(lieu)).status_code == 200
+        t.portal.call(attendre(app))
+        ecrire(app, t, "Bonjour", "wamid.1")
+        ecrire(app, t, "Encore moi", "wamid.2")
+    textes = [x[1] for x in exp.envois]
+    mention = "Vous échangez avec Alix, l'assistant virtuel de Brun Immobilier : une intelligence artificielle."
+    assert textes[1:] == [mention, "Bonjour !", "Bonjour !"]  # après le message illisible, et une seule fois
+    assert stockage.Etats(url).lire("+41790000000", "mention_ia")
 
 
 def test_la_mention_par_api(url):
