@@ -259,8 +259,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     if conf.transfert and env.get("DATABASE_URL"):
         from .reprises import Transfert
 
-        transfert = Transfert(stockage.Reprises(env["DATABASE_URL"]), fil, approbations.equipe(personnes.gestionnaires),
-                              conf.nom_agent, conf.langue)
+        # Seul le rôle gestionnaire peut prendre la main et répondre (ses outils d'équipe, noyau/roles.py) : sans lui,
+        # personne n'est prévenu et l'outil dit à l'agent que ce n'est pas possible (pas de conversation muette 24 h).
+        equipe = approbations.equipe(personnes.gestionnaires) if "gestionnaire" in conf.les_roles() else []
+        transfert = Transfert(stockage.Reprises(env["DATABASE_URL"]), fil, equipe, conf.nom_agent, conf.langue)
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
