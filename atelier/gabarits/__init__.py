@@ -135,8 +135,8 @@ def charger(dossier: Path | None = None) -> dict[str, dict]:
                 # Les réglages communs à tous les modèles : les documents de l'entreprise, les demandes notées pour
                 # l'équipe, le transfert à un humain, la mention de l'IA (lot 9).
                 "outils": list(OUTILS),
-                # Le transfert passe la main à l'équipe : il demande le rôle gestionnaire (relecture du lot 9.3), et le
-                # visiteur sert tous les autres. Les deux gardent les outils de l'agent : rien ne change pour le public,
+                # Le transfert passe la main à l'équipe : il n'agit qu'avec le rôle gestionnaire (sans lui, il est inerte,
+                # relecture du lot 9.3), et le visiteur sert tous les autres. Les deux gardent les outils de l'agent : rien ne change pour le public,
                 # et les gestionnaires reçoivent ceux de l'équipe pour prendre et rendre la main.
                 "roles": {r: {"outils": ["rappels", *OUTILS]} for r in ("gestionnaire", "visiteur")},
                 "ton": ton,

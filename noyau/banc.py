@@ -200,8 +200,8 @@ async def passer(conf, construire_agent, juger, k: int = 3, cas: list[dict] | No
             try:
                 conf_du_cas = configuration.lire({**conf.model_dump(mode="json"), **c["config"]}) if c.get("config") else conf
             except ValueError as e:
-                # Un réglage que ce client ne peut pas prendre (le transfert sans rôle gestionnaire) : le cas ne le
-                # concerne pas, il n'est pas joué ni compté.
+                # Un réglage que la configuration de ce client refuse : le cas ne le concerne pas, il n'est ni joué
+                # ni compté.
                 ecartes.append({"id": c["id"], "titre": c["titre"], "raison": str(e)[:200]})
                 continue
             place = Path(dossier) / f"cas-{i}"

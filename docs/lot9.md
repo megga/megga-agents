@@ -95,7 +95,7 @@ Côté porte : `GET|POST /admin/clients/{id}/connaissances`, `DELETE /admin/clie
 
 **Pourquoi.** 87 % des clients exigent de pouvoir parler à un humain quand une entreprise utilise l'IA (Gartner, août 2026) ; Klarna a dû réembaucher après avoir tout confié à son assistant. Un agent qui sait passer la main au bon moment, avec un résumé, garde la confiance.
 
-**Le réglage `Config.transfert`** (le client l'active lui-même dans l'atelier). Il demande le rôle gestionnaire (sinon la configuration est refusée, avec un message clair) ; sans aucun numéro de gestionnaire, l'outil répond à l'agent que ce n'est pas possible. Il donne à l'agent, et à chaque rôle sauf le gestionnaire, l'outil `passer_la_main(motif, resume)` et sa consigne : quand la personne demande un humain, quand c'est sensible (réclamation, litige, urgence), ou quand l'agent ne peut pas l'aider. Les gestionnaires, eux, reçoivent les outils de l'équipe.
+**Le réglage `Config.transfert`** (le client l'active lui-même dans l'atelier). Il ne sert qu'avec le rôle gestionnaire (seul ce rôle a les outils pour prendre la main et répondre) : sans ce rôle, ou sans aucun numéro de gestionnaire, personne n'est prévenu et l'outil répond à l'agent que ce n'est pas possible, qui propose alors un contact direct. Aucune conversation n'attend donc 24 heures pour rien. Il donne à l'agent, et à chaque rôle sauf le gestionnaire, l'outil `passer_la_main(motif, resume)` et sa consigne : quand la personne demande un humain, quand c'est sensible (réclamation, litige, urgence), ou quand l'agent ne peut pas l'aider. Les gestionnaires, eux, reçoivent les outils de l'équipe.
 
 **Le parcours.**
 1. L'agent passe la main : la conversation est confiée à l'équipe (`megga_reprises`, « ouverte ») avec son motif et un résumé (secrets masqués) ; l'agent dit à la personne qu'un membre de l'équipe va lui répondre. Une seule conversation en cours par personne.
@@ -193,7 +193,7 @@ Un cas peut ajouter ses réglages (`config`) ; ceux du pack ne se jouent que pou
 - `python -m noyau.banc clients/x.yaml [k] [--juge claude-sonnet-5-5]` : en local, avec les clés en variables ; rend 0 si tout tient.
 - Le juge est Claude Sonnet 5.5 par défaut (`BANC_JUGE` le change dans l'atelier).
 
-Un cas dont les réglages ne vont pas à ce client (le transfert, pour un agent sans rôle gestionnaire) est écarté, ni joué ni compté : le rapport le nomme sous `ecartes`. Dans le banc, le transfert a un gestionnaire fictif, prévenu de rien.
+Un cas dont les réglages ne vont pas à ce client (sa configuration les refuse) est écarté, ni joué ni compté : le rapport le nomme sous `ecartes`. Dans le banc, le transfert a un gestionnaire fictif, prévenu de rien.
 
 **Ce qui reste.**
 - Pas joué par la CI : il demande les vrais modèles. À lancer avant chaque mise en service d'un client, et à exiger plus tard avant `activer` (un seuil par client).

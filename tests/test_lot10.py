@@ -306,8 +306,8 @@ def test_les_anciens_textes_restent_ceux_d_un_modele():
     assert not regles.consignes_de_gabarit("Consignes sur mesure de MEGGA.")
 
 
-def test_chaque_modele_a_le_role_gestionnaire_que_demande_le_transfert():
-    """Le transfert passe la main à l'équipe et demande le rôle gestionnaire (relecture du lot 9.3) : chaque modèle règle
+def test_chaque_modele_a_le_role_gestionnaire_sans_lequel_le_transfert_est_inerte():
+    """Le transfert passe la main à l'équipe et n'agit qu'avec le rôle gestionnaire (relecture du lot 9.3) : chaque modèle règle
     le gestionnaire et le visiteur, avec les outils de l'agent. Le pack immobilier les suit ; des rôles déjà réglés restent."""
     for g in gabarits.lister():
         conf = configuration.lire(gabarits.nouvelle_config(g["id"], {"id": "essai", "entreprise": "Essai", "zone": "suisse"}, "Lea"))
