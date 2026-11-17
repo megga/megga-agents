@@ -460,3 +460,24 @@ test("les leads (lot 9.4) se lisent par le suivi", async () => {
   assert.deepEqual(await agent.suivre("/leads", "?depuis=1"), { statut: 200, donnees: { leads: [] } });
   assert.deepEqual(vus, ["/interne/suivi/leads?depuis=1"]);
 });
+
+test("les droits d'une personne (lot 9.5) : lecture et effacement transmis, personne bornée ; la valeur par le suivi", async () => {
+  const a = ctx({ running: true });
+  const vus = [];
+  a.ctx.id.name = "exemple";
+  a.ctx.container.getTcpPort = () => ({ fetch: async (u, o = {}) => (vus.push([new URL(u).pathname, o.method ?? "GET"]), Response.json({ ok: true })) });
+  const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
+  agent.demarrer = async () => {};
+  await agent.personne("DELETE", "+41790000001");
+  await agent.personne("GET", "api:dossier:p-42");
+  await agent.suivre("/valeur", "?depuis=1");
+  assert.deepEqual(vus, [["/interne/personnes/+41790000001", "DELETE"], ["/interne/personnes/api%3Adossier%3Ap-42", "GET"], ["/interne/suivi/valeur", "GET"]]);
+  await assert.rejects(agent.personne("DELETE", "../cles"), /personne/);
+  await assert.rejects(agent.personne("PUT", "+41790000001"), /personne/);
+  const journal = [];
+  const e = env(journal);
+  await put(e, "exemple", { version: 1, config: config() });
+  const appel = (chemin, methode, jeton = "admin") => recevoir(new Request(`https://porte/admin/clients/${chemin}`, { method: methode, headers: { authorization: `Bearer ${jeton}` } }), e);
+  assert.equal((await appel("exemple/personnes/%2B41790000001", "DELETE", "faux")).status, 401);
+  assert.equal((await appel("inconnu/personnes/%2B41790000001", "GET")).status, 404);
+});

@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../porte"
 
-for nom in META_APP_SECRET META_TOKEN ANTHROPIC_API_KEY DEEPSEEK_API_KEY ELEVENLABS_API_KEY; do
+for nom in META_APP_SECRET META_TOKEN ANTHROPIC_API_KEY DEEPSEEK_API_KEY MISTRAL_API_KEY ELEVENLABS_API_KEY; do
   echo "→ $nom"
   npx wrangler secret put "$nom"
 done

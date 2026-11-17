@@ -51,6 +51,13 @@ class Modeles(Strict):
     # (relecture du 16.11.2026, I16).
     oral: str | None = None
 
+    @model_validator(mode="after")
+    def _secours_choisi(self):
+        # Derrière un modèle européen (Mistral AI), pas de secours d'office : celui par défaut tourne en Chine (lot 9.5).
+        if self.principal.startswith("mistral-") and "secours" not in self.model_fields_set:
+            raise ValueError("modeles.secours : avec un modèle européen, choisissez le secours (européen, un autre, ou aucun)")
+        return self
+
     def petit(self) -> str:
         """Le modèle de l'oral et du fil."""
         if self.oral:
@@ -303,6 +310,10 @@ class Config(Strict):
     # Les leads (groupe « leads ») et les serveurs MCP du client (groupe « connecteurs »), noyau/connecteurs.py.
     leads: Leads | None = None
     mcp: tuple[ServeurMcp, ...] = Field(default=(), max_length=10)
+    # La conformité (lot 9.5) : dire, au début de chaque conversation, qu'on parle à une IA (AI Act, article 50 ;
+    # transparence de la nLPD). Et ce qu'une conversation résolue sans humain fait gagner à l'équipe, en minutes.
+    mention_ia: bool = False
+    minutes_par_conversation: int = Field(default=5, ge=1, le=120)
 
     @field_validator("mcp")
     @classmethod

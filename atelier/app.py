@@ -234,7 +234,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         if base is None:
             raise Refus(404, "aucune version de base")
         changements = corps.get("changements")
-        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident))
+        conf = regles.appliquer(qui.role, base["config"], {} if changements is None else changements, zone_en_service(ident),
+                                regles.offerts(env))
         return conf, base["version"]
 
     def preparer(qui: Identite, ident: str, corps: dict) -> tuple[Config, int]:
@@ -252,7 +253,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     @r.get("/catalogue")
     def catalogue(qui: Identite = Depends(identite)):
-        return regles.catalogue()
+        return regles.catalogue(regles.offerts(env))
 
     @r.get("/clients")
     async def lister(qui: Identite = Depends(identite)):
@@ -692,6 +693,43 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(502 if e.statut else 504, f"décision non transmise : {raison(e)}", {"statut": e.statut}) from e
     # Le transfert vers un humain (lot 9.3, noyau/reprises.py) : la console prend une conversation, répond du numéro de
     # l'entreprise, puis la rend à l'agent. Comme les conversations, rien ne quitte une installation hors Cloudflare.
+
+    # Le client et ses chiffres (lot 9.5) : ce que l'agent lui fait gagner, et les droits des personnes (nLPD, RGPD).
+
+    @r.get("/clients/{ident}/valeur")
+    async def valeur(ident: str, requete: Request, qui: Identite = Depends(identite)):
+        """Ce que l'agent a fait gagner sur la période : conversations, part résolue sans humain, leads, minutes gagnées."""
+        jours = jours_de(requete.query_params.get("jours"))
+        await bd(suivable, qui, ident, True)
+        return {"periode_jours": jours, **await lire_suivi(ident, "/valeur", depuis=debut(jours))}
+
+    async def droits(qui: Identite, ident: str, methode: str, personne: str) -> dict:
+        if not PERSONNE.fullmatch(personne):
+            raise Refus(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
+        await bd(suivable, qui, ident, True)
+        try:
+            return await porte.personne(ident, methode, personne)
+        except PorteErreur as e:
+            if e.statut in (400, 404):
+                raise Refus(e.statut, "personne refusée", {"texte": e.texte}) from e
+            raise Refus(502 if e.statut else 504, f"données injoignables : {raison(e)}") from e
+
+    @r.get("/clients/{ident}/personnes/{personne}")
+    async def donnees_personne(ident: str, personne: str, qui: Identite = Depends(identite)):
+        """Tout ce que la base du client garde d'une personne, à lui remettre (son droit d'accès)."""
+        return await droits(qui, ident, "GET", personne)
+
+    @r.delete("/clients/{ident}/personnes/{personne}")
+    async def effacer_personne(ident: str, personne: str, requete: Request, qui: Identite = Depends(identite)):
+        """Efface tout ce que la base garde d'une personne, à sa demande ; `?confirmer=oui`, rien ne se récupère."""
+        if requete.query_params.get("confirmer") != "oui":
+            raise Refus(400, "l'effacement est définitif : confirmez avec ?confirmer=oui")
+        fait = await droits(qui, ident, "DELETE", personne)
+        # qui l'a demandé, au journal du client ; jamais le numéro, qui vient d'être effacé
+        demande = "de MEGGA" if qui.role == "megga" else "du client"
+        await bd(canal.journal.noter, ident, "effacement", None, f"données d'une personne effacées, à la demande {demande}")
+        log.info("données d'une personne de %s effacées (%s)", ident, qui.role)
+        return fait
 
     @r.get("/clients/{ident}/leads")
     async def leads(ident: str, requete: Request, qui: Identite = Depends(identite)):

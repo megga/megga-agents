@@ -60,6 +60,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import api as entree_api
+from . import accueil as accueils
 from . import approbations, reprises
 from . import config as configuration
 from . import licence as licences
@@ -69,9 +70,11 @@ from . import suivi as suivi_agent
 from . import version as version_image
 from .agent import construire, modele
 from .environnement import charger
+from .garde import TROP, TROP_JOUR
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
+from .typographie import nettoyer
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .approbations import Gardien
@@ -92,7 +95,7 @@ REPONSES_APPROBATION = {
 ETATS_REPRISE = ("ouverte", "prise", "rendue", "expiree")
 ETATS_APPROBATION = ("attente", "accordee", "faite", "echec", "refusee", "expiree")
 CORPS_DOCUMENT = 12 * 1024 * 1024  # un document de 8 Mo, en base64 dans du JSON
-CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY")
+CLES = ("ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "MISTRAL_API_KEY")
 
 
 class Deja:
@@ -722,6 +725,56 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         demandes = await asyncio.to_thread(gardien.demandes.lister, etat, borne(requete.query_params.get("limite"), 100, 500))
         return {"demandes": [{**{k: v for k, v in d.items() if k not in ("arguments", "relu")},
                               "apercu": approbations.apercu(d["arguments"], None)} for d in demandes]}
+
+    @app.get("/interne/suivi/valeur")
+    async def interne_valeur(requete: Request):
+        """Ce que l'agent a fait gagner sur la période (lot 9.5), pour le client : conversations, résolues sans humain,
+        transmises à l'équipe, leads, actions accordées ou refusées, minutes gagnées (Config.minutes_par_conversation)."""
+        if (refus := lisible(requete)) is not None:
+            return refus
+        depuis = date(requete.query_params.get("depuis"))
+        # Des conversations (douze heures sans message les séparent, comme l'accueil), du public seulement, auxquelles
+        # l'agent a répondu (ni débit ni plafond) ; transmise si une reprise de l'équipe était en cours pendant.
+        fenetres = await asyncio.to_thread(fil.fenetres, depuis, accueils.INACTIVITE, (nettoyer(TROP), nettoyer(TROP_JOUR)))
+        roles = {p: await asyncio.to_thread(personnes.role, p) for p in {f["personne"] for f in fenetres}}
+        actives = [f for f in fenetres if f["repondue"] and roles[f["personne"]] in ("public", "visiteur")]
+        equipe = await asyncio.to_thread(transfert.reprises.lister, None, 5000) if transfert else []
+        transmises = [f for f in actives if any(r["personne"] == f["personne"] and r["cree"] <= f["fin"]
+                                                and (r["fin"] is None or r["fin"] >= f["debut"]) for r in equipe)]
+        resolues = len(actives) - len(transmises)
+        lus = await asyncio.to_thread(leads.magasin.lister, depuis, 5000) if leads is not None else []
+        demandes = [d for d in (await asyncio.to_thread(gardien.demandes.lister, None, 5000) if gardien.demandes else [])
+                    if d["cree"] >= depuis]
+        return {"conversations": len(actives), "resolues_sans_humain": resolues, "transmises": len(transmises),
+                "taux_sans_humain": round(resolues / len(actives), 3) if actives else None,
+                "leads": len(lus), "leads_chauds": sum(1 for l in lus if l["score"] >= 4),
+                "actions_faites": sum(1 for d in demandes if d["etat"] == "faite"),
+                "actions_refusees": sum(1 for d in demandes if d["etat"] == "refusee"),
+                "actions_en_attente": sum(1 for d in demandes if d["etat"] == "attente"),
+                "minutes_gagnees": resolues * conf.minutes_par_conversation, "minutes_par_conversation": conf.minutes_par_conversation}
+
+    # Les droits d'une personne (lot 9.5, nLPD et RGPD) : ce que la base garde d'elle, et son effacement.
+
+    @app.get("/interne/personnes/{personne}")
+    async def interne_donnees_personne(personne: str, requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
+            return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
+        personne = reprises._qui(personne)  # « 41… » comme « +41… », tel que la base le garde
+        return {"personne": personne, "donnees": await asyncio.to_thread(stockage.donnees_personne, env["DATABASE_URL"], personne)}
+
+    @app.delete("/interne/personnes/{personne}")
+    async def interne_effacer_personne(personne: str, requete: Request):
+        if not interne(requete):
+            return Response("refusé", status_code=401)
+        if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
+            return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
+        personne = reprises._qui(personne)
+        fait = await asyncio.to_thread(stockage.effacer_personne, env["DATABASE_URL"], personne)
+        log.info("données d'une personne effacées à sa demande (%s tables, %s sous empreinte)", len(fait["effacees"]),
+                 len(fait["pseudonymisees"]))
+        return {"personne": personne, **fait}
 
     @app.get("/interne/suivi/leads")
     async def interne_leads(requete: Request):
