@@ -16,7 +16,7 @@ from .garde import crochet_secrets
 from .typographie import crochet_typographie
 
 REGLES = (
-    "Tu réponds sur WhatsApp : des messages courts, clairs, sans titres ni tableaux.",
+    "Tu réponds sur WhatsApp : des messages courts et clairs, sans tableaux ni titres Markdown (#) ; le gras s'écrit avec une seule étoile.",
     "N'utilise jamais de tiret long ni de point médian.",
     "N'invente rien : ni chiffre, ni nom, ni fait. Si tu ne sais pas, dis-le simplement.",
     "Ne demande et ne répète jamais de mot de passe, de clé ou de code.",
@@ -28,12 +28,15 @@ REGLES = (
 TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.2026, I7)
 
 
-def modele(nom: str, cles: dict[str, str]) -> Model:
-    """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek."""
+def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool = False, effort: str | None = None) -> Model:
+    """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek. Pour Claude : `jetons` par
+    réponse, la réflexion adaptative et son effort (Modeles.jetons, reflexion, effort ; parité D8)."""
     if nom.startswith("claude-"):
         from agno.models.anthropic import Claude
 
-        return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=4096)
+        return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=jetons,
+                      thinking={"type": "adaptive"} if reflexion else None,
+                      output_config={"effort": effort} if effort else None)
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
@@ -51,6 +54,10 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         base.append(config.consignes.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
+    if config.memoire.outils:  # la mémoire par ses outils (noyau/memoire.py)
+        from .memoire import CONSIGNES as CONSIGNES_MEMOIRE
+
+        base.append(CONSIGNES_MEMOIRE)
     if role is not None and set(role.outils) - {"rappels", "immobilier"}:  # la façon de se servir des outils du pack
         from packs.immobilier.relations import consignes_des_groupes
 
@@ -83,7 +90,8 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
                outils: list | None = None, role: Role | None = None, nom_role: str | None = None, contexte=None) -> Agent:
     """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs ;
     `contexte` : le Contexte de chaque tour (instructions_du_tour)."""
-    principal = principal or modele(config.modeles.principal, cles)
+    m = config.modeles
+    principal = principal or modele(m.principal, cles, m.jetons, m.reflexion, m.effort)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
     return Agent(
@@ -94,10 +102,11 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         db=db,
         instructions=instructions_du_tour(consignes(config, role), contexte),
         add_history_to_context=True,
-        num_history_runs=12,
-        # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé.
-        enable_agentic_memory=True,
-        add_memories_to_context=True,
+        num_history_runs=config.historique.tours,
+        # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé ; ou par les outils
+        # du noyau (Memoire.outils), ses souvenirs utiles dans le Contexte de chaque tour.
+        enable_agentic_memory=not config.memoire.outils,
+        add_memories_to_context=not config.memoire.outils,
         tools=list(outils or []),
         # Un tour n'appelle pas plus d'outils que cela : une boucle (ou une consigne glissée) ne fait pas exploser la facture.
         tool_call_limit=TOOL_CALL_LIMIT,

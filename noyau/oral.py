@@ -12,7 +12,7 @@ import logging
 
 from .config import Config
 from .typographie import sans_artefacts
-from .voix import d_un_tenant
+from .voix import balises_permises, d_un_tenant, sans_balises
 
 log = logging.getLogger("megga")
 
@@ -44,15 +44,31 @@ Longueur : 15 à 45 secondes, soit 40 à 110 mots.
 Rends seulement le texte à dire, d'un seul paragraphe, sans rien autour."""
 
 
+REFERENCES = "\n\nNe lis jamais une référence (de bien, de dossier, comme G8LR-2DW8) : dis que tu l'écris, elle partira par écrit après le vocal."
+
+BALISES = ("\n\nTa voix sait jouer des indications entre crochets, en anglais, placées juste avant la phrase qu'elles colorent : {liste}. "
+           "Au plus une par réplique, au début d'une phrase, seulement quand elle sert le ton (par exemple [softly] pour une "
+           "personne fatiguée, [cheerfully] pour une bonne nouvelle) ; le plus souvent aucune. Jamais d'autre crochet.")
+
+
 def consignes(config: Config) -> str:
-    return CONSIGNES.format(nom=config.nom_agent, entreprise=config.entreprise, ton=config.ton)
+    """La consigne de la réécriture : celle du client (Oral.consignes) ou celle du noyau, avec les références qui ne se
+    lisent pas et les indications de jeu de sa voix, s'il en a."""
+    base = config.oral.consignes.strip() or CONSIGNES.format(nom=config.nom_agent, entreprise=config.entreprise, ton=config.ton)
+    if config.oral.references and not config.oral.consignes.strip():
+        base += REFERENCES
+    if config.voix.balises:
+        base += BALISES.format(liste=", ".join(f"[{b}]" for b in config.voix.balises))
+    return base
 
 
-async def pour_la_voix(reecrire, ecrit: str, entendu: str = "") -> str:
-    """`reecrire(consigne_utilisateur) -> str` appelle le modèle ; l'écrit reste si quoi que ce soit échoue."""
+async def pour_la_voix(reecrire, ecrit: str, entendu: str = "", auditeur: str = "", balises=()) -> str:
+    """`reecrire(consigne_utilisateur) -> str` appelle le modèle ; l'écrit reste si quoi que ce soit échoue. `auditeur` :
+    ce que l'oral sait de plus de la personne (Role.oral) ; `balises` : les indications de jeu permises (Voix.balises)."""
     if not ecrit:
         return ecrit
-    demande = (f"La personne : « {entendu[:1500]} »\n" if entendu else "") + f"Écrit : « {ecrit} »"
+    demande = (f"À qui tu parles : {auditeur.strip()}\n" if auditeur.strip() else "") + \
+        (f"La personne : « {entendu[:1500]} »\n" if entendu else "") + f"Écrit : « {ecrit} »"
     try:
         dit = str(await reecrire(demande) or "").strip().strip("\"«»\u201c\u201d ").strip()
     except Exception as e:
@@ -60,4 +76,5 @@ async def pour_la_voix(reecrire, ecrit: str, entendu: str = "") -> str:
         return ecrit
     if len(dit) < 2 or len(dit) > 1200:
         return ecrit
+    dit = balises_permises(dit, balises) if balises else sans_balises(dit)
     return d_un_tenant(sans_artefacts(dit))

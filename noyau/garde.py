@@ -49,6 +49,7 @@ def crochet_secrets(run_output) -> None:
 
 
 TROP = "Vous m'écrivez beaucoup en peu de temps. Je reprends dans quelques minutes."
+TROP_TU = "Tu m'écris beaucoup en peu de temps. Je reprends dans quelques minutes."
 
 
 class Debit:
@@ -69,7 +70,11 @@ class Debit:
         for personne in [p for p, t in self._prevenu.items() if maintenant - t >= self.fenetre]:
             del self._prevenu[personne]
 
-    def permis(self, personne: str, maintenant: float | None = None) -> bool:
+    def permis(self, personne: str, maintenant: float | None = None, maximum: int | None = None) -> bool:
+        """`maximum` : celui du rôle de la personne (Role.par_dix_minutes), sinon celui du débit ; 0 : sans limite."""
+        maximum = self.maximum if maximum is None else maximum
+        if maximum == 0:
+            return True
         maintenant = time.monotonic() if maintenant is None else maintenant
         self._comptes += 1
         if self._comptes % self.BALAYAGE == 0:
@@ -77,18 +82,21 @@ class Debit:
         q = self._tours.setdefault(personne, deque())
         while q and maintenant - q[0] > self.fenetre:
             q.popleft()
-        if len(q) >= self.maximum:
+        if len(q) >= maximum:
             return False
         q.append(maintenant)
         return True
 
-    def libre(self, personne: str, maintenant: float | None = None) -> bool:
+    def libre(self, personne: str, maintenant: float | None = None, maximum: int | None = None) -> bool:
         """Un tour serait-il permis ? Sans le compter (permis le compte)."""
+        maximum = self.maximum if maximum is None else maximum
+        if maximum == 0:
+            return True
         maintenant = time.monotonic() if maintenant is None else maintenant
         q = self._tours.get(personne)
         while q and maintenant - q[0] > self.fenetre:
             q.popleft()
-        return not q or len(q) < self.maximum
+        return not q or len(q) < maximum
 
     def rendre(self, personne: str) -> None:
         """Rend le dernier tour compté (un tour compté qui n'a finalement pas eu lieu)."""
@@ -96,11 +104,12 @@ class Debit:
         if q:
             q.pop()
 
-    def attente(self, personne: str, maintenant: float | None = None) -> int:
+    def attente(self, personne: str, maintenant: float | None = None, maximum: int | None = None) -> int:
         """Les secondes avant qu'un tour se libère (au moins 1) : l'en-tête Retry-After."""
+        maximum = self.maximum if maximum is None else maximum
         maintenant = time.monotonic() if maintenant is None else maintenant
         q = self._tours.get(personne)
-        if not q or len(q) < self.maximum:
+        if not maximum or not q or len(q) < maximum:
             return 1
         return max(1, math.ceil(q[0] + self.fenetre - maintenant))
 
@@ -125,8 +134,11 @@ class Plafond:
     jour et par numéro (relecture du 16.11.2026, I7). En mémoire : un conteneur endormi repart à zéro, mais une personne
     qui écrit sans cesse le garde éveillé."""
 
-    def __init__(self, par_personne: int = PAR_PERSONNE_JOUR, client: int = CLIENT_JOUR):
+    def __init__(self, par_personne: int = PAR_PERSONNE_JOUR, client: int = CLIENT_JOUR, par_role: dict[str, int] | None = None):
+        """`par_role` : le plafond par personne d'un rôle (Role.par_jour). Un rôle sans plafond (les gestionnaires) qui en
+        reçoit un est compté pour lui seul, jamais dans celui du client."""
         self.par_personne, self.client = par_personne, client
+        self.par_role = dict(par_role or {})
         self._jour = ""
         self._personnes: dict[str, int] = {}
         self._total = 0
@@ -140,21 +152,22 @@ class Plafond:
 
     def libre(self, personne: str, role: str, maintenant: float | None = None) -> str | None:
         """None si un tour est permis ; sinon « personne » ou « client », le plafond atteint. Ne compte rien."""
-        if role in SANS_PLAFOND:
+        if role in SANS_PLAFOND and role not in self.par_role:
             return None
         self._aujourdhui(maintenant)
-        if self._personnes.get(personne, 0) >= self.par_personne:
+        if self._personnes.get(personne, 0) >= self.par_role.get(role, self.par_personne):
             return "personne"
-        if self._total >= self.client:
+        if role not in SANS_PLAFOND and self._total >= self.client:
             return "client"
         return None
 
     def compter(self, personne: str, role: str, maintenant: float | None = None) -> None:
-        if role in SANS_PLAFOND:
+        if role in SANS_PLAFOND and role not in self.par_role:
             return
         self._aujourdhui(maintenant)
         self._personnes[personne] = self._personnes.get(personne, 0) + 1
-        self._total += 1
+        if role not in SANS_PLAFOND:
+            self._total += 1
 
     def prevenir(self, personne: str) -> bool:
         """Faut-il le dire à cette personne ? Une fois par jour."""

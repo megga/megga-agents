@@ -23,12 +23,37 @@ _NUMERO = re.compile(r"(?:\+|\b0)\d[\d .-]{7,}\d")
 _EMOJI = re.compile("[\U0001F000-\U0001FAFF☀-➿️]")
 _FR = re.compile(r"[àâçéèêëîïôûùüÿœ]|\b(le|la|les|des|du|est|vous|je|nous|une|pour|avec|dans|sur|pas|bonjour|merci|c'est|j'ai)\b", re.I)
 _EN = re.compile(r"\b(the|and|you|your|is|are|for|with|this|that|hello|thanks|it's|i'm|have|will)\b", re.I)
+_ES = re.compile(r"[¿¡ñ]|\b(el|los|las|una|está|estás|hola|gracias|cómo|muy|buenos|buenas|tengo|quiero|puedo|usted|también|pero|dónde|donde)\b", re.I)
+# Les langues qu'ElevenLabs reçoit imposées (Voix.imposer_langue, M6).
+LANGUES_IMPOSEES = ("fr", "en", "es")
+# Les indications de jeu d'ElevenLabs, entre crochets : « [softly] Je comprends. »
+_BALISE = re.compile(r"\[([^\]\n]{1,40})\]\s*")
+BALISES_MAX = 1
 
 
-def a_ecrire(texte: str) -> bool:
-    """Ce qui doit aussi partir par écrit après un vocal : ce qui se copie ou se clique."""
+def a_ecrire(texte: str, references: str | None = None) -> bool:
+    """Ce qui doit aussi partir par écrit après un vocal : ce qui se copie ou se clique, et une référence (Oral.references)."""
     t = str(texte or "")
-    return any(r.search(t) for r in (_LIEN, _COURRIEL, _NUMERO))
+    return any(r.search(t) for r in (_LIEN, _COURRIEL, _NUMERO)) or bool(references and re.search(references, t))
+
+
+def sans_balises(texte: str) -> str:
+    return re.sub(r"[ \t]{2,}", " ", _BALISE.sub("", str(texte or ""))).strip()
+
+
+def balises_permises(texte: str, permises) -> str:
+    """Seulement les indications permises (Voix.balises), une au plus ; les autres crochets partent."""
+    permises, n = {b.lower() for b in permises}, 0
+
+    def garder(m):
+        nonlocal n
+        b = m.group(1).strip().lower()
+        if b in permises and n < BALISES_MAX:
+            n += 1
+            return f"[{b}] "
+        return ""
+
+    return re.sub(r"[ \t]{2,}", " ", _BALISE.sub(garder, str(texte or ""))).strip()
 
 
 def a_dire(texte: str) -> str:
@@ -57,8 +82,12 @@ def se_prete(texte: str) -> bool:
 
 
 def langue(texte: str) -> str:
+    """fr, en ou es, d'après des mots et des lettres qui ne trompent pas ; fr dans le doute."""
     t = str(texte or "")
-    return "en" if len(_EN.findall(t)) > len(_FR.findall(t)) else "fr"
+    fr, en, es = len(_FR.findall(t)), len(_EN.findall(t)), len(_ES.findall(t))
+    if es > fr and es > en:
+        return "es"
+    return "en" if en > fr else "fr"
 
 
 def voix_pour(reglages: Voix, texte: str) -> str | None:
@@ -94,20 +123,32 @@ class Voie:
         return re.sub(r"\s+", " ", str(r.json().get("text") or "")).strip()[:4000]
 
     async def dire(self, texte: str) -> tuple[bytes, bool]:
-        """Rend (audio, ogg) ; ogg : un vocal WhatsApp, sinon un audio ordinaire."""
+        """Rend (audio, ogg) ; ogg : un vocal WhatsApp, sinon un audio ordinaire. La langue de la réponse est imposée
+        (Voix.imposer_langue) ; si le modèle la refuse (400, 422), le texte est relu sans."""
         voix = voix_pour(self.reglages, texte)
         if not voix:
             raise RuntimeError("aucune voix réglée")
-        r = await self._client.post(
-            f"{self.reglages.serveur}/v1/text-to-speech/{voix}",
-            params={"output_format": FORMAT},
-            headers={"xi-api-key": self._cle},
-            json={
-                "text": d_un_tenant(a_dire(texte)),
-                "model_id": self.reglages.modele,
-                "voice_settings": {"stability": self.reglages.stabilite, "similarity_boost": 0.75, "speed": self.reglages.vitesse},
-            },
-        )
+        dit = balises_permises(a_dire(texte), self.reglages.balises) if self.reglages.balises else a_dire(sans_balises(texte))
+        corps = {
+            "text": d_un_tenant(dit),
+            "model_id": self.reglages.modele,
+            "voice_settings": {"stability": self.reglages.stabilite, "similarity_boost": 0.75, "speed": self.reglages.vitesse},
+        }
+
+        async def appeler(c: dict):
+            return await self._client.post(f"{self.reglages.serveur}/v1/text-to-speech/{voix}", params={"output_format": FORMAT},
+                                           headers={"xi-api-key": self._cle}, json=c)
+
+        lang = langue(texte)
+        if self.reglages.imposer_langue and lang in LANGUES_IMPOSEES:
+            r = await appeler({**corps, "language_code": lang})
+            if r.status_code in (400, 422):
+                import logging
+
+                logging.getLogger("megga").warning("voix : langue imposée refusée (%s), relue sans", r.status_code)
+                r = await appeler(corps)
+        else:
+            r = await appeler(corps)
         if r.status_code >= 400:
             raise RuntimeError(f"ElevenLabs voix {r.status_code} {r.text[:200]}")
         audio = r.content

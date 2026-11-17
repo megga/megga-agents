@@ -119,7 +119,9 @@ def test_vocal_recu_vocal_rendu():
     agent, voie = Agent("C'est noté, à jeudi."), FausseVoie()
     c, exp = conversations(agent, voie, reecrire=None)
     asyncio.run(tourner(c, entrant("w1", "", vocal="m1")))
-    assert agent.appels == ["Bonjour, je cherche un rendez-vous"]
+    # Le modèle sait que c'est un vocal, et que sa réponse sera dite (parité Alix FSP, M5).
+    assert agent.appels == ["[Message vocal, transcrit automatiquement :] Bonjour, je cherche un rendez-vous\n"
+                            "[Ta réponse sera dite dans un message vocal : va à l'essentiel, comme au téléphone.]"]
     assert [e[0] for e in exp.journal if e[0] != "lu"] == ["vocal"]
 
 
