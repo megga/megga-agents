@@ -740,6 +740,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return Response("refusé", status_code=401)
         if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
             return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
+        personne = reprises._qui(personne)  # « 41… » comme « +41… », tel que la base le garde
         return {"personne": personne, "donnees": await asyncio.to_thread(stockage.donnees_personne, env["DATABASE_URL"], personne)}
 
     @app.delete("/interne/personnes/{personne}")
@@ -748,9 +749,11 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             return Response("refusé", status_code=401)
         if not env.get("DATABASE_URL") or not suivi_agent.PERSONNE.fullmatch(personne):
             return erreur(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
-        effacees = await asyncio.to_thread(stockage.effacer_personne, env["DATABASE_URL"], personne)
-        log.info("données d'une personne effacées à sa demande (%s tables)", len(effacees))
-        return {"personne": personne, "effacees": effacees}
+        personne = reprises._qui(personne)
+        fait = await asyncio.to_thread(stockage.effacer_personne, env["DATABASE_URL"], personne)
+        log.info("données d'une personne effacées à sa demande (%s tables, %s sous empreinte)", len(fait["effacees"]),
+                 len(fait["pseudonymisees"]))
+        return {"personne": personne, **fait}
 
     @app.get("/interne/suivi/leads")
     async def interne_leads(requete: Request):

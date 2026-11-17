@@ -110,6 +110,55 @@ def test_exporter_puis_effacer_les_donnees_d_une_personne(url):
     assert len(stockage.Fil(url).messages("+41790000002")) == 1  # les autres restent
 
 
+def test_chaque_table_dit_qui_elle_designe(url):
+    for table in stockage.TABLES:
+        table(url)
+    nos = {t.name for t in stockage._tables(stockage.moteur(url)).sorted_tables if t.name.startswith("megga_")}
+    assert nos - set(stockage.PERSONNES) == set()
+
+
+def test_l_export_ne_remet_ni_la_consigne_ni_les_autres(url):
+    from sqlalchemy import insert
+
+    stockage.preparer(url)
+    e = stockage.moteur(url)
+    tables = {t.name: t for t in stockage._tables(e).sorted_tables}
+    with e.begin() as c:
+        c.execute(insert(tables["agno_sessions"]).values(session_id="s", session_type="agent", user_id="+41790000001",
+                                                         agent_data={"consigne": "le prompt de MEGGA"}, created_at=1))
+        c.execute(insert(tables["agno_memories"]).values(memory_id="m", memory={"memory": "aime les villas"}, user_id="+41790000001",
+                                                         created_at=1, updated_at=1))
+    stockage.Fil(url).noter("+41790000001", "recu", "texte", "Bonjour", time.time())
+    stockage.Approbations(url).demander("+41790000002", "public", "envoyer_fiche", {})
+    stockage.Approbations(url).decider(1, False, "+41790000001")  # elle a seulement décidé pour un autre
+    lu = stockage.donnees_personne(url, "+41790000001")
+    assert set(lu) == {"agno_memories", "megga_fil"} and "prompt" not in json.dumps(lu)
+
+
+def test_l_effacement_trouve_la_personne_partout_et_garde_son_blocage(url):
+    app, _, _ = agent_whatsapp(url)
+    t = TestClient(app)
+    p, autre = "+41790000001", "+41790000002"
+    maintenant = time.time()
+    stockage.Questions(url).poser(p, autre, "La villa est libre ?", "villa", "fr", None, nom="Jean")
+    reseau = stockage.Reseau(url)
+    reseau.creer(p, "Agence Jean", autre, "villa à Genève", [{"reference": "R1"}])
+    reseau.reprendre_recherche({"id": "r1", "partenaire": p, "criteres": "{}", "resume": "villa", "cree": maintenant,
+                                "derniere": maintenant, "close": None})
+    stockage.Carnet(url).noter({"nature": "vente", "lieu": "Genève", "famille": "appartement", "devise": "CHF", "prix_m2": 12000,
+                                "date": maintenant, "note": 1}, par=p)
+    stockage.Bloques(url).bloquer(p, autre, nom="Jean")
+    stockage.Audit(url).noter(p, "envoyer_fiche", "libre", "faite", 0.1)
+    # « 41… » comme « +41… »
+    fait = t.delete("/interne/personnes/41790000001", headers=INTERNE).json()
+    assert fait["effacees"] == {"megga_questions": 1, "megga_demandes": 1, "megga_propositions": 1, "megga_recherches": 1}
+    assert fait["pseudonymisees"] == {"megga_releves": 1, "megga_bloques": 1, "megga_audit": 1}
+    assert stockage.Bloques(url).bloque(p)  # bloquée pour abus, elle le reste
+    assert p not in json.dumps([stockage.Bloques(url).lister(), stockage.Audit(url).lire(), stockage.Carnet(url).releves()])
+    assert "Jean" not in json.dumps(stockage.Bloques(url).lister())
+    assert t.get("/interne/personnes/41790000001", headers=INTERNE).json()["personne"] == p
+
+
 # Ce que l'agent fait gagner
 
 
@@ -166,6 +215,8 @@ def test_l_atelier(tmp_path):
     assert t.delete("/atelier/clients/exemple/personnes/+41790000001", params={"confirmer": "oui"}, headers=client).json()["effacees"] == {"megga_fil": 2}
     assert t.get("/atelier/clients/exemple/personnes/nimporte", headers=client).status_code == 400
     assert porte.appels == [("GET", "+41790000001"), ("DELETE", "+41790000001")]
+    journal = stockage.JournalPilotage(f"sqlite:///{tmp_path}/atelier.db").lire("exemple")
+    assert [(j["evenement"], j["detail"]) for j in journal] == [("effacement", "données d'une personne effacées, à la demande de client")]
     # le client règle sa mention de l'IA, ses minutes et ses modèles
     r = t.post("/atelier/clients/exemple/versions", headers=client, json={"changements": {
         "mention_ia": True, "minutes_par_conversation": 8, "modeles": {"principal": "mistral-large-latest", "secours": "claude-sonnet-5-5"}}})

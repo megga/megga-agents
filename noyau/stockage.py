@@ -184,39 +184,87 @@ def _ouvrir(fichier: str | Path, mode: str, gz: bool):
     return gzip.open(fichier, mode + "t", encoding="utf-8") if gz else open(fichier, mode, encoding="utf-8")
 
 
-def _colonne_personne(table: Table):
-    """La colonne qui désigne une personne dans une table : « personne » (les nôtres), « user_id » (celles d'Agno)."""
-    for nom in ("personne", "user_id"):
-        if nom in table.c:
-            return table.c[nom]
-    return None
+# Les colonnes de nos tables qui désignent une personne (lot 9.5 : ses droits, nLPD et RGPD), table par table, et ce
+# qu'en fait son effacement. « effacer » : la ligne parle d'elle, elle lui est remise et s'en va. « empreinte » : la ligne
+# parle d'elle, elle lui est remise, mais reste sous l'empreinte de son numéro (un blocage pour abus tient, le journal
+# d'audit garde ses comptes). « auteur » : elle y a seulement agi (bloqué, décidé, noté un prix) ; son numéro devient
+# son empreinte, la ligne ne lui est pas remise (elle parle d'un autre). Une table sans personne : {}. Un essai vérifie
+# que chaque table de TABLES y est classée (tests/test_lot9_5.py). megga_regles.qui est un nom, pas un numéro.
+PERSONNES = {
+    "megga_contacts": {"personne": "effacer"}, "megga_rappels": {"personne": "effacer"}, "megga_jetons": {},
+    "megga_cles_api": {}, "megga_bloques": {"personne": "empreinte", "par": "auteur"},
+    "megga_partenaires": {"personne": "effacer", "par": "auteur"},
+    "megga_demandes": {"partenaire": "effacer", "gestionnaire": "auteur"},  # ses propositions s'en vont avec elle
+    "megga_propositions": {}, "megga_recherches": {"partenaire": "effacer"},
+    "megga_questions": {"visiteur": "effacer", "gestionnaire": "auteur"}, "megga_differes": {"personne": "effacer"},
+    "megga_releves": {"par": "auteur"}, "megga_veilles": {"personne": "effacer"}, "megga_regles": {"personne": "effacer"},
+    "megga_medias": {"personne": "effacer"}, "megga_etats": {"personne": "effacer"}, "megga_journal": {},
+    "megga_fil": {"personne": "effacer"}, "megga_reglages": {}, "megga_ordres": {}, "megga_pilotage": {},
+    "megga_installations": {}, "megga_nonces": {}, "megga_vus": {}, "megga_audit": {"personne": "empreinte"},
+    "megga_approbations": {"personne": "effacer", "par": "auteur"}, "megga_documents": {}, "megga_passages": {},
+    "megga_reprises": {"personne": "effacer", "par": "auteur"}, "megga_leads": {"personne": "effacer"}, "megga_schema": {},
+}
+
+
+def empreinte(personne: str) -> str:
+    """Ce qui reste d'une personne effacée là où sa ligne doit tenir : l'empreinte de son numéro."""
+    import hashlib
+
+    return "empreinte:" + hashlib.sha256(personne.encode()).hexdigest()[:40]
+
+
+def _colonnes(table: Table) -> dict[str, str]:
+    """Les colonnes de cette table qui désignent une personne : les nôtres d'après PERSONNES, celles d'Agno par user_id."""
+    if table.name.startswith("agno_"):
+        return {"user_id": "effacer"} if "user_id" in table.c else {}
+    if table.name not in PERSONNES:
+        raise RuntimeError(f"{table.name} : table à classer dans stockage.PERSONNES")
+    return PERSONNES[table.name]
 
 
 def donnees_personne(url: str, personne: str) -> dict[str, list[dict]]:
-    """Tout ce que la base garde d'une personne, table par table (nLPD et RGPD : son droit d'accès), en JSON."""
+    """Ce que la base garde d'une personne, table par table (nLPD et RGPD : son droit d'accès), en JSON : son fil, ses
+    mémoires et nos tables qui parlent d'elle. Ni les sessions ni les tours d'Agno : la consigne de l'agent et ce que ses
+    outils ont rendu d'autres personnes y sont aussi ; son fil (megga_fil) dit la conversation."""
     e = moteur(url)
     sortie = {}
     with e.connect() as c:
         for table in _tables(e).sorted_tables:
-            col = _colonne_personne(table)
-            if col is None:
+            if table.name.startswith("agno_") and table.name != "agno_memories":
                 continue
-            lignes = [{k: _en_json(v) for k, v in dict(l).items()} for l in c.execute(select(table).where(col == personne)).mappings()]
+            cols = [k for k, v in _colonnes(table).items() if v != "auteur"]
+            if not cols:
+                continue
+            lignes = [{k: _en_json(v) for k, v in dict(l).items()}
+                      for l in c.execute(select(table).where(or_(*(table.c[k] == personne for k in cols)))).mappings()]
             if lignes:
                 sortie[table.name] = lignes
     return sortie
 
 
-def effacer_personne(url: str, personne: str) -> dict[str, int]:
-    """Efface tout ce que la base garde d'une personne (son droit à l'effacement) : {table: lignes effacées}."""
+def effacer_personne(url: str, personne: str) -> dict[str, dict[str, int]]:
+    """Efface ce que la base garde d'une personne (son droit à l'effacement) ; ce qui doit tenir garde l'empreinte de son
+    numéro (PERSONNES). Rend {"effacees": {table: lignes}, "pseudonymisees": {table: lignes}}."""
     e = moteur(url)
-    effacees = {}
+    effacees, pseudonymisees = {}, {}
     with e.begin() as c:
-        for table in _tables(e).sorted_tables:
-            col = _colonne_personne(table)
-            if col is not None and (n := c.execute(delete(table).where(col == personne)).rowcount):
-                effacees[table.name] = n
-    return effacees
+        tables = {t.name: t for t in _tables(e).sorted_tables}
+        for table in tables.values():
+            for col, sort in _colonnes(table).items():
+                cible = table.c[col] == personne
+                if sort != "effacer":
+                    valeurs = {col: empreinte(personne), **({"nom": ""} if col == "personne" and "nom" in table.c else {})}
+                    n = c.execute(update(table).where(cible).values(**valeurs)).rowcount
+                    if n:
+                        pseudonymisees[table.name] = pseudonymisees.get(table.name, 0) + n
+                    continue
+                if table.name == "megga_demandes" and "megga_propositions" in tables:
+                    p = tables["megga_propositions"]
+                    if n := c.execute(delete(p).where(p.c.demande.in_(select(table.c.id).where(cible)))).rowcount:
+                        effacees[p.name] = effacees.get(p.name, 0) + n
+                if n := c.execute(delete(table).where(cible)).rowcount:
+                    effacees[table.name] = effacees.get(table.name, 0) + n
+    return {"effacees": effacees, "pseudonymisees": pseudonymisees}
 
 
 def exporter(url: str, fichier: str | Path, gz: bool | None = None, retouche=None) -> int:
@@ -543,11 +591,12 @@ class Bloques:
 
     def debloquer(self, personne: str) -> bool:
         with self._e.begin() as c:
-            return c.execute(delete(self._t).where(self._t.c.personne == personne)).rowcount > 0
+            return c.execute(delete(self._t).where(self._t.c.personne.in_((personne, empreinte(personne))))).rowcount > 0
 
     def bloque(self, personne: str) -> bool:
+        """Bloquée sous son numéro, ou sous son empreinte si ses données ont été effacées (effacer_personne)."""
         with self._e.connect() as c:
-            return c.execute(select(self._t.c.personne).where(self._t.c.personne == personne)).first() is not None
+            return c.execute(select(self._t.c.personne).where(self._t.c.personne.in_((personne, empreinte(personne))))).first() is not None
 
     def lister(self) -> list[dict]:
         with self._e.connect() as c:
