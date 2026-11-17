@@ -324,7 +324,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                 "consultez-la et décidez dans la console."}
         for n in numeros:
             conversations.apres_le_tour(qui, lambda n=n: conversations.envoyer_de_soi_meme(
-                n, [message], "approbation", variables=[conf.nom_agent, demande["outil"]]))
+                n, [message], "approbation", variables=[conf.nom_agent, demande["outil"].replace("_", " ")]))
 
     async def prevenir_personne(demande: dict, etat: str) -> None:
         """La personne qui a demandé l'action apprend l'issue ; son agent en connaîtra le détail au tour suivant."""

@@ -584,3 +584,22 @@ def test_la_console_dit_qui_decide(url):
     assert t.post("/interne/approbations/1", json={"accord": False, "par": "client:0123456789ab"}, headers=interne).status_code == 200
     assert t.post("/interne/approbations/2", json={"accord": False, "par": "megga"}, headers=interne).status_code == 200
     assert [demandes.une(i)["par"] for i in (1, 2)] == ["console:client:0123456789ab", "console:megga"]
+
+
+def test_hors_des_24_heures_le_modele_dit_l_action_lisible(url):
+    """Le modèle Meta « approbation » nomme l'action en mots (« envoyer fiche »), pas le nom technique de l'outil."""
+    conf = {**FSP_WA, "modeles_meta": {**FSP_WA.get("modeles_meta", {}), "approbation": {"nom": "fsp_agent_approbation"}}}
+    exp, g, attendre = agent_whatsapp(url, conf)
+    from sqlalchemy import text
+
+    with stockage.moteur(url).begin() as c:  # ses 24 heures sont fermées
+        c.execute(text("update megga_contacts set dernier_entrant = :q where personne = :p"), {"q": time.time() - 3 * 86400, "p": GREG})
+    o = Outils()
+    g.connaitre(o.outils(), "visiteur")
+
+    async def essai():
+        await appeler(g, {"envoyer_fiche": "approbation"}, o.outils()[0], {"contact": "Mme Dupont"}, personne=VISITEUR, role="visiteur")
+        await attendre()
+
+    asyncio.run(essai())
+    assert ("modele", GREG, "fsp_agent_approbation", ["Alix", "envoyer fiche"]) in exp.envois
