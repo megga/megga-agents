@@ -450,12 +450,14 @@ def test_sous_suivi_aucun_ordre_ne_passe(canal):
     assert Installation(c.url, BASE).ordres.lister("exemple") == []
 
 
-def test_le_suivi_ne_porte_jamais_une_conversation(canal):
-    c = canal
-    stockage.Fil(c.url).noter("+41790000000", "recu", "texte", "Mon code secret est 4321, rappelez-moi")
-    stockage.Journal(c.url).noter("envoi_echec", detail="refus pour +41 79 123 45 67")
-    stockage.Journal(c.url).noter("voix_caracteres", 120)
-    p = c.pilote(PILOTAGE="suivi")
+# Ce qui ne part jamais vers l'atelier. Le code mêle lettres et chiffres : le contenu envoyé porte des heures Unix
+# (calcule, depuis, quand), et « 4321 » seul s'y retrouvait à certaines heures.
+PRIVE = ("K4321Z", "rappelez-moi", "41790000000", "79 123 45 67", "secret")
+HEURE_A_4321 = 1794926582.0  # le 17.11.2026 à 14:43:02 UTC ; sept jours plus tôt : 1794321782.0
+
+
+def espionner(c, p) -> list[str]:
+    """Le pilote passe toujours par l'atelier ; ce qu'il lui envoie est gardé, dans l'ordre."""
     vus = []
 
     class Espionne(httpx.AsyncBaseTransport):
@@ -464,9 +466,19 @@ def test_le_suivi_ne_porte_jamais_une_conversation(canal):
             return await httpx.ASGITransport(app=c.atelier).handle_async_request(requete)
 
     p.transport = Espionne()
+    return vus
+
+
+def test_le_suivi_ne_porte_jamais_une_conversation(canal):
+    c = canal
+    stockage.Fil(c.url).noter("+41790000000", "recu", "texte", "Mon code secret est K4321Z, rappelez-moi")
+    stockage.Journal(c.url).noter("envoi_echec", detail="refus pour +41 79 123 45 67")
+    stockage.Journal(c.url).noter("voix_caracteres", 120)
+    p = c.pilote(PILOTAGE="suivi")
+    vus = espionner(c, p)
     c.tour(p)
     envoye = vus[0]
-    for prive in ("4321", "rappelez-moi", "41790000000", "79 123 45 67", "secret"):
+    for prive in PRIVE:
         assert prive not in envoye
     s = c.t.get("/atelier/clients/exemple/suivi?jours=7", headers=MEGGA).json()
     assert s["activite"]["journal"]["voix_caracteres"]["quantite"] == 120 and s["periode_jours"] == 7
@@ -481,6 +493,21 @@ def test_le_suivi_ne_porte_jamais_une_conversation(canal):
     vus.clear()
     c.tour(p)
     assert "fenetres" not in vus[0] and '"agent"' in vus[0]
+
+
+def test_le_suivi_tient_a_une_heure_qui_porte_les_chiffres_du_code(canal):
+    """À cette heure, le suivi sur 7 jours part de 1794321782.0 : ces chiffres sont une heure, pas la conversation."""
+    c = canal
+    c.horloge.t = HEURE_A_4321
+    stockage.Fil(c.url).noter("+41790000000", "recu", "texte", "Mon code secret est K4321Z, rappelez-moi", HEURE_A_4321 - 60)
+    stockage.Journal(c.url).noter("envoi_echec", detail="refus pour +41 79 123 45 67", quand=HEURE_A_4321 - 30)
+    p = c.pilote(PILOTAGE="suivi")
+    vus = espionner(c, p)
+    c.tour(p)
+    envoye = vus[0]
+    assert '"depuis":1794321782.0' in envoye and '"detail":"refus pour [numéro]"' in envoye
+    for prive in PRIVE:
+        assert prive not in envoye
 
 
 def test_une_configuration_que_l_agent_ne_prend_pas_revient_en_arriere(canal):
