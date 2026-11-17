@@ -10,6 +10,7 @@ from atelier import regles
 from noyau import config as configuration, connecteurs, stockage
 from noyau.agent import modele
 from noyau.app import creer
+from noyau.typographie import nettoyer
 
 CONF = configuration.lire("clients/exemple.yaml").model_dump(mode="json")
 INTERNE = {"x-megga-interne": "interne"}
@@ -190,6 +191,7 @@ def test_la_valeur_de_la_periode(url):
     maintenant = time.time()
     for p in ("+41790000001", "+41790000002", "+41790000003"):
         stockage.Fil(url).noter(p, "recu", "texte", "Bonjour", maintenant)
+        stockage.Fil(url).noter(p, "envoye", "texte", "Bonjour !", maintenant + 1)
     stockage.Fil(url).noter("+41790000009", "recu", "texte", "Il y a longtemps", maintenant - 40 * 86400)
     stockage.Reprises(url).ouvrir("+41790000003", "public", "humain", "r")
     stockage.Leads(url).noter("+41790000001", {"besoin": "villa", "score": 5})
@@ -201,6 +203,29 @@ def test_la_valeur_de_la_periode(url):
     assert v == {"conversations": 3, "resolues_sans_humain": 2, "transmises": 1, "taux_sans_humain": 0.667, "leads": 2,
                  "leads_chauds": 1, "actions_faites": 0, "actions_refusees": 1, "actions_en_attente": 0, "minutes_gagnees": 12,
                  "minutes_par_conversation": 6}
+
+
+def test_la_valeur_compte_des_conversations_du_public(url):
+    from noyau.garde import TROP
+    from test_app import FauxAgent, FauxExpediteur
+
+    conf = {**CONF, "transfert": True, "roles": {"gestionnaire": {}, "visiteur": {}}}
+    app = creer({"CLIENT_CONFIG": json.dumps(conf), "DATABASE_URL": url, "INTERNE_TOKEN": "interne",
+                 "GESTIONNAIRES": json.dumps({"+41790000008": "gestion"})}, agent=FauxAgent(),
+                agents={"gestionnaire": FauxAgent(), "visiteur": FauxAgent()}, expediteur=FauxExpediteur())
+    fil, maintenant = stockage.Fil(url), time.time()
+    stockage.Reprises(url).ouvrir("+41790000003", "visiteur", "humain", "r")  # ouverte avant la période, toujours en cours
+    depuis = maintenant + 10
+    for quand in (depuis + 100, depuis + 30 * 3600):  # deux conversations, à plus de douze heures l'une de l'autre
+        fil.noter("+41790000001", "recu", "texte", "Bonjour", quand)
+        fil.noter("+41790000001", "envoye", "texte", "Bonjour !", quand + 1)
+    for p in ("+41790000003", "+41790000008"):  # une transmise à l'équipe ; un gestionnaire
+        fil.noter(p, "recu", "texte", "Bonjour", depuis + 100)
+        fil.noter(p, "envoye", "texte", "Bonjour !", depuis + 101)
+    fil.noter("+41790000004", "recu", "texte", "Vite", depuis + 100)  # arrêtée par le débit : pas de réponse
+    fil.noter("+41790000004", "envoye", "texte", nettoyer(TROP), depuis + 101)
+    v = TestClient(app).get("/interne/suivi/valeur", params={"depuis": depuis}, headers=INTERNE).json()
+    assert (v["conversations"], v["resolues_sans_humain"], v["transmises"]) == (3, 2, 1)
 
 
 # L'atelier

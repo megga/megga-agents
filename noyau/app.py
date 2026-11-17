@@ -59,6 +59,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 from . import api as entree_api
+from . import accueil as accueils
 from . import approbations, reprises
 from . import config as configuration
 from . import licence as licences
@@ -68,9 +69,11 @@ from . import suivi as suivi_agent
 from . import version as version_image
 from .agent import construire, modele
 from .environnement import charger
+from .garde import TROP, TROP_JOUR
 from .oral import consignes as consignes_orales
 from .rappels import outils as outils_rappels
 from .roles import Personnes, lire_gestionnaires
+from .typographie import nettoyer
 from .tour import EXCUSE, Conversations, en_echec  # noqa: F401 (EXCUSE et en_echec réexportés)
 from .voix import Voie
 from .approbations import Gardien
@@ -717,14 +720,19 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if (refus := lisible(requete)) is not None:
             return refus
         depuis = date(requete.query_params.get("depuis"))
-        actives = await asyncio.to_thread(fil.personnes, depuis)
-        transmises = {r["personne"] for r in (await asyncio.to_thread(transfert.reprises.lister, None, 5000) if transfert else [])
-                      if r["cree"] >= depuis}
-        resolues = len(actives - transmises)
+        # Des conversations (douze heures sans message les séparent, comme l'accueil), du public seulement, auxquelles
+        # l'agent a répondu (ni débit ni plafond) ; transmise si une reprise de l'équipe était en cours pendant.
+        fenetres = await asyncio.to_thread(fil.fenetres, depuis, accueils.INACTIVITE, (nettoyer(TROP), nettoyer(TROP_JOUR)))
+        roles = {p: await asyncio.to_thread(personnes.role, p) for p in {f["personne"] for f in fenetres}}
+        actives = [f for f in fenetres if f["repondue"] and roles[f["personne"]] in ("public", "visiteur")]
+        equipe = await asyncio.to_thread(transfert.reprises.lister, None, 5000) if transfert else []
+        transmises = [f for f in actives if any(r["personne"] == f["personne"] and r["cree"] <= f["fin"]
+                                                and (r["fin"] is None or r["fin"] >= f["debut"]) for r in equipe)]
+        resolues = len(actives) - len(transmises)
         lus = await asyncio.to_thread(leads.magasin.lister, depuis, 5000) if leads is not None else []
         demandes = [d for d in (await asyncio.to_thread(gardien.demandes.lister, None, 5000) if gardien.demandes else [])
                     if d["cree"] >= depuis]
-        return {"conversations": len(actives), "resolues_sans_humain": resolues, "transmises": len(transmises & actives),
+        return {"conversations": len(actives), "resolues_sans_humain": resolues, "transmises": len(transmises),
                 "taux_sans_humain": round(resolues / len(actives), 3) if actives else None,
                 "leads": len(lus), "leads_chauds": sum(1 for l in lus if l["score"] >= 4),
                 "actions_faites": sum(1 for d in demandes if d["etat"] == "faite"),

@@ -1704,11 +1704,25 @@ class Fil:
         with self._e.connect() as c:
             return c.execute(select(self._t.c.id).limit(1)).first() is None
 
-    def personnes(self, depuis: float = 0) -> set[str]:
-        """Les personnes qui ont écrit depuis cette date (lot 9.5 : les conversations de la période)."""
+    def fenetres(self, depuis: float, silence: float, sans: tuple[str, ...] = ()) -> list[dict]:
+        """Les conversations commencées depuis cette date (lot 9.5) : les messages reçus d'une personne, sans silence de
+        plus de `silence` secondes entre eux ; [{personne, debut, fin, repondue}]. `repondue` : un message lui est parti
+        pendant la conversation, hors les textes `sans` (un débit dépassé)."""
         t = self._t
+        sortie, en_cours = [], {}
         with self._e.connect() as c:
-            return {l[0] for l in c.execute(select(t.c.personne).where(t.c.sens == "recu", t.c.quand >= depuis).distinct())}
+            for p, quand, sens, refus in c.execute(select(t.c.personne, t.c.quand, t.c.sens, t.c.texte.in_(sans))
+                                                   .where(t.c.quand >= depuis - silence).order_by(t.c.quand, t.c.id)):
+                f = en_cours.get(p)
+                if sens == "recu":
+                    if f is None or quand - f["dernier"] > silence:
+                        f = en_cours[p] = {"personne": p, "debut": quand, "fin": quand, "repondue": False, "dernier": quand}
+                        sortie.append(f)
+                    f["dernier"] = f["fin"] = quand
+                elif f is not None:
+                    f["fin"] = quand
+                    f["repondue"] = f["repondue"] or not refus
+        return [{k: v for k, v in f.items() if k != "dernier"} for f in sortie if f["debut"] >= depuis]
 
     def conversations(self, limite: int = 50) -> list[dict]:
         from sqlalchemy import func
