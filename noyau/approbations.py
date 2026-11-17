@@ -24,8 +24,11 @@ import inspect
 import logging
 import re
 import time
+import typing
 
 from agno.run import RunContext
+from agno.tools.function import Function
+from pydantic import TypeAdapter
 
 from .garde import masquer_secrets
 
@@ -33,7 +36,8 @@ log = logging.getLogger("megga")
 
 PREFIXE = "ap:"
 AUTO, APPROBATION, INTERDIT = "auto", "approbation", "interdit"
-CONTEXTE_MAX = 600  # ce que l'agent relit du résultat d'une action accordée
+APERCU_MAX = 200  # chaque argument, dans le message aux gestionnaires
+COUPE = " […]"
 _INJECTES = ("run_context", "agent", "team", "images", "videos", "audios", "files")
 _CHOIX = re.compile(r"^ap:(\d{1,10}):(oui|non)$")
 
@@ -60,10 +64,45 @@ def filtrer(outils, regles: dict[str, str]) -> list:
     return [o for o in outils if regles.get(nom(o) or "") != INTERDIT]
 
 
-def apercu(arguments: dict) -> str:
-    """Les arguments d'une action, lisibles et masqués, pour la personne qui décide."""
-    morceaux = [f"{k} : {v}" for k, v in arguments.items() if k not in _INJECTES]
-    return masquer_secrets(" ; ".join(morceaux))[:500] or "sans précision"
+def _valeurs(arguments: dict) -> dict[str, str]:
+    return {k: masquer_secrets(str(v)) for k, v in arguments.items() if k not in _INJECTES}
+
+
+def apercu(arguments: dict, limite: int | None = APERCU_MAX) -> str:
+    """Les arguments d'une action, lisibles et masqués, pour la personne qui décide : un par ligne, chacun coupé à
+    `limite` (marqué « […] »), pour qu'un long argument ne cache pas les autres ; `None` : en entier (la console)."""
+    morceaux = [f"{k} : {v if limite is None or len(v) <= limite else v[:limite] + COUPE}" for k, v in _valeurs(arguments).items()]
+    return "\n".join(morceaux) or "sans précision"
+
+
+def entier(arguments: dict, limite: int = APERCU_MAX) -> bool:
+    """L'aperçu montre-t-il chaque argument en entier ? Sinon, la décision se prend dans la console."""
+    return all(len(v) <= limite for v in _valeurs(arguments).values())
+
+
+def valider(fonction, arguments: dict) -> dict:
+    """Les arguments d'un outil vérifiés et convertis dès la demande, comme Agno le fera à l'appel (pydantic, mode
+    souple) : une TypeError ou une ValueError s'ils ne conviennent pas."""
+    brute = inspect.unwrap(fonction)
+    try:
+        types = typing.get_type_hints(brute)
+    except Exception:  # un type illisible : seulement les noms
+        types = {}
+    params = inspect.signature(brute).parameters
+    libres = any(p.kind is p.VAR_KEYWORD for p in params.values())
+    inconnus = [k for k in arguments if k not in params and not libres]
+    manquants = [n for n, p in params.items() if n not in _INJECTES and n not in arguments and p.default is p.empty
+                 and p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)]
+    if inconnus or manquants:
+        raise TypeError(f"inconnus : {', '.join(inconnus) or 'aucun'} ; manquants : {', '.join(manquants) or 'aucun'}")
+    sortie = {}
+    for k, v in arguments.items():
+        try:
+            adaptateur = TypeAdapter(types.get(k, typing.Any))
+        except Exception:  # un type que pydantic ne sait pas décrire : la valeur telle quelle
+            adaptateur = TypeAdapter(typing.Any)
+        sortie[k] = adaptateur.dump_python(adaptateur.validate_python(v), mode="json")
+    return sortie
 
 
 class Gardien:
@@ -82,12 +121,13 @@ class Gardien:
         self._taches: set[asyncio.Task] = set()
 
     def connaitre(self, outils, role: str = "public") -> None:
-        """Les outils d'un rôle, par nom : ce qu'une demande accordée fera (le même nom peut servir à deux rôles)."""
+        """Les outils d'un rôle, par nom : ce qu'une demande accordée fera (le même nom peut servir à deux rôles).
+        Gardés par l'entrée validée d'Agno : les arguments vérifiés et convertis, comme pour un appel direct."""
         for o in outils:
             n = nom(o)
             fonction = getattr(o, "entrypoint", o)
             if n and callable(fonction):
-                self._outils[(role, n)] = fonction
+                self._outils[(role, n)] = Function.from_callable(fonction, name=n).entrypoint
 
     def _noter(self, personne: str, outil: str, regle: str, issue: str, debut: float, detail: str = "") -> None:
         if self.audit is None:
@@ -146,6 +186,12 @@ class Gardien:
             self._noter(personne, outil, APPROBATION, "refuse", debut, "sans demandes")
             return "Cette action demande l'accord de l'équipe, qui ne peut pas être demandé ici : dis-le simplement."
         propres = {k: v for k, v in arguments.items() if k not in _INJECTES}
+        if (fonction := self._outils.get((role, outil))) is not None:
+            try:
+                propres = valider(fonction, propres)
+            except (TypeError, ValueError) as e:
+                self._noter(personne, outil, APPROBATION, "refuse", debut, "arguments")
+                return f"Arguments invalides pour {outil}, rien n'est demandé : {str(e)[:300]}"
         try:
             ident = await asyncio.to_thread(self.demandes.demander, personne, role, outil, propres)
         except ValueError as e:
@@ -227,9 +273,10 @@ class Gardien:
         for d in lignes:
             quoi = f"La demande {d['id']} ({d['outil']})"
             if d["etat"] == "faite":
-                textes.append(f"{quoi} a été accordée par l'équipe et faite : {(d['resultat'] or '')[:CONTEXTE_MAX]}")
+                # jamais ce que l'outil a rendu : un texte venu d'ailleurs n'entre pas dans les consignes de l'agent
+                textes.append(f"{quoi} a été accordée par l'équipe et faite.")
             elif d["etat"] == "echec":
-                textes.append(f"{quoi} a été accordée, mais l'action n'a pas pu se faire : {(d['resultat'] or '')[:CONTEXTE_MAX]}")
+                textes.append(f"{quoi} a été accordée, mais l'action n'a pas pu se faire.")
             elif d["etat"] == "refusee":
                 textes.append(f"{quoi} a été refusée par l'équipe : ne la refais pas, propose autre chose.")
             else:

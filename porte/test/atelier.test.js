@@ -45,8 +45,8 @@ function liaison(journal, demarres = new Set(), enPanne = new Set()) {
           journal.push({ j, nom, secrets: Object.keys(s) });
           return Object.keys(s);
         },
-        decider: async (n, accord) => {
-          journal.push({ j, nom, decider: n, accord });
+        decider: async (n, accord, par) => {
+          journal.push({ j, nom, decider: n, accord, par });
           return { statut: 200, donnees: { id: Number(n), etat: accord ? "faite" : "refusee" } };
         },
         fetch: async (r) => {
@@ -238,14 +238,16 @@ test("les approbations (lot 9.1) : audit et demandes lus par le suivi, décision
   journal.length = 0;
   const decider = (chemin, corps, jeton = "admin") =>
     recevoir(new Request(`https://porte/admin/clients/${chemin}`, { method: "POST", body: JSON.stringify(corps), headers: { authorization: `Bearer ${jeton}` } }), e);
-  const r = await decider("exemple/approbations/12", { accord: true });
+  const r = await decider("exemple/approbations/12", { accord: true, par: "client:0123456789ab" });
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { id: 12, etat: "faite" });
   assert.equal((await decider("exemple/approbations/12", { accord: "oui" })).status, 400);
+  assert.equal((await decider("exemple/approbations/12", { accord: true, par: "Robert !" })).status, 400);
   assert.equal((await decider("exemple/approbations/12", { accord: true }, "faux")).status, 401);
   assert.equal((await decider("inconnu/approbations/12", { accord: true })).status, 404);
   assert.equal((await decider("exemple/approbations/abc", { accord: true })).status, 404);
-  assert.deepEqual(journal.map((x) => [x.decider, x.accord]), [["12", true]]);
+  // qui décide passe jusqu'au conteneur
+  assert.deepEqual(journal.map((x) => [x.decider, x.accord, x.par]), [["12", true, "client:0123456789ab"]]);
 });
 
 test("l'objet d'un client transmet une décision à son conteneur, avec le jeton interne", async () => {
@@ -260,8 +262,9 @@ test("l'objet d'un client transmet une décision à son conteneur, avec le jeton
   });
   const agent = new AgentEurope(a.ctx, { ADMIN_TOKEN: "admin" });
   agent.demarrer = async () => {};
-  assert.deepEqual(await agent.decider("3", true), { statut: 200, donnees: { id: 3, etat: "faite" } });
-  assert.deepEqual(vus, [["/interne/approbations/3", "POST", '{"accord":true}', await jetonInterne("admin", "exemple")]]);
+  assert.deepEqual(await agent.decider("3", true, "megga"), { statut: 200, donnees: { id: 3, etat: "faite" } });
+  assert.deepEqual(vus, [["/interne/approbations/3", "POST", '{"accord":true,"par":"megga"}', await jetonInterne("admin", "exemple")]]);
+  await assert.rejects(agent.decider("3", true, "pas ça"), /demande/);
   await assert.rejects(agent.decider("../x", true), /demande/);
   await assert.rejects(agent.decider("3", "oui"), /demande/);
   // le suivi accepte l'audit et les demandes

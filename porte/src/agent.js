@@ -274,9 +274,11 @@ class AgentClient extends Conteneur {
     return { statut: r.status, donnees };
   }
 
-  /** Une décision de la console sur une demande d'accord (noyau/approbations.py) : l'action accordée est faite par le conteneur. */
-  async decider(n, accord) {
+  /** Une décision de la console sur une demande d'accord (noyau/approbations.py) : l'action accordée est faite par le conteneur.
+   * `par` : qui l'a décidée dans l'atelier, noté par le conteneur. */
+  async decider(n, accord, par) {
     if (!/^\d{1,10}$/.test(String(n)) || typeof accord !== "boolean") throw new Error("demande");
+    if (par !== undefined && !/^[a-z0-9:]{1,60}$/.test(par)) throw new Error("demande");
     try {
       await this.pret();
     } catch (e) {
@@ -287,7 +289,7 @@ class AgentClient extends Conteneur {
     const r = await this.ctx.container.getTcpPort(PORT).fetch(`http://container/interne/approbations/${n}`, {
       method: "POST",
       headers: { "x-megga-interne": jeton, "content-type": "application/json" },
-      body: JSON.stringify({ accord }),
+      body: JSON.stringify({ accord, par }),
     });
     const texte = await r.text();
     let donnees;
