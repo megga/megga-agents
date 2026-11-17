@@ -103,6 +103,18 @@ class Deja:
         return True
 
 
+def configuration_en_parties(env: dict) -> str | None:
+    """La configuration que la porte passe en parties (CLIENT_CONFIG_PARTIES, CLIENT_CONFIG_1 à _n) : Cloudflare limite
+    une variable d'environnement d'un conteneur à 16 000 octets (porte/src/agent.js, variablesDeConfiguration)."""
+    n = env.get("CLIENT_CONFIG_PARTIES")
+    if not n:
+        return None
+    parties = [env.get(f"CLIENT_CONFIG_{i}") for i in range(1, int(n) + 1)]
+    if any(p is None for p in parties):
+        raise RuntimeError("CLIENT_CONFIG incomplète : une partie manque")
+    return "".join(parties)
+
+
 def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None) -> list:
     """Les outils du noyau (rappels, et la mémoire si Memoire.outils) et ceux des packs que la configuration active ;
     `groupes` : ceux d'un rôle. `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py),
@@ -223,7 +235,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
     os.environ.setdefault("AGNO_TELEMETRY", "false")
-    source = env.get("CLIENT_CONFIG") or env.get("CLIENT_CONFIG_FILE")
+    source = env.get("CLIENT_CONFIG") or configuration_en_parties(env) or env.get("CLIENT_CONFIG_FILE")
     if not source:
         raise RuntimeError("CLIENT_CONFIG manquante")
     fichier = configuration.lire(source)

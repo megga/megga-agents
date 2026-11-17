@@ -127,3 +127,19 @@ test("les simples accusés de Meta ne réveillent pas le conteneur ; un envoi re
   for (const s of ["sent", "delivered", "read"]) assert.deepEqual(numerosDe(statut(s)), []);
   assert.deepEqual(numerosDe(statut("failed")), ["100000000000001"]);
 });
+
+test("une configuration trop longue pour une variable part en parties, et se recolle à l'identique", async () => {
+  const { variablesDeConfiguration, OCTETS_MAX_VARIABLE } = await import("../src/agent.js");
+  const courte = JSON.stringify({ id: "a", nom_agent: "Alix" });
+  assert.deepEqual(variablesDeConfiguration(courte), { CLIENT_CONFIG: courte });
+  // 23 000 octets, avec des accents et un émoji (deux unités UTF-16) : aucune partie ne dépasse la limite,
+  // aucun caractère n'est coupé.
+  const longue = JSON.stringify({ consignes: "Écris à Greg, à Genève, Dubaï, Marbella 🎉 ".repeat(520) });
+  const env = variablesDeConfiguration(longue);
+  assert.equal(env.CLIENT_CONFIG, undefined);
+  const n = Number(env.CLIENT_CONFIG_PARTIES);
+  assert.ok(n > 1);
+  const parties = Array.from({ length: n }, (_, i) => env[`CLIENT_CONFIG_${i + 1}`]);
+  for (const p of parties) assert.ok(new TextEncoder().encode(p).length <= 16000 && new TextEncoder().encode(p).length <= OCTETS_MAX_VARIABLE);
+  assert.equal(parties.join(""), longue);
+});
