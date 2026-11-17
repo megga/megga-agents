@@ -47,7 +47,11 @@ def test_la_configuration_de_four_seasons():
         assert attendu in g, attendu
     assert "sinon celui que le Contexte tire de son profil WhatsApp" in brut.roles.visiteur.consignes
     texte = open("clients/four-seasons-properties.yaml", encoding="utf-8").read()
-    assert not ARTEFACTS.search(texte) and not re.search(r"Lyonnet", texte)
+    # « Lyonnet » n'apparaît nulle part, sauf dans les motifs du filtre qui le retire au point d'envoi (remplacements).
+    import yaml
+    sans_filtre = {k: v for k, v in yaml.safe_load(texte).items() if k != "remplacements"}
+    assert not ARTEFACTS.search(texte) and not re.search(r"Lyonnet", yaml.safe_dump(sans_filtre, allow_unicode=True))
+    assert any("Lyonnet" in r["motif"] for r in yaml.safe_load(texte)["remplacements"])
     # Les champs neufs : neutres par défaut, et seulement un prénom
     base = brut.model_dump(mode="json")
     sans = configuration.Config.model_validate({**base, "gestion": {k: v for k, v in base["gestion"].items() if k not in ("courtier", "tutoiement")}})

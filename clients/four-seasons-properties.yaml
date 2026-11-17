@@ -90,7 +90,7 @@ roles:
       Une fiche PDF à ses couleurs porte le logo Four Seasons Properties et ses coordonnées.
       Ce que tu ne sais pas encore faire : dis-le franchement, et propose de le transmettre à Julien.
       Le marché : la région suisse par défaut, espagne pour Marbella, france pour la France voisine, dubai pour Dubaï, prestige pour les portails de luxe internationaux. Les chiffres du carnet viennent de Greg (ventes, avis) ou des portails (prix demandés) : dis toujours lesquels.
-    outils: [rappels, annonces, partenaires, visiteurs, marche, travail]
+    outils: [rappels, memoire, annonces, partenaires, visiteurs, marche, travail]
     tutoiement: true
     humeur: complice
     par_jour: 400

@@ -156,7 +156,10 @@ def test_le_fil_et_l_oral_restent_chez_claude(monkeypatch):
     Claude Haiku quand le principal est Claude, jamais le modèle de secours (DeepSeek) d'office."""
     from noyau import app
 
-    fsp = configuration.lire("clients/four-seasons-properties.yaml")
+    reelle = configuration.lire("clients/four-seasons-properties.yaml")
+    # Four Seasons règle son oral comme l'ancienne Alix (DeepSeek Flash) ; ce test éprouve le défaut, sans réglage.
+    assert reelle.modeles.petit() == "deepseek-flash"
+    fsp = reelle.model_copy(update={"modeles": reelle.modeles.model_copy(update={"oral": None, "fil": None})})
     assert fsp.modeles.secours == "deepseek-v4-pro" and fsp.modeles.petit() == "claude-haiku-5-5"
     assert configuration.Modeles(principal="deepseek-v4-pro", secours=None).petit() == "deepseek-v4-pro"
     assert configuration.Modeles(oral="claude-sonnet-5-5").petit() == "claude-sonnet-5-5"
