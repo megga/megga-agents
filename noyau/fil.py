@@ -57,11 +57,13 @@ class TenueDuFil:
     """Le fil des personnes d'un client : `fil` (stockage.Fil, les messages vécus), `etats` (stockage.Etats, où le
     résumé se garde) et `resumer` (async f(consigne, texte) -> résumé, un modèle sans mémoire ni outils)."""
 
-    def __init__(self, fil, etats, resumer, fuseau: str = "Europe/Zurich"):
+    def __init__(self, fil, etats, resumer, fuseau: str = "Europe/Zurich", dans_l_historique: int = DANS_L_HISTORIQUE):
+        """`dans_l_historique` : les messages que l'agent relit encore (deux par tour, Historique.tours)."""
         self.fil = fil
         self.etats = etats
         self.resumer = resumer
         self.fuseau = fuseau
+        self.dans_l_historique = dans_l_historique
         self._en_cours: set[str] = set()
 
     async def contexte(self, personne: str, maintenant: float | None = None) -> str:
@@ -84,8 +86,13 @@ class TenueDuFil:
         try:
             messages = await asyncio.to_thread(self.fil.messages, personne, LUS)
             precedent = await asyncio.to_thread(self.etats.lire, personne, "fil") or {}
-            sortis = [m for m in messages[:-DANS_L_HISTORIQUE] if m["quand"] > precedent.get("jusqua", 0)] if len(messages) > DANS_L_HISTORIQUE else []
-            if len(sortis) < A_RESUMER:
+            # Une conversation repartie à neuf après une inactivité (Historique.inactivite) : ce qui la précède est sorti
+            # de l'historique, et se résume sans attendre.
+            debut = float((await asyncio.to_thread(self.etats.lire, personne, "session") or {}).get("debut") or 0)
+            depuis_debut = next((i for i, m in enumerate(messages) if m["quand"] >= debut), len(messages))
+            relus_des = max(depuis_debut, len(messages) - self.dans_l_historique)
+            sortis = [m for m in messages[:relus_des] if m["quand"] > precedent.get("jusqua", 0)]
+            if len(sortis) < A_RESUMER and not (sortis and sortis[-1]["quand"] < debut):
                 return False
             vieux = precedent.get("texte") if time.time() - precedent.get("quand", 0) <= VIE else ""
             demande = f"Résumé précédent :\n{vieux or '(aucun)'}\n\nÉchanges qui ont suivi :\n{echanges(sortis)}"

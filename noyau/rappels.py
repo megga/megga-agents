@@ -21,10 +21,24 @@ MAX_PAR_PERSONNE = 50
 UN_AN = 366 * 24 * 3600
 
 
-def lire_quand(quand: str, fuseau: str, maintenant: float | None = None) -> float:
-    """Une date et une heure ISO (« 2026-11-20T09:00 ») ; sans fuseau, celle du client."""
+JOURS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+MOIS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre")
+
+
+def date_longue(t: float, fuseau: str) -> str:
+    """« jeudi 19 novembre 2026, 9 h 00 », à l'heure du client."""
+    d = dt.datetime.fromtimestamp(t, ZoneInfo(fuseau))
+    return f"{JOURS[d.weekday()]} {d.day} {MOIS[d.month - 1]} {d.year}, {d.hour} h {d.minute:02d}"
+
+
+def lire_quand(quand: str, fuseau: str, maintenant: float | None = None, heure: str | None = None) -> float:
+    """Une date et une heure ISO (« 2026-11-20T09:00 ») ; sans fuseau, celle du client. Une date sans heure prend
+    `heure` (ReglageRappels.heure, « 09:00 »), sinon minuit."""
+    texte = str(quand).strip()
+    if heure and len(texte) == 10:
+        texte = f"{texte}T{heure}"
     try:
-        d = dt.datetime.fromisoformat(str(quand).strip())
+        d = dt.datetime.fromisoformat(texte)
     except ValueError:
         raise ValueError("date illisible : donne-la au format AAAA-MM-JJTHH:MM") from None
     if d.tzinfo is None:
@@ -38,9 +52,25 @@ def lire_quand(quand: str, fuseau: str, maintenant: float | None = None) -> floa
     return t
 
 
-def outils(rappels, fuseau: str):
-    """Les outils de rappel pour l'agent, liés à la table et au fuseau du client."""
+def contexte(rappels, fuseau: str):
+    """Les rappels prévus de la personne, pour le Contexte de chaque tour (ReglageRappels.contexte) : async f(personne)."""
+
+    async def prevus(personne: str) -> str:
+        if not personne or str(personne).startswith("api:"):
+            return ""
+        lignes = await asyncio.to_thread(rappels.lister, personne)
+        if not lignes:
+            return ""
+        return "Rappels prévus : " + " ; ".join(f"{date_longue(l['quand'], fuseau)}, {l['texte']} (id {l['id']})" for l in lignes) + "."
+
+    return prevus
+
+
+def outils(rappels, fuseau: str, heure: str | None = None):
+    """Les outils de rappel pour l'agent, liés à la table et au fuseau du client ; `heure` : celle d'un rappel sans heure."""
     tz = ZoneInfo(fuseau)
+    par_defaut = heure
+    sans_heure = f"Sans heure dite, {int(heure[:2])} h{heure[3:] if heure[3:] != '00' else ''}." if heure else ""
 
     def _qui(run_context: RunContext) -> str:
         if not run_context or not run_context.user_id:
@@ -63,7 +93,7 @@ def outils(rappels, fuseau: str):
             raise ValueError("rien à rappeler")
         if len(await asyncio.to_thread(rappels.lister, personne)) >= MAX_PAR_PERSONNE:
             raise ValueError("trop de rappels en attente : annule-en d'abord")
-        t = lire_quand(quand, fuseau)
+        t = lire_quand(quand, fuseau, heure=par_defaut)
         ident = await asyncio.to_thread(rappels.ajouter, personne, t, texte)
         heure = dt.datetime.fromtimestamp(t, tz).strftime("%d.%m.%Y à %H:%M")
         return f"Rappel {ident} programmé le {heure} : {texte}"
@@ -87,4 +117,6 @@ def outils(rappels, fuseau: str):
             return "Rappel annulé."
         return "Aucun rappel en attente avec cet identifiant."
 
+    if sans_heure:
+        rappeler.__doc__ = rappeler.__doc__.replace("à l'heure locale du client.", f"à l'heure locale du client. {sans_heure}")
     return [rappeler, mes_rappels, annuler_rappel]

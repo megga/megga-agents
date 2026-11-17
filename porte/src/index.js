@@ -13,6 +13,8 @@
 //   GET  /site/:client/journal[?jours=]
 //                                  le journal des conversations, pour la page « Alix » de la gestion du site
 //                                  (16.11.2026) ; même clé, vérifiée par le conteneur ; la réponse n'est gardée nulle part
+//   POST /vocal/:client             un vocal que l'agent dit de lui-même à un gestionnaire, à la demande de l'équipe
+//                                  (ancienne route /vocal d'Alix FSP) ; transmis tel quel, la clé (VOCAL_CLE) vérifiée par le conteneur
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
 //                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
@@ -65,7 +67,9 @@ export async function recevoir(requete, env, ctx) {
   if (url.pathname === "/meta" && requete.method === "POST") return webhook(requete, env, ctx);
   if (api) return messageApi(requete, env, api[1]);
   const site = url.pathname.match(/^\/site\/([^/]+)\/(bien|demande)$/);
-  if (site) return messageSite(requete, env, site[1], site[2]);
+  if (site) return messageSite(requete, env, site[1], `/site/${site[2]}`);
+  const vocal = url.pathname.match(/^\/vocal\/([^/]+)$/);
+  if (vocal) return messageSite(requete, env, vocal[1], "/vocal");
   const journalSite = url.pathname.match(/^\/site\/([^/]+)\/journal$/);
   if (journalSite) return lireJournal(requete, env, journalSite[1], url);
   const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
@@ -122,7 +126,7 @@ async function pilote(requete, env) {
  * Le site d'un client : un bien entré en ligne, une demande d'information. La porte ne connaît pas la clé du site :
  * le conteneur la vérifie ; sans clé bien formée, rien ne réveille le conteneur.
  */
-async function messageSite(requete, env, id, route) {
+async function messageSite(requete, env, id, chemin) {
   if (requete.method !== "POST") return json({ erreur: "méthode : POST" }, 405);
   if (!CLE_SITE.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
   const longueur = requete.headers.get("content-length") ?? "";
@@ -133,7 +137,7 @@ async function messageSite(requete, env, id, route) {
   if (!agent) return json({ erreur: "agent inconnu" }, 404);
   try {
     const r = await agent.fetch(
-      new Request(`http://agent/site/${route}`, {
+      new Request(`http://agent${chemin}`, {
         method: "POST",
         body: await requete.arrayBuffer(),
         headers: { authorization: requete.headers.get("authorization"), "content-type": "application/json" },

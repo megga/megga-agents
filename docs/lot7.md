@@ -123,6 +123,18 @@ Décidé par Julien (16.11.2026) : une route d'export dans Alix pour copier ses 
 - **La copie des données** : la route `GET /export` d'Alix (megga/fourseasonsproperties#132, en lecture seule, protégée par `EXPORT_CLE`, non déployée), jointe le temps de la copie par une adresse `workers.dev` ouverte puis refermée (décidé par Julien) ; l'import `python -m packs.immobilier.reprise export.json` (partenaires et leur règle, numéros bloqués, demandes et leurs choix, recherches gardées, souvenirs des gestionnaires dans la mémoire d'Agno, règles de travail, fil, veilles, zones, carnet du marché), une fois par base, identifiants gardés, dates converties ; refaite (`--encore`), elle ne double rien. Essayé sur un export produit par le vrai code d'Alix (`tests/donnees/export_alix.json`).
 - **Le numéro de test** et **la bascule** : la marche à suivre, les modèles Meta à soumettre et la décision qui reste (le numéro que le socle sert pour Four Seasons après la bascule) sont dans `docs/bascule-fsp.md`. Le mode relais d'Alix (transmettre au socle au lieu de répondre) est un second changement dans son dépôt, à faire seulement sur l'accord de Julien.
 
+## La parité du noyau (relecture du 17.11.2026)
+
+Ce que l'ancienne Alix faisait et que le noyau ne faisait plus, rétabli comme réglages (par défaut, rien ne change pour
+les autres clients) : `remplacements` (le filtre de noms au point d'envoi, `Expediteur._envoyer`), `historique`,
+`memoire` (retenir, oublier, souvenirs : `noyau/memoire.py`), `oral`, `photos`, `rappels`, `pieces_au_modele`,
+`reprendre_coupees`, `humeur` ; dans `modeles` : `jetons`, `reflexion`, `effort`, `fil` ; dans `voix` : `imposer_langue`,
+`balises` ; dans un rôle : `tutoiement`, `humeur`, `par_jour`, `par_dix_minutes`, `prenom_du_profil`, `oral`,
+`accueil_redit`. Sans réglage : une réponse vide est relancée une fois, sinon l'excuse ; un vocal est marqué pour le
+modèle, qui sait que sa réponse sera dite, et l'écrit part en entier sur demande ou sur un oui à l'offre du vocal ; pas
+de cartes dans un vocal seul ; « en train d'écrire » relancé toutes les 20 s ; la marge de 10 minutes sur les 24 heures.
+Le vocal que l'agent dit de lui-même à un gestionnaire : `POST /vocal` (clé `VOCAL_CLE`), à la porte `/vocal/:client`.
+
 ## Ce qui reste après le 7.4
 
 - Les modèles Meta (message, rappel, partenaire, livraison, demande, reponse_visiteur, suivi_visiteur, ouverture, veille, zone, rapprochement) : leurs noms dans `modeles_meta` quand le numéro de test existera (7.7). Sans eux, ce qui part hors des 24 heures attend le prochain message.
