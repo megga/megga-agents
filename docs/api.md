@@ -86,6 +86,7 @@ data: {"reponse": "Mardi, j'ai 9 h et 14 h 30. Lequel vous convient ?"}
 ```
 
 - `texte` : un morceau à ajouter à ce qui est affiché. Les clés et jetons y sont masqués comme dans la réponse entière ; un morceau peut tarder le temps qu'un mot soit complet.
+  Au premier message d'une conversation, quand l'agent se présente, le texte arrive d'un coup à la fin du tour (la présentation, puis la réponse) ; les `outil`, eux, arrivent pendant le tour.
 - `outil` : l'agent commence (`debut`) ou finit (`fin`) une action, par son nom ; jamais ses arguments.
 - `fin` : la réponse complète, mise en forme comme sur WhatsApp. **C'est elle qui fait foi** : remplacer par elle ce qui a été affiché.
 - `erreur` : `{"erreur", "statut", ...}`, avec `reponse` (l'excuse à montrer) pour un échec du tour (`statut` 503), ou `attente` en secondes pour un message de trop (`statut` 429).

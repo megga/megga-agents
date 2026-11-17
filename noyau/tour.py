@@ -352,7 +352,8 @@ class Conversations:
         est dépassé : rien n'est alors noté, le logiciel renverra le même message.
 
         Avec `sur_evenement` (async f(genre, valeur)), la réponse part aussi au fil de l'eau (noyau/flux.py) : les
-        morceaux de texte, masqués, et les outils. La réponse rendue à la fin reste celle qui fait foi.
+        morceaux de texte, masqués, et les outils. La réponse rendue à la fin reste celle qui fait foi. Au premier
+        message, avec l'accueil, le texte ne part qu'à la fin du tour, en entier : le modèle peut redire l'accueil.
         """
         relais = flux.Relais(sur_evenement) if sur_evenement else None
         lance = asyncio.current_task()
@@ -370,12 +371,15 @@ class Conversations:
                 if bienvenue and accueils.est_salutation(texte):
                     brute, echec = bienvenue, False
                 else:
-                    if bienvenue and relais is not None:  # l'accueil d'abord, comme dans la réponse rendue
-                        await relais("texte", bienvenue + "\n\n")
+                    suivi = relais
+                    if bienvenue and relais is not None:  # avec l'accueil, le texte attend la conclusion (plus bas)
+                        async def suivi(genre, valeur):
+                            if genre != "texte":
+                                await relais(genre, valeur)
                     try:
                         brute, echec = await asyncio.wait_for(
                             self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role,
-                                           sur_evenement=relais), self.delai_api)
+                                           sur_evenement=suivi), self.delai_api)
                     except asyncio.TimeoutError:
                         log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
                         self.noter_journal("tour_echec", detail="delai")
@@ -384,6 +388,10 @@ class Conversations:
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue)) if p)
                 reponse = nettoyer(masquer_secrets(brute))
                 if relais is not None:
+                    # L'accueil et la réponse filtrée (apres_accueil) partent ensemble, une fois le tour réussi :
+                    # jamais l'accueil deux fois, ni affiché puis remplacé par l'excuse.
+                    if bienvenue and not echec:
+                        await relais("texte", brute)
                     await relais.finir()
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec

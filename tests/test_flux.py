@@ -322,3 +322,43 @@ def test_un_essai_bloque_est_abandonne_apres_le_delai(atelier_bloque):
     assert lire(r.text)[-1] == ("erreur", {"erreur": "l'essai a pris trop de temps : il a été arrêté", "statut": 504})
     # Un essai abandonné ne compte pas comme essayé
     assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["essais"] == 0
+
+
+# L'accueil au premier message
+
+
+def tour_avec_accueil(tmp_path, agent) -> tuple[list[tuple[str, object]], tuple[str, bool], str]:
+    """Un premier tour par API d'un visiteur (un rôle qui a un accueil), en flux : (événements, rendu, accueil)."""
+    from noyau.tour import Conversations
+    from test_lot7_4 import CONF, FauxExp
+
+    url = f"sqlite:///{tmp_path}/accueil.db"
+    c = Conversations(CONF, agent, FauxExp(), contacts=stockage.Contacts(url), agents={"visiteur": agent})
+    vus = []
+
+    async def sur_evenement(genre, valeur):
+        vus.append((genre, valeur))
+
+    rendu = asyncio.run(c.repondre_api("api:site:anna", "Je cherche une villa à Cologny", "visiteur", sur_evenement=sur_evenement))
+    return vus, rendu, CONF.les_roles()["visiteur"].accueil["fr"]
+
+
+def test_l_accueil_ne_part_qu_une_fois_dans_le_flux(tmp_path):
+    """Le modèle redit l'accueil : comme dans la réponse rendue, il n'est pas répété dans les morceaux."""
+    from test_lot7_4 import CONF
+
+    accueil = CONF.les_roles()["visiteur"].accueil["fr"]
+    agent = AgentEnFlux([accueil, "\n\n", "Nous avons ", "une villa ", "à Cologny."], outils=["chercher_biens"])
+    vus, (reponse, echec), accueil = tour_avec_accueil(tmp_path, agent)
+    assert not echec and reponse.count(accueil.split("\n")[0]) == 1
+    textes = "".join(v for g, v in vus if g == "texte")
+    assert textes.count(accueil.split("\n")[0]) == 1 and textes.endswith("Nous avons une villa à Cologny.")
+    assert ("outil", {"outil": "chercher_biens", "etat": "debut"}) in vus  # les outils, eux, partent pendant le tour
+
+
+def test_l_accueil_ne_part_pas_si_le_tour_echoue(tmp_path):
+    """Un tour en échec rend l'excuse seule : l'accueil ne doit pas avoir été affiché avant."""
+    agent = AgentEnFlux(["Nous avons "], erreur=RuntimeError("panne du modèle"))
+    vus, (reponse, echec), accueil = tour_avec_accueil(tmp_path, agent)
+    assert echec and reponse == EXCUSE
+    assert [v for g, v in vus if g == "texte"] == []
