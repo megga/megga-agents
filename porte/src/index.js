@@ -19,7 +19,8 @@
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes|/audit|/approbations]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   POST /admin/clients/:id/approbations/:n
-//                                  {accord} : une demande d'accord décidée par la console (jeton ADMIN_TOKEN)
+//                                  {accord, par} : une demande d'accord décidée par la console, et qui
+//                                  l'a décidée (jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
@@ -45,6 +46,8 @@ const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
 // Le site d'un client (lot 7.4) : une clé d'au moins 32 caractères, un corps de 16 Kio au plus.
 const CLE_SITE = /^Bearer [\x21-\x7e]{32,200}$/;
+// Qui décide d'une demande d'accord dans l'atelier : « megga » ou « client:<jeton> » (noyau/approbations.py).
+const PAR = /^[a-z0-9:]{1,60}$/;
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
@@ -331,8 +334,9 @@ async function decider(requete, env, id, n) {
     return json({ erreur: "{accord: true|false}" }, 400);
   }
   if (typeof corps?.accord !== "boolean") return json({ erreur: "{accord: true|false}" }, 400);
+  if (corps.par !== undefined && !PAR.test(corps.par)) return json({ erreur: "par : megga, ou client:<jeton>" }, 400);
   try {
-    const { statut, donnees } = await agent.decider(n, corps.accord);
+    const { statut, donnees } = await agent.decider(n, corps.accord, corps.par);
     return json(donnees, statut);
   } catch {
     return json({ erreur: "conteneur injoignable" }, 503);

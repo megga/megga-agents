@@ -19,18 +19,19 @@ Décidé avec Thomas (16.11.2026) : une PR par sous-lot ; d'abord ce qui ne dema
 
 **La règle d'un outil** (`Config.approbations`, et `Role.approbations` par-dessus pour les personnes d'un rôle) : `{nom de l'outil: "approbation" | "interdit"}`. Un outil absent se fait sans accord, comme avant.
 - `interdit` : l'outil n'est même pas proposé au modèle ; appelé quand même, il est refusé.
-- `approbation` : l'action n'est pas faite. La demande (l'outil et ses arguments) est gardée dans la base du client (`megga_approbations`) ; le modèle reçoit « Demande n envoyée à l'équipe… » et le dit à la personne.
+- `approbation` : l'action n'est pas faite. Ses arguments sont vérifiés et convertis tout de suite, comme Agno le fera à l'appel (des arguments invalides : rien n'est demandé, le modèle le sait). La demande (l'outil et ses arguments) est gardée dans la base du client (`megga_approbations`) ; le modèle reçoit « Demande n envoyée à l'équipe… » et le dit à la personne.
 
 Le client règle lui-même les approbations de son agent (`approbations` est un champ du client dans l'atelier) : c'est lui qui porte le risque d'une action. Celles d'un rôle restent un réglage de MEGGA.
 
 **Le crochet** (`noyau/approbations.py`, `Gardien`). Tous les outils d'un agent passent par un crochet d'Agno (`tool_hooks`), qui connaît l'outil, ses arguments et la personne (`run_context`). Les outils eux-mêmes ne changent pas : la règle s'ajoute autour, pour les outils du noyau comme pour ceux des packs.
 
 **La décision.**
-- Sur WhatsApp : chaque gestionnaire (secret `GESTIONNAIRES`) reçoit la demande, une fois fini le tour de la personne qui l'a faite, avec ses arguments (secrets masqués) et une liste « Accepter » ou « Refuser ». Le choix touché est traité sans le modèle (préfixe `ap:`, comme les choix des partenaires) et seulement pour un gestionnaire. Hors des 24 heures, la demande attend son prochain message (modèle Meta `approbation` s'il est réglé).
-- Dans la console : `POST /atelier/clients/{id}/approbations/{n}` `{accord}`, pour le client comme pour MEGGA.
-- Une décision ne se prend qu'une fois (écriture conditionnelle) : deux gestionnaires qui touchent en même temps ne font pas l'action deux fois. Sans réponse en 48 heures, la demande expire. Une personne a au plus 20 demandes qui attendent.
+- Sur WhatsApp, si la configuration a le rôle `gestionnaire` : chaque gestionnaire (secret `GESTIONNAIRES`) reçoit la demande, une fois fini le tour de la personne qui l'a faite, avec ses arguments (un par ligne, chacun coupé à 200 caractères, secrets masqués) et une liste « Accepter » ou « Refuser ». Un argument coupé : la demande part sans la liste, avec « consultez-la et décidez dans la console » (on n'accorde pas ce qu'on n'a pas lu). Le choix touché est traité sans le modèle (préfixe `ap:`, comme les choix des partenaires) et seulement pour un gestionnaire. Hors des 24 heures, la demande attend son prochain message (modèle Meta `approbation` s'il est réglé).
+- Dans la console : `POST /atelier/clients/{id}/approbations/{n}` `{accord}`, pour le client comme pour MEGGA ; la décision note qui l'a prise (`par` : `console:megga`, ou `console:client:<jeton>`, le début de l'empreinte du jeton du client, l'atelier n'ayant pas encore de comptes nommés).
+- Une décision ne se prend qu'une fois (écriture conditionnelle) : deux gestionnaires qui touchent en même temps ne font pas l'action deux fois. Sans réponse en 48 heures, la demande expire (vérifié aussi à chaque nouvelle demande et à chaque tour de la personne, qui l'apprend). Une personne a au plus 20 demandes qui attendent.
+- Les arguments d'une demande sont vidés dès qu'elle est terminée (faite, en échec, refusée, expirée) ; la demande est oubliée trois mois après, comme le journal.
 
-**L'action accordée** est faite au nom de la personne qui l'a demandée (son `run_context`), avec les arguments gardés, par l'outil du même nom de son rôle. La personne reçoit un court message (« l'équipe a validé votre demande, c'est fait », en français ou en anglais selon la langue de l'agent ; modèle Meta `approbation_reponse` hors des 24 heures), et son agent en connaît le détail à son tour suivant (le Contexte, entre balises `<approbations>`, dit une seule fois).
+**L'action accordée** est faite au nom de la personne qui l'a demandée (son `run_context`), avec les arguments gardés, par l'outil du même nom de son rôle. La personne reçoit un court message (« l'équipe a validé votre demande, c'est fait », en français ou en anglais selon la langue de l'agent ; modèle Meta `approbation_reponse` hors des 24 heures), et son agent l'apprend à son tour suivant (le Contexte, entre balises `<approbations>`, dit une seule fois) : l'outil et l'issue seulement, jamais ce que l'outil a rendu, qui n'entre pas dans ses consignes.
 
 **Le journal d'audit** (`megga_audit`) : chaque appel d'outil, accordé ou pas, avec l'outil, la personne, la règle, l'issue (`fait`, `erreur`, `refuse`, `attente`) et la durée ; jamais ses arguments ni son résultat (ce qu'une action a fait se lit dans la conversation, ou dans sa demande d'accord). Écrit en arrière-plan, il ne retarde ni ne fait échouer un tour ; à l'arrêt du service, les lignes encore en route sont attendues avec les tours. Gardé trois mois.
 
@@ -39,14 +40,19 @@ Le client règle lui-même les approbations de son agent (`approbations` est un 
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /atelier/clients/{id}/audit?jours=7` | tous | les appels d'outils de la période, les plus récents d'abord |
-| `GET /atelier/clients/{id}/approbations?etat=attente` | tous | les demandes (`attente`, `accordee`, `faite`, `echec`, `refusee`, `expiree`), leurs arguments en aperçu masqué |
+| `GET /atelier/clients/{id}/approbations?etat=attente` | tous | les demandes (`attente`, `accordee`, `faite`, `echec`, `refusee`, `expiree`), leurs arguments en entier, masqués |
 | `POST /atelier/clients/{id}/approbations/{n}` | tous | `{accord: true|false}` : l'action accordée est faite tout de suite ; `409` si la demande n'attend plus |
 
-Côté porte : `GET /admin/clients/{id}/suivi/audit|approbations` (lues une minute en mémoire) et `POST /admin/clients/{id}/approbations/{n}` (jeton `ADMIN_TOKEN`), transmises au conteneur (`/interne/suivi/audit`, `/interne/suivi/approbations`, `/interne/approbations/{n}`). Hors Cloudflare, comme les conversations, rien ne quitte l'installation (`409`) : elle décide sur WhatsApp, par ses gestionnaires.
+Côté porte : `GET /admin/clients/{id}/suivi/audit|approbations` (lues une minute en mémoire) et `POST /admin/clients/{id}/approbations/{n}` `{accord, par}` (jeton `ADMIN_TOKEN`), transmises au conteneur (`/interne/suivi/audit`, `/interne/suivi/approbations`, `/interne/approbations/{n}`). Hors Cloudflare, comme les conversations, rien ne quitte l'installation (`409`) : elle décide sur WhatsApp, par ses gestionnaires.
 
 **Les tables** (additives, sans changer `SCHEMA_VERSION`) : `megga_audit`, `megga_approbations` ; exportées et importées avec le reste du client.
 
 **Ce qui reste.**
 - Les noms des outils ne sont pas encore listés par le catalogue de l'atelier (ils dépendent des packs et des rôles) : la console devra les montrer pour qu'on les coche.
-- Sans gestionnaires (un agent sans rôles), la décision ne se prend que dans la console : l'équipe n'est prévenue de rien sur WhatsApp. Une alerte du suivi pour les demandes qui attendent viendra avec la console.
-- Les modèles Meta `approbation` et `approbation_reponse` sont à soumettre si un client veut décider hors des 24 heures.
+- Sans le rôle `gestionnaire` (un agent sans rôles), la décision ne se prend que dans la console : l'équipe n'est prévenue de rien sur WhatsApp (les numéros de `GESTIONNAIRES` y sont « public », comme le veut `noyau/roles.py`, et ne pourraient pas répondre). Une alerte du suivi pour les demandes qui attendent viendra avec la console.
+- Les modèles Meta `approbation` et `approbation_reponse` sont à soumettre si un client veut décider hors des 24 heures. Textes proposés (à relire, rien n'est soumis) :
+
+| Usage | Pour | Texte | Bouton | Variables |
+|---|---|---|---|---|
+| `approbation` | un gestionnaire | Bonjour, {{1}} attend votre accord avant de faire une action pour une personne qui lui a écrit : {{2}}. Touchez le bouton pour voir la demande et y répondre. | Voir la demande | le nom de l'agent, le nom de l'outil |
+| `approbation_reponse` | la personne | Bonjour, l'équipe a répondu à la demande que vous avez faite à {{1}}. Touchez le bouton pour lire sa réponse. | Lire la réponse | le nom de l'agent |

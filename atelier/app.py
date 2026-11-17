@@ -113,6 +113,11 @@ def trop_ancienne(agent: dict | None, schema_minimum: int) -> bool:
 class Identite:
     role: str  # « megga » ou « client »
     client: str | None = None
+    jeton: str | None = None  # le début de l'empreinte du jeton d'un client : qui, parmi ses jetons
+
+    def nom(self) -> str:
+        """Qui agit, tel que le noyau le note (une décision de la console) : « megga » ou « client:<jeton> »."""
+        return "megga" if self.role == "megga" else f"client:{self.jeton}"
 
 
 async def bd(f, *a, **k):
@@ -158,7 +163,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             return Identite("megga")
         client = jetons.client(jeton)
         if client:
-            return Identite("client", client)
+            return Identite("client", client, stockage.Jetons._empreinte(jeton)[:12])
         raise Refus(401, "jeton refusé")
 
     def megga(qui: Identite) -> None:
@@ -680,7 +685,7 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(400, "accord : true ou false")
         await bd(suivable, qui, ident, True)
         try:
-            return await porte.decider(ident, numero, accord)
+            return await porte.decider(ident, numero, accord, qui.nom())
         except PorteErreur as e:
             if e.statut in (400, 404, 409):
                 raise Refus(e.statut, "décision refusée", {"texte": e.texte}) from e
