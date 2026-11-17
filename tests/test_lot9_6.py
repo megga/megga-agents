@@ -129,9 +129,8 @@ def test_le_banc_dans_l_atelier(tmp_path):
     r = t.post("/atelier/clients/exemple/versions/1/banc", headers=MEGGA, json={"k": 1})
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["version"] == 1 and d["cas"] == len(banc.scenarios("general")) - 1 and 0 <= d["score"] <= 1
-    # sans rôle gestionnaire, ce client ne peut pas passer la main : le cas N08 est écarté, pas compté
-    assert [e["id"] for e in d["ecartes"]] == ["N08"]
+    assert d["version"] == 1 and d["cas"] == len(banc.scenarios("general")) and 0 <= d["score"] <= 1
+    assert d["ecartes"] == []
     # le score reste avec le brouillon, lisible du client
     assert t.get("/atelier/clients/exemple/versions/1", headers=client).json()["banc"]["cas"] == d["cas"]
 
@@ -237,3 +236,15 @@ def test_un_seul_banc_a_la_fois_par_client(tmp_path):
     r = asyncio.run(deux_clics())
     assert sorted(x.status_code for x in r) == [200, 409]
     assert "en cours" in next(x for x in r if x.status_code == 409).json()["erreur"]
+
+
+def test_un_cas_que_la_configuration_refuse_est_ecarte():
+    """Un réglage de cas que ce client ne peut pas prendre : le cas n'est ni joué ni compté, le rapport le nomme."""
+    cas = [{"id": "X1", "titre": "Un réglage refusé", "config": {"langue": "klingon"}, "etapes": [{"texte": "Bonjour"}],
+            "faits": "", "criteres": [{"nom": "répond", "motifs": ["."]}]}]
+
+    def jamais(*_):
+        raise AssertionError("le cas ne doit pas être joué")
+
+    d = asyncio.run(banc.passer(CONF, jamais, juge_d_accord, k=1, cas=cas))
+    assert d["cas"] == 0 and [e["id"] for e in d["ecartes"]] == ["X1"] and d["score"] is None
