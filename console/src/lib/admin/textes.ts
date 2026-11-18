@@ -348,6 +348,13 @@ export const TA = {
   envoye: "Envoyé par l'agent",
   jamaisSansConversation: "Aucune conversation : ce client n'a pas encore été mis en service.",
 
+  // Les versions : le brouillon d'un externe, limité aux réglages simples (externes.ts)
+  corpsObjet: "Requête invalide : un objet JSON attendu.",
+  changementsObjet: "Les changements : un objet JSON, un réglage par clé.",
+  reglagesReserves: (champs: string) => `Réglages réservés à MEGGA : ${champs}.`,
+  voixIdentifiant: "La voix se donne par son identifiant, ou null pour aucune.",
+  gabaritReserve: "Un modèle par métier ne s'applique que par un membre interne de MEGGA.",
+
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {
     ecart: "Écart de version",
