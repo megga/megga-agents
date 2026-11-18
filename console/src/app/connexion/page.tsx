@@ -10,7 +10,7 @@ export default async function PageConnexion({ searchParams }: PageProps<"/connex
   const p = await searchParams;
   const retour = retourSur(p.retour);
   if (await session()) redirect(retour);
-  const erreur = p.error === undefined ? null : messageErreur(p.error);
+  const erreur = p.error === undefined || p.error === "" ? null : messageErreur(p.error); // ?error= vide : comme sans paramètre
   return <Connexion fournisseurs={fournisseursActifs()} retour={retour} erreur={erreur} />;
 }
 

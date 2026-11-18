@@ -10,7 +10,6 @@ import {
   listerComptes,
   peutAgirSur,
   reactiver,
-  SessionsRestent,
   suspendre,
   totauxConsole,
   type AdaptateurComptes,
@@ -150,7 +149,7 @@ describe("suspendre un compte", () => {
     expect(peutAgirSur(db, exploitant, "parti", new Date("2026-11-19T10:00:00Z"))).toBe(true);
   });
 
-  it("des sessions qui ne s'effacent pas : un second essai ; s'il échoue aussi, le compte reste suspendu et le geste le dit", async () => {
+  it("des sessions qui ne s'effacent pas : un second essai ; s'il échoue aussi, le compte reste suspendu et le geste le dit, sans refus", async () => {
     const a = membre(db, { utilisateur: "exploitant", role: "exploitation" });
     let echecs = 1;
     const fragile: AdaptateurComptes = {
@@ -160,17 +159,33 @@ describe("suspendre un compte", () => {
         if (echecs-- > 0) throw new Error("base occupée");
       },
     };
-    await suspendre(db, a, "c", { motif: "Abus" }, fragile); // un échec, puis réussi au second essai
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Un échec, puis réussi au second essai.
+    expect(await suspendre(db, a, "c", { motif: "Abus" }, fragile)).toEqual({ sessionsRestent: false });
     expect(appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
     appels = [];
     echecs = 2;
-    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
-    const e = await refusAsync(() => suspendre(db, a, "c", { motif: "Abus" }, fragile));
-    expect(e).toBeInstanceOf(SessionsRestent);
-    expect([e.statut, e.message]).toEqual([500, TA.sessionsRestent]);
-    expect(appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
+    // Deux échecs : le bannissement est écrit, le geste le dit (ce n'est pas un refus).
+    expect(await suspendre(db, a, "c", { motif: "Abus" }, fragile)).toEqual({ sessionsRestent: true });
+    expect(appels).toEqual([
+      ["updateUser", "c", { banned: true, banReason: "Abus", banExpires: null }],
+      ["deleteUserSessions", "c"],
+      ["deleteUserSessions", "c"],
+    ]);
     expect(erreur).toHaveBeenCalled();
     erreur.mockRestore();
+  });
+
+  it("une écriture du bannissement en échec reste une erreur, et rien n'est effacé", async () => {
+    const a = membre(db, { utilisateur: "exploitant", role: "exploitation" });
+    const panne: AdaptateurComptes = {
+      updateUser: async () => {
+        throw new Error("base fermée");
+      },
+      deleteUserSessions: async (...x: unknown[]) => appels.push(["deleteUserSessions", ...x]),
+    };
+    await expect(suspendre(db, a, "c", { motif: "Abus" }, panne)).rejects.toThrow("base fermée");
+    expect(appels).toEqual([]);
   });
 
   it("réactiver : le bannissement levé ; déconnecter : seulement ses sessions", async () => {

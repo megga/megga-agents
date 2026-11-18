@@ -54,6 +54,7 @@ describe("les erreurs de connexion", () => {
       expect((await page({ error })).props.erreur, JSON.stringify(error)).toBe(T.erreurGenerale);
     }
     expect((await page({})).props.erreur).toBeNull();
+    expect((await page({ error: "" })).props.erreur).toBeNull(); // ?error= vide : comme sans paramètre
   });
 
   it("Google et Microsoft renvoient leurs erreurs à la page de connexion (errorCallbackURL)", () => {

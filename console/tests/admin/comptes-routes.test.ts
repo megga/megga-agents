@@ -9,7 +9,7 @@ import { acces, baseEssai, compte, membre } from "./aides";
 // Les routes des comptes, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle de
 // l'essai, l'adaptateur de Better Auth est simulé. Le journal note le motif d'une suspension (coupé), rien d'autre.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, appels: [] as unknown[][], sessionsBloquees: false }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, appels: [] as unknown[][], sessionsBloquees: false, ecritureBloquee: false }));
 vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
@@ -21,7 +21,10 @@ vi.mock("@/lib/auth", async (original) => ({
 vi.mock("@/lib/admin/comptes", async (original) => ({
   ...(await original<typeof import("@/lib/admin/comptes")>()),
   adaptateurComptes: async () => ({
-    updateUser: async (...a: unknown[]) => etat.appels.push(["updateUser", ...a]),
+    updateUser: async (...a: unknown[]) => {
+      if (etat.ecritureBloquee) throw new Error("base fermée");
+      etat.appels.push(["updateUser", ...a]);
+    },
     deleteUserSessions: async (...a: unknown[]) => {
       etat.appels.push(["deleteUserSessions", ...a]);
       if (etat.sessionsBloquees) throw new Error("base occupée");
@@ -46,6 +49,7 @@ beforeEach(async () => {
   etat.db = await baseEssai();
   etat.appels = [];
   etat.sessionsBloquees = false;
+  etat.ecritureBloquee = false;
   compte(etat.db, { id: "c", courriel: "garage@exemple.test" });
   membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
   membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
@@ -60,13 +64,23 @@ describe("suspendre un compte", () => {
     expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus répétés" }]]);
   });
 
-  it("des sessions qui restent après deux essais : la phrase qui le dit, le résultat noté au journal", async () => {
+  it("des sessions qui restent après deux essais : 200, le compte suspendu, l'avertissement, la ligne ok et son détail", async () => {
     etat.sessionsBloquees = true;
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
-    expect([r.status, await r.json()]).toEqual([500, { erreur: TA.sessionsRestent }]);
+    expect([r.status, await r.json()]).toEqual([200, { sessionsRestent: true, avertissement: TA.sessionsRestent }]);
     expect(etat.appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
-    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "refuse 500", { motif: "Abus", sessions: "restent" }]]);
+    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus", sessions: "restent" }]]);
+    erreur.mockRestore();
+  });
+
+  it("une écriture du bannissement en échec reste une erreur (500, notée « erreur »)", async () => {
+    etat.ecritureBloquee = true;
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
+    expect([r.status, await r.json()]).toEqual([500, { erreur: TA.erreurInterne }]);
+    expect(etat.appels).toEqual([]);
+    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "erreur", { motif: "Abus" }]]);
     erreur.mockRestore();
   });
 

@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
 import { envoyer } from "@/components/admin/envoyer";
-import { Fait } from "@/components/admin/erreurs";
+import { Bandeau, Fait } from "@/components/admin/erreurs";
 import { cadre, champ, etiquette, titreBloc } from "@/components/admin/formulaire";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,12 +19,18 @@ export function GestesCompte({ id, nom, suspendu, sessions }: { id: string; nom:
   const router = useRouter();
   const [motif, setMotif] = useState("");
   const [fait, setFait] = useState<string | null>(null);
+  const [avertissement, setAvertissement] = useState<string | null>(null);
 
-  /** Le geste, puis la fiche relue, réussi ou non (un compte suspendu dont les sessions restent l'est quand même). */
+  /**
+   * Le geste, puis la fiche relue, réussi ou non. Une suspension dont les sessions restent est faite : son avertissement
+   * remplace la réussite, et la fiche relue propose « Déconnecter partout ».
+   */
   async function agir(url: string, methode: "POST" | "DELETE", corps: unknown, texte: string) {
     try {
-      await envoyer(url, methode, corps);
-      setFait(texte);
+      const r = await envoyer<{ avertissement?: unknown }>(url, methode, corps);
+      const a = typeof r?.avertissement === "string" ? r.avertissement : null;
+      setAvertissement(a);
+      setFait(a ? null : texte);
     } finally {
       router.refresh();
     }
@@ -76,6 +82,7 @@ export function GestesCompte({ id, nom, suspendu, sessions }: { id: string; nom:
         )}
       </div>
       <Fait texte={fait} />
+      {avertissement && <Bandeau etat="warn">{avertissement}</Bandeau>}
     </section>
   );
 }

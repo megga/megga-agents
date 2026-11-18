@@ -163,30 +163,24 @@ export async function adaptateurComptes(): Promise<AdaptateurComptes> {
   return (await auth().$context).internalAdapter;
 }
 
-/** Le compte est suspendu, mais ses sessions restent (deux essais d'effacement en échec) : à retirer par « Déconnecter partout ». */
-export class SessionsRestent extends Refus {
-  constructor() {
-    super(500, TA.sessionsRestent);
-  }
-}
-
 /**
  * Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. Le
- * bannissement écrit, un effacement des sessions en échec est réessayé une fois ; en échec encore : SessionsRestent.
+ * bannissement écrit (s'il échoue, l'erreur remonte : rien n'est fait), un effacement des sessions en échec est réessayé une
+ * fois. sessionsRestent : le compte est suspendu, mais ses sessions restent après ces deux essais (« Déconnecter partout »).
  */
-export async function suspendre(db: DatabaseSync, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<void> {
+export async function suspendre(db: DatabaseSync, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<{ sessionsRestent: boolean }> {
   exigerCompte(db, a, id);
   const motif = lireMotif(corps);
   await ad.updateUser(id, { banned: true, banReason: motif, banExpires: null });
-  for (let essai = 1; ; essai++) {
+  for (let essai = 1; essai <= 2; essai++) {
     try {
       await ad.deleteUserSessions(id);
-      return;
+      return { sessionsRestent: false };
     } catch (e) {
       console.error(`suspension : sessions non effacées (essai ${essai}) :`, e);
-      if (essai >= 2) throw new SessionsRestent();
     }
   }
+  return { sessionsRestent: true };
 }
 
 export async function reactiver(db: DatabaseSync, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {

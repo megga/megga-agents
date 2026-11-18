@@ -170,6 +170,18 @@ describe("préparer une version", () => {
     ]);
   });
 
+  it("dans la table admin_journal, sans base nommée : la base réellement envoyée (la dernière pour un interne, celle en service pour un externe)", async () => {
+    await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { ton: "y" } });
+    const lignes = (etat.db.prepare("SELECT qui, action, resultat, detail FROM admin_journal ORDER BY id").all() as
+      { qui: string; action: string; resultat: string; detail: string }[]).map((l) => ({ ...l, detail: JSON.parse(l.detail) }));
+    expect(lignes).toEqual([
+      { qui: "exploitant", action: "versions.preparer", resultat: "ok", detail: { base: 3, changements: ["ton"] } },
+      { qui: "invite", action: "versions.preparer", resultat: "ok", detail: { base: 2, changements: ["ton"] } },
+    ]);
+    expect(simule.ajouterVersion.mock.calls.map((c) => (c[1] as { base: number }).base)).toEqual([3, 2]);
+  });
+
   it("un refus de l'atelier rend sa phrase et ses messages champ par champ", async () => {
     const champs = [{ champ: "nom_agent", message: "Le prénom doit faire 40 caractères au plus." }];
     simule.ajouterVersion.mockRejectedValue(new RefusChamps(422, "configuration invalide", champs));
