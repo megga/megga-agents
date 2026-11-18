@@ -29,6 +29,11 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "ses
     client: true },
   { fichier: "clients/[id]/versions/[numero]/activer/route.ts", methodes: ["POST"], droit: "clients.piloter", params: { id: "garage-essai", numero: "1" },
     client: true },
+  { fichier: "clients/[id]/reprise/route.ts", methodes: ["POST"], droit: "clients.piloter", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/jetons/route.ts", methodes: ["POST", "DELETE"], droit: "acces.gerer", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/cles/route.ts", methodes: ["POST"], droit: "acces.gerer", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/cles/[cle]/route.ts", methodes: ["DELETE"], droit: "acces.gerer", params: { id: "garage-essai", cle: "d15a76f57ee4" },
+    client: true },
 ];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
