@@ -1,0 +1,196 @@
+import type { DatabaseSync } from "node:sqlite";
+import { Refus } from "@/lib/agents";
+import {
+  droitsEffectifs,
+  lirePerimetre,
+  perimetreInclus,
+  peutDonnerRole,
+  peutToucherMembre,
+  type Acces,
+  type Perimetre,
+} from "./acces";
+import { SUPERADMIN } from "./droits";
+import { lireRole, type Role } from "./roles";
+import { TA } from "./textes";
+
+// Les membres de l'admin : un compte de Better Auth, un rôle, un périmètre, une fin d'accès facultative, externe ou non.
+// Un membre retiré est une ligne effacée (le journal garde la trace) ; le courriel et le nom se lisent dans la table user.
+
+export type Membre = {
+  utilisateur: string;
+  courriel: string;
+  nom: string;
+  role: string;
+  externe: boolean;
+  perimetre: Perimetre;
+  finAcces: string | null;
+  ajoutePar: string | null;
+  ajouteLe: string;
+  derniereConnexion: string | null;
+};
+
+type Ligne = {
+  utilisateur: string;
+  courriel: string;
+  nom: string;
+  role: string;
+  externe: number;
+  perimetre: string | null;
+  fin_acces: string | null;
+  ajoute_par: string | null;
+  ajoute_le: string;
+  derniere: string | null;
+};
+
+const CHOIX = `SELECT m.*, COALESCE(u.email, '') AS courriel, COALESCE(u.name, '') AS nom, c.derniere
+  FROM admin_membre m LEFT JOIN "user" u ON u.id = m.utilisateur LEFT JOIN compte_connexion c ON c.utilisateur = m.utilisateur`;
+
+function perimetreLu(json: string | null): Perimetre {
+  if (json === null) return "tous";
+  try {
+    const v: unknown = JSON.parse(json);
+    return Array.isArray(v) ? v.filter((c): c is string => typeof c === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function versMembre(l: Ligne): Membre {
+  return {
+    utilisateur: l.utilisateur,
+    courriel: l.courriel,
+    nom: l.nom,
+    role: l.role,
+    externe: !!l.externe,
+    perimetre: perimetreLu(l.perimetre),
+    finAcces: l.fin_acces,
+    ajoutePar: l.ajoute_par,
+    ajouteLe: l.ajoute_le,
+    derniereConnexion: l.derniere,
+  };
+}
+
+function lireMembre(db: DatabaseSync, utilisateur: string): Membre | undefined {
+  const l = db.prepare(`${CHOIX} WHERE m.utilisateur = ?`).get(utilisateur) as Ligne | undefined;
+  return l && versMembre(l);
+}
+
+/** Une fin d'accès AAAA-MM-JJ vaut jusqu'à la fin de ce jour, 23:59:59.999 UTC ; une date illisible ne laisse pas entrer. */
+export function enCours(finAcces: string | null, maintenant: Date): boolean {
+  if (finAcces === null) return true;
+  return maintenant.getTime() <= new Date(`${finAcces}T23:59:59.999Z`).getTime();
+}
+
+/** Une fin d'accès lue dans un corps : null, ou une vraie date AAAA-MM-JJ. */
+export function lireFinAcces(v: unknown): string | null {
+  if (v === null) return null;
+  const ok = typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().startsWith(v);
+  if (!ok) throw new Refus(400, TA.finAccesInvalide);
+  return v;
+}
+
+export function membreEnCours(db: DatabaseSync, utilisateur: string, maintenant = new Date()): Membre | undefined {
+  const m = lireMembre(db, utilisateur);
+  return m && enCours(m.finAcces, maintenant) ? m : undefined;
+}
+
+/** L'accès d'un compte, relu à chaque requête : rien s'il n'est pas membre en cours ou si son rôle a disparu. */
+export function accesDe(db: DatabaseSync, compte: { id: string; email: string; name: string }, maintenant = new Date()): Acces | undefined {
+  const m = membreEnCours(db, compte.id, maintenant);
+  const role = m && lireRole(db, m.role);
+  if (!m || !role) return undefined;
+  const superadmin = role.id === SUPERADMIN && !m.externe;
+  // Un externe « tous » ne peut venir que d'une ligne écrite à la main : il ne voit alors aucun client.
+  const perimetre: Perimetre = superadmin ? "tous" : m.externe && m.perimetre === "tous" ? [] : m.perimetre;
+  return {
+    utilisateur: compte.id,
+    courriel: compte.email,
+    nom: compte.name,
+    role: { id: role.id, nom: role.nom },
+    superadmin,
+    externe: m.externe,
+    perimetre,
+    finAcces: superadmin ? null : m.finAcces,
+    droits: droitsEffectifs(role.droits, m.externe, superadmin),
+  };
+}
+
+export function listerMembres(db: DatabaseSync): Membre[] {
+  return (db.prepare(`${CHOIX} ORDER BY m.ajoute_le, m.rowid`).all() as Ligne[]).map(versMembre);
+}
+
+function roleExistant(db: DatabaseSync, id: unknown): Role {
+  const role = typeof id === "string" ? lireRole(db, id) : undefined;
+  if (!role) throw new Refus(400, TA.roleInconnu);
+  return role;
+}
+
+/** Les règles d'une ligne de membre : un externe a un périmètre et n'est jamais superadmin ; un superadmin a tout, sans fin. */
+function regle(role: string, externe: boolean, perimetre: Perimetre, finAcces: string | null): { perimetre: Perimetre; finAcces: string | null } {
+  if (externe && role === SUPERADMIN) throw new Refus(400, TA.externeSuperadmin);
+  if (externe && (perimetre === "tous" || !perimetre.length)) throw new Refus(400, TA.externePerimetre);
+  return role === SUPERADMIN ? { perimetre: "tous", finAcces: null } : { perimetre, finAcces };
+}
+
+const perimetreEcrit = (p: Perimetre) => (p === "tous" ? null : JSON.stringify(p));
+
+/** Ajoute (ou remplace) la ligne d'un membre ; les droits de qui l'ajoute sont vérifiés avant (invitation, commande). */
+export function ajouterMembre(
+  db: DatabaseSync,
+  m: { utilisateur: string; role: string; externe: boolean; perimetre: Perimetre; finAcces: string | null; ajoutePar: string | null },
+  maintenant = new Date(),
+): Membre {
+  roleExistant(db, m.role);
+  const r = regle(m.role, m.externe, m.perimetre, m.finAcces);
+  db.prepare(
+    `INSERT INTO admin_membre (utilisateur, role, externe, perimetre, fin_acces, ajoute_par, ajoute_le) VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (utilisateur) DO UPDATE SET role = excluded.role, externe = excluded.externe, perimetre = excluded.perimetre,
+       fin_acces = excluded.fin_acces, ajoute_par = excluded.ajoute_par, ajoute_le = excluded.ajoute_le`,
+  ).run(m.utilisateur, m.role, m.externe ? 1 : 0, perimetreEcrit(r.perimetre), r.finAcces, m.ajoutePar, maintenant.toISOString());
+  return lireMembre(db, m.utilisateur)!;
+}
+
+function superadminsEnCours(db: DatabaseSync, maintenant: Date): number {
+  const lignes = db.prepare("SELECT fin_acces FROM admin_membre WHERE role = ? AND externe = 0").all(SUPERADMIN) as { fin_acces: string | null }[];
+  return lignes.filter((l) => enCours(l.fin_acces, maintenant)).length;
+}
+
+/**
+ * Le membre que a veut changer. Sans être superadmin : ni sa propre ligne, ni un superadmin (peutToucherMembre),
+ * ni un membre dont le rôle ou le périmètre dépasse les siens (il n'aurait pas pu l'inviter).
+ */
+function membreAToucher(db: DatabaseSync, a: Acces, utilisateur: string): Membre {
+  const cible = lireMembre(db, utilisateur);
+  if (!cible) throw new Refus(404, TA.membreInconnu);
+  if (!peutToucherMembre(a, cible)) throw new Refus(403, TA.escalade);
+  const role = lireRole(db, cible.role);
+  if (!a.superadmin && (!role || !peutDonnerRole(a, role) || !perimetreInclus(a, cible.perimetre))) throw new Refus(403, TA.escalade);
+  return cible;
+}
+
+function exigerAutreSuperadmin(db: DatabaseSync, cible: Membre, maintenant: Date): void {
+  if (cible.role === SUPERADMIN && superadminsEnCours(db, maintenant) <= 1) throw new Refus(409, TA.dernierSuperadmin);
+}
+
+/** Corps : { role?, perimetre?, finAcces? } ; externe ne change pas (l'invitation le fixe). */
+export function modifierMembre(db: DatabaseSync, a: Acces, utilisateur: string, corps: unknown, maintenant = new Date()): Membre {
+  const cible = membreAToucher(db, a, utilisateur);
+  const c = (corps && typeof corps === "object" ? corps : {}) as Record<string, unknown>;
+  const role = c.role === undefined ? undefined : roleExistant(db, c.role);
+  if (role && !peutDonnerRole(a, role)) throw new Refus(403, TA.escalade);
+  const perimetre = c.perimetre === undefined ? cible.perimetre : lirePerimetre(c.perimetre, cible.externe);
+  if (c.perimetre !== undefined && !perimetreInclus(a, perimetre)) throw new Refus(403, TA.escalade);
+  const finAcces = c.finAcces === undefined ? cible.finAcces : lireFinAcces(c.finAcces);
+  const nouveauRole = role?.id ?? cible.role;
+  const r = regle(nouveauRole, cible.externe, perimetre, finAcces);
+  if (nouveauRole !== SUPERADMIN) exigerAutreSuperadmin(db, cible, maintenant);
+  db.prepare("UPDATE admin_membre SET role = ?, perimetre = ?, fin_acces = ? WHERE utilisateur = ?")
+    .run(nouveauRole, perimetreEcrit(r.perimetre), r.finAcces, utilisateur);
+  return lireMembre(db, utilisateur)!;
+}
+
+export function retirerMembre(db: DatabaseSync, a: Acces, utilisateur: string, maintenant = new Date()): void {
+  const cible = membreAToucher(db, a, utilisateur);
+  exigerAutreSuperadmin(db, cible, maintenant);
+  db.prepare("DELETE FROM admin_membre WHERE utilisateur = ?").run(utilisateur);
+}

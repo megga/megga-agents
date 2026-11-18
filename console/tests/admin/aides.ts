@@ -1,7 +1,50 @@
-// Les aides des essais de l'admin : un accès de membre fabriqué, et la capture d'un refus.
+// Les aides des essais de l'admin : un accès de membre fabriqué, la capture d'un refus,
+// et une base en mémoire avec les tables de Better Auth et celles de la console.
+import { DatabaseSync } from "node:sqlite";
+import { getMigrations } from "better-auth/db/migration";
 import { droitsEffectifs, type Acces, type Perimetre } from "@/lib/admin/acces";
 import { SUPERADMIN, type Droit } from "@/lib/admin/droits";
+import { accesDe, ajouterMembre } from "@/lib/admin/membres";
 import { Refus } from "@/lib/agents";
+import { optionsAuth } from "@/lib/auth";
+import { preparer } from "@/lib/base";
+
+/** L'instant des essais. */
+export const T0 = new Date("2026-11-18T10:00:00Z");
+
+/** Une base neuve en mémoire : les tables de Better Auth, puis celles de la console et de l'admin. */
+export async function baseEssai(): Promise<DatabaseSync> {
+  const db = new DatabaseSync(":memory:");
+  const { runMigrations } = await getMigrations(optionsAuth(db));
+  await runMigrations();
+  preparer(db);
+  return db;
+}
+
+/** Un compte de la console (une ligne de la table user de Better Auth). */
+export function compte(db: DatabaseSync, c: { id: string; courriel: string; nom?: string; creeLe?: string }): void {
+  const quand = c.creeLe ?? T0.toISOString();
+  db.prepare('INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt) VALUES (?, ?, ?, 0, ?, ?)')
+    .run(c.id, c.nom ?? c.id.toUpperCase(), c.courriel, quand, quand);
+}
+
+/** Un membre de l'admin et son compte (créé s'il manque) ; rend son accès à T0. */
+export function membre(db: DatabaseSync, m: { utilisateur: string; role: string; externe?: boolean; perimetre?: Perimetre; finAcces?: string | null }): Acces {
+  const courriel = `${m.utilisateur}@megga.test`;
+  if (!db.prepare('SELECT 1 FROM "user" WHERE id = ?').get(m.utilisateur)) compte(db, { id: m.utilisateur, courriel });
+  ajouterMembre(db, { utilisateur: m.utilisateur, role: m.role, externe: m.externe ?? false, perimetre: m.perimetre ?? "tous",
+    finAcces: m.finAcces ?? null, ajoutePar: null }, T0);
+  const a = accesDe(db, { id: m.utilisateur, email: courriel, name: m.utilisateur.toUpperCase() }, T0);
+  if (!a) throw new Error(`le membre ${m.utilisateur} n'est pas en cours à T0`);
+  return a;
+}
+
+/** Un rôle sans aucun droit ; rend son identifiant. */
+export function roleVide(db: DatabaseSync): string {
+  db.prepare("INSERT OR IGNORE INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES ('vide', 'Vide', '', '[]', 0, ?, ?)")
+    .run(T0.toISOString(), T0.toISOString());
+  return "vide";
+}
 
 /** Un accès de membre, sans base : les droits passent par droitsEffectifs (plafond d'un externe compris). */
 export function acces(p: { utilisateur?: string; role?: string; droits?: readonly Droit[]; externe?: boolean; superadmin?: boolean; perimetre?: Perimetre } = {}): Acces {

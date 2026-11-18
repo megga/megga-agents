@@ -1,4 +1,5 @@
 import "server-only";
+import type { DatabaseSync } from "node:sqlite";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
@@ -23,10 +24,11 @@ export function fournisseursActifs(): ("google" | "microsoft")[] {
   return Object.keys(fournisseurs()) as ("google" | "microsoft")[];
 }
 
-function options(): BetterAuthOptions {
+/** Les options de Better Auth sur une base donnée (celle de la console par défaut, une base en mémoire dans les essais). */
+export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
   return {
     appName: "MEGGA",
-    database: base(),
+    database: db,
     emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
     socialProviders: fournisseurs(),
     telemetry: { enabled: false },
@@ -37,7 +39,7 @@ function options(): BetterAuthOptions {
 const globale = globalThis as unknown as { authConsole?: ReturnType<typeof betterAuth>; migre?: Promise<void> };
 
 export function auth() {
-  if (!globale.authConsole) globale.authConsole = betterAuth(options());
+  if (!globale.authConsole) globale.authConsole = betterAuth(optionsAuth());
   return globale.authConsole;
 }
 
