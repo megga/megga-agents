@@ -70,7 +70,7 @@ export const TA = {
   instant,
 
   // L'équipe
-  nom: "Nom",
+  membre: "Membre",
   role: "Rôle",
   statut: "Statut",
   interne: "Interne",

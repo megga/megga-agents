@@ -1,4 +1,3 @@
-import { Onglets } from "@/components/admin/onglets";
 import { aPuDonner, peutDonnerRole, peutToucherMembre, perimetreVu } from "@/lib/admin/acces";
 import { gardePage } from "@/lib/admin/garde";
 import { listerMembres } from "@/lib/admin/membres";
@@ -6,6 +5,7 @@ import { listerRoles } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { base } from "@/lib/base";
 import { Membres, type MembreVu } from "./membres";
+import { OngletsEquipe } from "./onglets";
 
 // L'équipe, ses membres : tout se lit ici, côté serveur, après la garde. Le navigateur ne reçoit du périmètre d'un autre
 // que ce que le membre en voit (perimetreVu), et ne propose que les gestes que la bibliothèque laissera passer.
@@ -32,14 +32,7 @@ export default async function PageMembres() {
   return (
     <>
       <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.equipe}</h1>
-      <Onglets
-        actif="/admin/equipe"
-        onglets={[
-          { href: "/admin/equipe", texte: TA.membres },
-          { href: "/admin/equipe/invitations", texte: TA.invitations },
-          { href: "/admin/equipe/roles", texte: TA.roles },
-        ]}
-      />
+      <OngletsEquipe actif="/admin/equipe" />
       <Membres
         membres={membres}
         roles={roles.filter((r) => peutDonnerRole(a, r)).map((r) => ({ id: r.id, nom: r.nom }))}

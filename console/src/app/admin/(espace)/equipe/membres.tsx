@@ -3,19 +3,18 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
-import { envoyer, ErreursChamps } from "@/components/admin/erreurs";
+import { envoyer } from "@/components/admin/envoyer";
+import { ErreursChamps } from "@/components/admin/erreurs";
+import { champ, ChampsAcces, etiquette, ExterneGarde, perimetreDe, PerimetreVu, tousPossible, type RoleChoix, type Vu } from "@/components/admin/formulaire";
 import { Pastille } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SUPERADMIN } from "@/lib/admin/droits";
 import { TA } from "@/lib/admin/textes";
 
 // Les membres de l'équipe : le tableau, et pour ceux que le membre peut toucher, modifier (rôle, périmètre, fin d'accès)
-// ou retirer. ChampsAcces et PerimetreVu servent aussi aux invitations.
-
-export type Vu = "tous" | { clients: string[]; autres: number };
+// ou retirer. Dans un cadre étroit, les colonnes secondaires se replient sous le nom.
 
 export type MembreVu = {
   utilisateur: string;
@@ -31,91 +30,22 @@ export type MembreVu = {
   modifiable: boolean;
 };
 
-export type RoleChoix = { id: string; nom: string };
-
-/** Le périmètre tel que le membre le voit : les clients qu'il partage, les autres comptés. */
-export function PerimetreVu({ p }: { p: Vu }) {
-  if (p === "tous") return <span className="whitespace-nowrap">{TA.tousLesClients}</span>;
-  if (!p.clients.length) return <span className="text-muted-ink">{p.autres ? TA.nClients(p.autres) : TA.aucunClient}</span>;
-  return (
-    <span className="block max-w-[260px]">
-      {p.clients.join(", ")}
-      {p.autres > 0 && <span className="text-muted-ink"> {TA.etAutres(p.autres)}</span>}
-    </span>
-  );
-}
-
-/** Le corps d'un périmètre : « tous », ou les identifiants tapés, séparés par des virgules ou des espaces. */
-export function perimetreDe(mode: "tous" | "liste", liste: string): "tous" | string[] {
-  return mode === "tous" ? "tous" : liste.split(/[\s,;]+/).filter(Boolean);
-}
-
-export const champ = "h-10 rounded-xl bg-bg px-3 text-[14.5px] text-ink placeholder:text-faint";
-export const etiquette = "text-[13px] font-semibold text-muted-ink";
-
-/** « Tous les clients » n'est permis ni à un externe, ni par un membre limité à une liste. */
-export const tousPossible = (externe: boolean, tousPermis: boolean) => tousPermis && !externe;
-
-/**
- * Le périmètre et la fin d'accès d'un membre ou d'une invitation. tous : « tous les clients » est-il permis
- * (tousPossible) ; sinon, la liste seule, et le corps se fait avec perimetreDe("liste", …).
- */
-export function ChampsAcces(p: {
-  id: string;
-  tous: boolean;
-  mode: "tous" | "liste";
-  liste: string;
-  fin: string;
-  onMode: (m: "tous" | "liste") => void;
-  onListe: (v: string) => void;
-  onFin: (v: string) => void;
-}) {
-  const { tous } = p;
-  const mode = tous ? p.mode : "liste";
-  return (
-    <>
-      <fieldset className="m-0 flex flex-col gap-1.5 border-0 p-0">
-        <legend className={etiquette + " mb-1.5"}>{TA.perimetre}</legend>
-        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-[14px]">
-          <label className="flex items-center gap-2">
-            <input type="radio" name={p.id + "-mode"} checked={mode === "tous"} disabled={!tous} onChange={() => p.onMode("tous")} className="accent-marque" />
-            <span className={tous ? "" : "text-faint"}>{TA.tousLesClients}</span>
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="radio" name={p.id + "-mode"} checked={mode === "liste"} onChange={() => p.onMode("liste")} className="accent-marque" />
-            {TA.uneListe}
-          </label>
-        </div>
-        {mode === "liste" && (
-          <>
-            <Input aria-label={TA.uneListe} value={p.liste} onChange={(e) => p.onListe(e.target.value)} className={champ} />
-            <span className="text-[12.5px] text-faint">{TA.perimetreAide}</span>
-          </>
-        )}
-      </fieldset>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={p.id + "-fin"} className={etiquette}>{TA.finAcces}</Label>
-        <Input id={p.id + "-fin"} type="date" value={p.fin} onChange={(e) => p.onFin(e.target.value)} className={champ} />
-        <span className="text-[12.5px] text-faint">{TA.finAccesAide}</span>
-      </div>
-    </>
-  );
-}
-
 export function Membres({ membres, roles, tousPermis }: { membres: MembreVu[]; roles: RoleChoix[]; tousPermis: boolean }) {
   const router = useRouter();
   const [edite, setEdite] = useState<MembreVu | null>(null);
 
   const lignes = membres.map((m) => [
-    <b key="nom" className="whitespace-nowrap">{m.nom || m.courriel}</b>,
-    <span key="courriel" className="whitespace-nowrap">{m.courriel}</span>,
+    <div key="membre" className="flex flex-col">
+      <b>{m.nom || m.courriel}</b>
+      <span className="text-[13px] whitespace-nowrap text-muted-ink">{m.courriel}</span>
+    </div>,
     <span key="role" className="whitespace-nowrap">{m.roleNom}</span>,
     <Pastille key="statut" etat={m.externe ? "warn" : "faint"} texte={m.externe ? TA.externe : TA.interne} />,
     <PerimetreVu key="perimetre" p={m.perimetre} />,
     <span key="fin" className="whitespace-nowrap">{m.finAccesLisible}</span>,
     <span key="connexion" className="whitespace-nowrap">{m.derniereConnexion}</span>,
     m.modifiable ? (
-      <div key="gestes" className="flex gap-1.5">
+      <div key="gestes" className="flex flex-wrap gap-1.5">
         <button type="button" onClick={() => setEdite(m)} className="trait rounded-full bg-bg px-3 py-1 text-[13px] font-semibold whitespace-nowrap text-ink hover:bg-hover">
           {TA.modifier}
         </button>
@@ -137,9 +67,10 @@ export function Membres({ membres, roles, tousPermis }: { membres: MembreVu[]; r
   return (
     <>
       <Tableau
-        colonnes={[TA.nom, TA.courriel, TA.role, TA.statut, TA.perimetre, TA.finAcces, TA.derniereConnexion, ""]}
+        colonnes={[TA.membre, TA.role, TA.statut, TA.perimetre, TA.finAcces, TA.derniereConnexion, ""]}
         lignes={lignes}
         vide={TA.videMembres}
+        replier={[1, 2, 3, 4, 5]}
       />
       <Dialog open={edite !== null} onOpenChange={(o) => !o && setEdite(null)}>
         <DialogContent className="gap-4 rounded-[22px] bg-bg p-5 shadow-doux sm:max-w-[460px]">
@@ -198,17 +129,9 @@ function FormMembre({ membre: m, roles, tousPermis, onFini }: { membre: MembreVu
           ))}
         </select>
       </div>
+      {m.externe && <ExterneGarde />}
       {!superadmin && (
-        <ChampsAcces
-          id="membre"
-          tous={tous}
-          mode={mode}
-          liste={liste}
-          fin={fin}
-          onMode={setMode}
-          onListe={setListe}
-          onFin={setFin}
-        />
+        <ChampsAcces id="membre" tous={tous} mode={mode} liste={liste} fin={fin} onMode={setMode} onListe={setListe} onFin={setFin} />
       )}
       <ErreursChamps erreur={erreur} />
       <button type="submit" disabled={envoi} className="mt-1 h-10 rounded-full bg-marque text-[14.5px] font-bold text-on-marque disabled:opacity-60">

@@ -15,9 +15,10 @@ import {
   peutSuspendre,
   peutToucherMembre,
   perimetreVu,
+  roleLePlusEtroit,
   voitClient,
 } from "@/lib/admin/acces";
-import { DROITS } from "@/lib/admin/droits";
+import { DROITS, ROLES_DE_DEPART, SUPERADMIN } from "@/lib/admin/droits";
 import { TA } from "@/lib/admin/textes";
 import { acces, refus } from "./aides";
 
@@ -119,6 +120,18 @@ describe("ce qu'on aurait pu donner soi-même", () => {
     expect(aPuDonner(m, undefined, ["a1"])).toBe(false);
     expect(aPuDonner(acces({ superadmin: true }), undefined, "tous")).toBe(true);
     expect(aPuDonner(acces({ droits: ["clients.voir"] }), petit, "tous")).toBe(false);
+  });
+});
+
+describe("le rôle proposé d'abord à une invitation", () => {
+  it("est le plus étroit, jamais Superadmin ; à égalité, le premier", () => {
+    const depart = [{ id: SUPERADMIN, droits: DROITS }, ...ROLES_DE_DEPART];
+    expect(roleLePlusEtroit(depart)).toBe("lecture");
+    expect(roleLePlusEtroit([...depart, { id: "petit", droits: ["clients.voir"] }])).toBe("petit");
+    expect(roleLePlusEtroit([{ id: "a", droits: ["clients.voir"] }, { id: "b", droits: ["journal.voir"] }])).toBe("a");
+    expect(roleLePlusEtroit([{ id: SUPERADMIN, droits: [] }, { id: "administration", droits: DROITS }])).toBe("administration");
+    expect(roleLePlusEtroit([{ id: SUPERADMIN, droits: DROITS }])).toBeUndefined();
+    expect(roleLePlusEtroit([])).toBeUndefined();
   });
 });
 

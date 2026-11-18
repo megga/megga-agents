@@ -1,11 +1,10 @@
-import { Onglets } from "@/components/admin/onglets";
-import { aPuDonner, peutDonnerRole, perimetreVu } from "@/lib/admin/acces";
-import { DROITS_EXTERNE } from "@/lib/admin/droits";
+import { aPuDonner, peutDonnerRole, perimetreVu, roleLePlusEtroit } from "@/lib/admin/acces";
 import { gardePage } from "@/lib/admin/garde";
 import { invitationsEnAttente } from "@/lib/admin/invitations";
 import { listerRoles } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { base } from "@/lib/base";
+import { OngletsEquipe } from "../onglets";
 import { Invitations, type InvitationVue } from "./invitations";
 
 // Les invitations : en créer une (son lien n'est montré qu'une fois), voir celles en attente, en retirer.
@@ -13,6 +12,7 @@ export default async function PageInvitations() {
   const a = await gardePage("equipe.gerer");
   const db = base();
   const roles = listerRoles(db);
+  const donnables = roles.filter((r) => peutDonnerRole(a, r));
   const invitations: InvitationVue[] = invitationsEnAttente(db).map((i) => {
     const role = roles.find((r) => r.id === i.role);
     return {
@@ -29,19 +29,12 @@ export default async function PageInvitations() {
   return (
     <>
       <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.equipe}</h1>
-      <Onglets
-        actif="/admin/equipe/invitations"
-        onglets={[
-          { href: "/admin/equipe", texte: TA.membres },
-          { href: "/admin/equipe/invitations", texte: TA.invitations },
-          { href: "/admin/equipe/roles", texte: TA.roles },
-        ]}
-      />
+      <OngletsEquipe actif="/admin/equipe/invitations" />
       <Invitations
         invitations={invitations}
-        roles={roles.filter((r) => peutDonnerRole(a, r)).map((r) => ({ id: r.id, nom: r.nom }))}
+        roles={donnables.map((r) => ({ id: r.id, nom: r.nom }))}
+        defaut={roleLePlusEtroit(donnables)}
         tousPermis={a.perimetre === "tous"}
-        droitsExterne={DROITS_EXTERNE.map((d) => TA.nomsDroits[d])}
       />
     </>
   );

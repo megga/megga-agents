@@ -98,6 +98,13 @@ export function aPuDonner(a: Acces, role: { id: string; droits: readonly Droit[]
   return a.superadmin || (!!role && peutDonnerRole(a, role) && perimetreInclus(a, p));
 }
 
+/** Le rôle proposé d'abord à une invitation : le plus étroit (le moins de droits), jamais Superadmin ; à égalité, le premier. */
+export function roleLePlusEtroit(roles: readonly { id: string; droits: readonly Droit[] }[]): string | undefined {
+  let choisi: { id: string; droits: readonly Droit[] } | undefined;
+  for (const r of roles) if (r.id !== SUPERADMIN && (!choisi || r.droits.length < choisi.droits.length)) choisi = r;
+  return choisi?.id;
+}
+
 /**
  * Créer (roleId null) ou modifier un rôle : avec des droits qu'on a déjà, et jamais le rôle qu'on porte.
  * Un rôle vaut pour tous ses porteurs, quel que soit leur périmètre : limité à une liste de clients, on n'en écrit aucun.

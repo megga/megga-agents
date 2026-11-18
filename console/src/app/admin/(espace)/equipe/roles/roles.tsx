@@ -3,14 +3,15 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
-import { envoyer, ErreursChamps } from "@/components/admin/erreurs";
+import { envoyer } from "@/components/admin/envoyer";
+import { ErreursChamps } from "@/components/admin/erreurs";
+import { champ, etiquette } from "@/components/admin/formulaire";
 import { Pastille } from "@/components/admin/pastille";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { DROITS, GROUPES_DE_DROITS, type Droit } from "@/lib/admin/droits";
 import { TA } from "@/lib/admin/textes";
-import { champ, etiquette } from "../membres";
 
 // Les rôles : chacun avec ses droits par groupe et son nombre de membres. Créer, modifier, retirer : seulement ce que la
 // non-escalade laisse passer (peutEcrireRole, côté serveur), et seulement les droits que le membre a lui-même.
