@@ -40,6 +40,18 @@ describe("npm run admin:inviter", () => {
     db.close();
   });
 
+  it("note son geste au journal, sans le jeton", () => {
+    const r = lancer("chef@megga.test");
+    const jeton = r.sortie.trim().split("/").at(-1)!;
+    const db = new DatabaseSync(join(dossier, "b.sqlite"));
+    const { id } = db.prepare("SELECT id FROM admin_invitation").get() as { id: string };
+    const lignes = db.prepare("SELECT qui, courriel, action, cible, resultat, detail FROM admin_journal").all();
+    expect(lignes).toEqual([{ qui: null, courriel: null, action: "invitations.commande", cible: `invitation:${id}`, resultat: "ok",
+      detail: JSON.stringify({ courriel: "chef@megga.test" }) }]);
+    expect(JSON.stringify(db.prepare("SELECT * FROM admin_journal").all())).not.toContain(jeton);
+    db.close();
+  });
+
   it("sans courriel, ou avec un courriel refusé : le message sur la sortie d'erreur, code 1", () => {
     const sans = lancer();
     expect(sans.code).toBe(1);
