@@ -13,7 +13,7 @@ import {
   retirerInvitation,
 } from "@/lib/admin/invitations";
 import { accesDe, membreEnCours } from "@/lib/admin/membres";
-import { creerRole } from "@/lib/admin/roles";
+import { creerRole, lireRole, retirerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { baseEssai, compte, membre, refus, T0 } from "./aides";
 
@@ -102,6 +102,21 @@ describe("une invitation", () => {
     const large = creerInvitation(db, s, { ...corps, role: "administration", perimetre: "tous" }, T0);
     expect(refus(() => retirerInvitation(db, m, large.invitation.id, T0))).toMatchObject({ statut: 403, message: TA.escalade });
     retirerInvitation(db, m, invitation.id, T0);
+  });
+
+  it("tient son rôle : il ne se retire pas tant qu'elle est en attente", () => {
+    const s = membre(db, { utilisateur: "s", role: "superadmin" });
+    const petit = creerRole(db, s, { nom: "Petit", droits: ["clients.voir"] });
+    const { invitation } = creerInvitation(db, s, { ...chef, role: petit.id }, T0);
+    expect(refus(() => retirerRole(db, s, petit.id, T0))).toMatchObject({ statut: 409, message: TA.rolePorte });
+    retirerInvitation(db, s, invitation.id, T0);
+    retirerRole(db, s, petit.id, T0);
+    expect(lireRole(db, petit.id)).toBeUndefined();
+    const autre = creerRole(db, s, { nom: "Autre", droits: ["clients.voir"] });
+    creerInvitation(db, s, { ...chef, role: autre.id }, T0);
+    expect(refus(() => retirerRole(db, s, autre.id, apres(7 * JOUR - 1))).statut).toBe(409);
+    retirerRole(db, s, autre.id, apres(7 * JOUR + 1));
+    expect(lireRole(db, autre.id)).toBeUndefined();
   });
 
   it("au rôle superadmin, vaut pour tous les clients et sans fin", () => {

@@ -97,8 +97,12 @@ export function modifierRole(db: DatabaseSync, a: Acces, id: string, corps: unkn
   return lireRole(db, id)!;
 }
 
-export function retirerRole(db: DatabaseSync, a: Acces, id: string): void {
+/** Un rôle porté par un membre, ou nommé par une invitation en attente (ni acceptée, ni retirée, ni expirée), reste. */
+export function retirerRole(db: DatabaseSync, a: Acces, id: string, maintenant = new Date()): void {
   const role = roleAEcrire(db, a, id);
-  if (role.membres > 0) throw new Refus(409, TA.rolePorte);
+  const invite = db
+    .prepare("SELECT 1 FROM admin_invitation WHERE role = ? AND acceptee_le IS NULL AND retiree_le IS NULL AND valable_jusqua >= ?")
+    .get(id, maintenant.toISOString());
+  if (role.membres > 0 || invite) throw new Refus(409, TA.rolePorte);
   db.prepare("DELETE FROM admin_role WHERE id = ?").run(id);
 }
