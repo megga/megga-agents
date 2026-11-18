@@ -155,14 +155,15 @@ describe("la garde des routes", () => {
 
   it("marque chaque route qu'elle garde ; gardeSession ne demande qu'une session", async () => {
     expect(route[GARDE]).toBe(true);
-    const rejoindre = gardeSession({ action: "essai.session" }, async ({ compte, corps }) => ({ qui: compte.id, corps }));
+    const rejoindre = gardeSession({ action: "essai.session", detail: (c) => ({ jeton: (c as { jeton: string }).jeton }) },
+      async ({ compte, corps }) => ({ qui: compte.id, corps }));
     expect(rejoindre[GARDE]).toBe(true);
     const appelSession = (qui?: string, origine = "http://localhost") =>
       rejoindre(new Request("http://localhost/api/admin/invitation", { method: "POST",
-        headers: { ...(qui ? { "x-essai-qui": qui } : {}), origin: origine }, body: JSON.stringify({ jeton: "j" }) }), { params: Promise.resolve({}) });
+        headers: { ...(qui ? { "x-essai-qui": qui } : {}), origin: origine }, body: JSON.stringify({ jeton: "j", autre: "a" }) }), { params: Promise.resolve({}) });
     expect((await appelSession()).status).toBe(401);
     const ok = await appelSession("c");
-    expect([ok.status, await ok.json()]).toEqual([200, { qui: "c", corps: { jeton: "j" } }]);
+    expect([ok.status, await ok.json()]).toEqual([200, { qui: "c", corps: { jeton: "j", autre: "a" } }]);
     expect((await appelSession("c", "https://ailleurs.example")).status).toBe(403);
     expect(lignes().map((l) => `${l.qui} ${l.action} ${l.resultat} ${JSON.stringify(l.detail)}`))
       .toEqual(['c essai.session refuse 403 {"jeton":"[masqué]"}', 'c essai.session ok {"jeton":"[masqué]"}']);

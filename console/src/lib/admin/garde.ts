@@ -109,9 +109,12 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
   });
 }
 
-/** Pour qui n'est pas encore membre (rejoindre par une invitation) : une session et la bonne origine suffisent. */
+/**
+ * Pour qui n'est pas encore membre (rejoindre par une invitation) : une session et la bonne origine suffisent.
+ * Ouverte à tout compte : le journal ne note du corps que ce que regle.detail en garde, jamais le corps entier.
+ */
 export function gardeSession<P extends Record<string, string>>(
-  regle: { action: string },
+  regle: { action: string; detail: (corps: unknown) => unknown },
   traiter: (c: { compte: Compte; params: P; corps: unknown; db: DatabaseSync }) => Promise<unknown>,
 ): Gestionnaire<P> {
   return marquer<P>(async (requete, ctx) => {
@@ -124,7 +127,7 @@ export function gardeSession<P extends Record<string, string>>(
     return issue(async () => {
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
       return traiter({ compte, params, corps, db });
-    }, journaliste(db, compte, regle.action, null, () => corps));
+    }, journaliste(db, compte, regle.action, null, () => regle.detail(corps)));
   });
 }
 

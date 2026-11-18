@@ -103,6 +103,18 @@ describe("les invitations, par la route", () => {
   });
 });
 
+describe("rejoindre, une route ouverte à tout compte", () => {
+  it("ne note au journal que le jeton, masqué, jamais le reste du corps", async () => {
+    const { lien } = await (await appel(inviter, "POST", { qui: "s", corps: chef })).json();
+    const jeton = lien.split("/").at(-1);
+    const r = await appel(accepter, "POST", { qui: "x", courriel: "x@megga.test", corps: { jeton, autre: "x".repeat(3000) } });
+    expect(r.status).toBe(403);
+    const ligne = journal().find((l) => l.action === "invitations.accepter")!;
+    expect([ligne.qui, ligne.resultat, ligne.detail]).toEqual(["x", "refuse 403", { jeton: "[masqué]" }]);
+    expect(JSON.stringify(etat.db.prepare("SELECT detail FROM admin_journal").all())).not.toMatch(/xxxx|autre/);
+  });
+});
+
 describe("les membres, par la route", () => {
   it("se modifient et se retirent : { membre }, puis 204", async () => {
     membre(etat.db, { utilisateur: "n", role: "lecture" });
