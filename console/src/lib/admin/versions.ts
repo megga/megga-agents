@@ -44,14 +44,22 @@ export function numeroVersion(v: unknown): number | null {
   return typeof v === "number" && Number.isInteger(v) && v >= 1 && v < 1e9 ? v : null;
 }
 
+/** La base envoyée à l'atelier pour un corps de requête, retenue par corpsPourAtelier (externes.ts) pour detailVersion. */
+const basesEnvoyees = new WeakMap<object, number>();
+
+export function retenirBase(corps: object, base: number): void {
+  basesEnvoyees.set(corps, base);
+}
+
 /**
- * Ce que le journal garde du corps d'une version (valider, préparer) : la base, les noms des réglages changés ou le modèle par
- * métier demandé ; jamais une valeur (ni la configuration, ni les consignes).
+ * Ce que le journal garde du corps d'une version (valider, préparer) : la base réellement envoyée à l'atelier (rien d'envoyé :
+ * celle que le corps nomme), les noms des réglages changés ou le modèle par métier demandé ; jamais une valeur (ni la
+ * configuration, ni les consignes).
  */
 export function detailVersion(corps: unknown) {
   if (!estObjet(corps)) return null;
   return {
-    base: typeof corps.base === "number" ? numeroVersion(corps.base) : null,
+    base: basesEnvoyees.get(corps) ?? (typeof corps.base === "number" ? numeroVersion(corps.base) : null),
     ...(typeof corps.gabarit === "string" ? { gabarit: corps.gabarit } : {}),
     ...(estObjet(corps.changements) ? { changements: Object.keys(corps.changements).sort() } : {}),
   };

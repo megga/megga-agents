@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Barres } from "@/components/admin/barres";
 import { Bandeau } from "@/components/admin/erreurs";
 import { Pastille } from "@/components/admin/pastille";
 import { ChoixPeriode } from "@/components/admin/periode";
@@ -6,14 +7,17 @@ import { Tableau } from "@/components/admin/tableau";
 import { Tuile } from "@/components/admin/tuile";
 import { peut, type Acces } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type Jours } from "@/lib/admin/atelier";
+import { totauxConsole } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { agreger, joursDe, lireTout, texteGenre, type Souci } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
+import { base } from "@/lib/base";
 
 // La vue d'ensemble. Le bloc du moteur (clients.voir) : la période, les tuiles, « À surveiller », « Activité par client »,
 // tout borné au périmètre du membre (lireTout ne lit que ses clients). Un client injoignable est dit, les autres restent.
 // Avec couts.voir, la tuile et la colonne du coût, ce qui n'a pas de tarif et les clients dont le coût est illisible (absents
-// du total). Sans clients.voir, la page n'a que son titre.
+// du total). Le bloc de la console (comptes.voir, jamais un externe) : ses tuiles et ses barres, à la même période, mise alors
+// en tête de page. Sans aucun des deux droits, la page n'a que son titre.
 
 /** Les soucis d'un client, un par genre : ceux en cours d'abord, puis les plus nombreux. */
 function parGenre(soucis: Souci[]): { genre: string; enCours: boolean; nombre: number }[] {
@@ -27,7 +31,8 @@ function parGenre(soucis: Souci[]): { genre: string; enCours: boolean; nombre: n
   return [...groupes.values()].sort((a, b) => Number(b.enCours) - Number(a.enCours) || b.nombre - a.nombre);
 }
 
-async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
+/** periode : le choix de la période, quand le bloc Console ne l'a pas déjà mis en tête de page. */
+async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; periode: boolean }) {
   const r = await ouRefus(lireTout(a, jours, atelier));
   if (r instanceof RefusChamps) return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   const v = agreger(r.lectures, a);
@@ -41,7 +46,7 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
   );
   return (
     <>
-      <ChoixPeriode jours={jours} chemin="/admin" />
+      {periode && <ChoixPeriode jours={jours} chemin="/admin" />}
       {v.injoignables.length > 0 && <Bandeau etat="warn">{TA.injoignables(v.injoignables.map((id) => noms.get(id)).join(", "))}</Bandeau>}
       {v.coutsIllisibles.length > 0 && <Bandeau etat="warn">{TA.coutsIllisibles(v.coutsIllisibles.map((id) => noms.get(id)).join(", "))}</Bandeau>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
@@ -83,15 +88,36 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
   );
 }
 
+/** La console (comptes.voir) : comptes et agents en tout, messages de la période ; inscriptions et messages par jour. */
+function BlocConsole({ jours }: { jours: Jours }) {
+  const t = totauxConsole(base(), jours);
+  return (
+    <>
+      <h2 className="m-0 text-[17px] font-extrabold">{TA.console}</h2>
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
+        <Tuile titre={TA.comptes} valeur={TA.nombre(t.comptes)} />
+        <Tuile titre={TA.agents} valeur={TA.nombre(t.agents)} />
+        <Tuile titre={TA.messages} valeur={TA.nombre(t.messages)} />
+      </div>
+      <Barres jours={t.parJour.map((j) => ({ jour: j.jour, valeurs: [j.inscriptions, j.messages] }))} legendes={[TA.inscriptions, TA.messages]} />
+      <p className="m-0 text-[12.5px] text-faint">{TA.parJourUtc}</p>
+    </>
+  );
+}
+
 export default async function VueEnsemble({ searchParams }: PageProps<"/admin">) {
   const a = await gardePage();
   const titre = <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.vueEnsemble}</h1>;
-  if (!peut(a, "clients.voir")) return titre;
+  const moteur = peut(a, "clients.voir");
+  const comptes = peut(a, "comptes.voir"); // jamais à un externe (droitsEffectifs)
+  if (!moteur && !comptes) return titre;
   const jours = joursDe((await searchParams).jours);
   return (
     <>
       {titre}
-      <BlocMoteur jours={jours} a={a} />
+      {comptes && <ChoixPeriode jours={jours} chemin="/admin" />}
+      {moteur && <BlocMoteur jours={jours} a={a} periode={!comptes} />}
+      {comptes && <BlocConsole jours={jours} />}
     </>
   );
 }

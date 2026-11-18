@@ -101,7 +101,7 @@ describe("préparer une version", () => {
     expect([r.status, await r.json()]).toEqual([201, BROUILLON]);
     expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements: { voix: { voix: "v1" } } }]]);
     expect(simule.version.mock.calls).toEqual([["garage-essai", 2]]);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["versions.preparer", "ok", { base: null, changements: ["voix"] }]]);
+    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["versions.preparer", "ok", { base: 2, changements: ["voix"] }]]);
   });
 
   it("un externe qui nomme une base ancienne (d'autres consignes de MEGGA) : 403, l'atelier n'est pas appelé", async () => {
@@ -145,8 +145,8 @@ describe("préparer une version", () => {
     await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
     expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 1, changements }], ["garage-essai", { base: 3, changements: { ton: "x" } }]]);
     expect([simule.version.mock.calls, simule.catalogue.mock.calls]).toEqual([[], []]);
-    expect(journal().map((l) => l.detail)).toEqual([{ base: null, changements: ["ton"] }, { base: 1, changements: ["consignes", "whatsapp"] },
-      { base: null, gabarit: "immobilier" }]);
+    expect(journal().map((l) => l.detail)).toEqual([{ base: 3, changements: ["ton"] }, { base: 1, changements: ["consignes", "whatsapp"] },
+      { base: 3, gabarit: "immobilier" }]);
     expect(tableJournal()).not.toContain("Consignes sur mesure");
   });
 
@@ -156,6 +156,18 @@ describe("préparer une version", () => {
       expect([r.status, await r.json()], JSON.stringify(base)).toEqual([400, { erreur: TA.baseInvalide }]);
     }
     expect(ecritures()).toEqual([]);
+  });
+
+  it("le journal note la base réellement envoyée à l'atelier, même refusée par lui ; rien d'envoyé, la base que le corps nomme", async () => {
+    simule.ajouterVersion.mockRejectedValueOnce(new RefusChamps(422, "configuration invalide"));
+    await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { base: null, changements: { ton: "y" } });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { base: 1, changements: { ton: "z" } });
+    expect(journal().map((l) => [l.qui, l.resultat, l.detail]).reverse()).toEqual([
+      ["exploitant", "refuse 422", { base: 3, changements: ["ton"] }],
+      ["invite", "ok", { base: 2, changements: ["ton"] }],
+      ["invite", "refuse 403", { base: 1, changements: ["ton"] }],
+    ]);
   });
 
   it("un refus de l'atelier rend sa phrase et ses messages champ par champ", async () => {

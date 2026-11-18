@@ -118,6 +118,12 @@ function lireMotif(corps: unknown): string {
   return m;
 }
 
+/** Ce que le journal garde d'une suspension : son motif, coupé à 200 caractères ; rien d'autre du corps. */
+export function detailSuspension(corps: unknown): { motif: string | null } {
+  const m = estObjet(corps) && typeof corps.motif === "string" ? corps.motif.trim() : null;
+  return { motif: m === null ? null : [...m].slice(0, MOTIF_MAX).join("") };
+}
+
 /** L'adaptateur interne de Better Auth (celui de la console). */
 export async function adaptateurComptes(): Promise<AdaptateurComptes> {
   return (await auth().$context).internalAdapter;

@@ -37,6 +37,8 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "ses
   { fichier: "clients/route.ts", methodes: ["POST"], droit: "clients.creer", params: {}, client: false },
   { fichier: "clients/[id]/installation/route.ts", methodes: ["PUT", "DELETE"], droit: "installations.gerer", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/installation/image/route.ts", methodes: ["POST"], droit: "installations.gerer", params: { id: "garage-essai" }, client: true },
+  { fichier: "comptes/[id]/suspension/route.ts", methodes: ["POST", "DELETE"], droit: "comptes.gerer", params: { id: "inconnu" }, client: false },
+  { fichier: "comptes/[id]/sessions/route.ts", methodes: ["DELETE"], droit: "comptes.gerer", params: { id: "inconnu" }, client: false },
 ];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
