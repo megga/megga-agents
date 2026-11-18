@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import { T } from "@/lib/textes";
 
+export { retourSur } from "./retour";
+
 export function messageErreur(code: string | undefined): string {
   if (!code) return T.erreurGenerale;
   if (code === "INVALID_EMAIL_OR_PASSWORD" || code === "INVALID_EMAIL" || code === "INVALID_PASSWORD") return T.erreurIdentifiants;
@@ -17,7 +19,8 @@ export function messageErreur(code: string | undefined): string {
   return T.erreurGenerale;
 }
 
-export function Connexion({ fournisseurs }: { fournisseurs: ("google" | "microsoft")[] }) {
+/** retour : déjà passé par retourSur (page.tsx) ; on y va après la connexion. */
+export function Connexion({ fournisseurs, retour }: { fournisseurs: ("google" | "microsoft")[]; retour: string }) {
   const [mode, setMode] = useState<"connexion" | "inscription">("connexion");
   const [entreprise, setEntreprise] = useState("");
   const [courriel, setCourriel] = useState("");
@@ -40,7 +43,7 @@ export function Connexion({ fournisseurs }: { fournisseurs: ("google" | "microso
       setEnvoi(false);
       return;
     }
-    router.replace("/");
+    router.replace(retour);
     router.refresh();
   }
 
@@ -56,12 +59,12 @@ export function Connexion({ fournisseurs }: { fournisseurs: ("google" | "microso
           <>
             <div className="flex flex-col gap-2">
               {fournisseurs.includes("google") && (
-                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "google", callbackURL: "/" })}>
+                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "google", callbackURL: retour })}>
                   {T.avecGoogle}
                 </Button>
               )}
               {fournisseurs.includes("microsoft") && (
-                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "microsoft", callbackURL: "/" })}>
+                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "microsoft", callbackURL: retour })}>
                   {T.avecMicrosoft}
                 </Button>
               )}

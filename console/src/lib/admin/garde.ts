@@ -1,0 +1,126 @@
+import "server-only";
+import type { DatabaseSync } from "node:sqlite";
+import { notFound, redirect } from "next/navigation";
+import { Refus } from "@/lib/agents";
+import { session, sessionDe } from "@/lib/auth";
+import { base } from "@/lib/base";
+import { exiger, exigerClient, peut, voitClient, type Acces } from "./acces";
+import type { Droit } from "./droits";
+import { noter } from "./journal";
+import { accesDe } from "./membres";
+import { TA } from "./textes";
+
+// Le seul point de contrôle de l'admin : chaque route de /api/admin est exportée par garde ou gardeSession,
+// chaque page appelle gardePage. Rien n'est décidé par l'écran seul ; un droit retiré vaut à la requête suivante.
+
+/** La marque d'une route gardée (tests/admin/routes.test.ts vérifie que chaque route la porte). */
+export const GARDE = Symbol("garde");
+
+export type Regle<P> = { droit: Droit; client?: (p: P) => string; action?: string; cible?: (p: P, corps: unknown) => string | null };
+export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: DatabaseSync };
+export type Gestionnaire<P> = ((requete: Request, ctx: { params: Promise<P> }) => Promise<Response>) & { [GARDE]: true };
+
+type Compte = { id: string; email: string; name: string };
+
+/** Une écriture ne vient que de la console : l'origine de la requête, ou celle de BETTER_AUTH_URL (derrière un relais). */
+export function origineAdmise(requete: Request, env: Record<string, string | undefined> = process.env): boolean {
+  const origine = requete.headers.get("origin");
+  if (!origine) return false;
+  const admises = [new URL(requete.url).origin];
+  try {
+    if (env.BETTER_AUTH_URL) admises.push(new URL(env.BETTER_AUTH_URL).origin);
+  } catch {
+    // une adresse illisible n'admet rien de plus
+  }
+  return admises.includes(origine);
+}
+
+const lecture = (requete: Request) => requete.method === "GET" || requete.method === "HEAD";
+
+async function lireCorps(requete: Request): Promise<unknown> {
+  return lecture(requete) ? null : requete.json().catch(() => null);
+}
+
+/** traiter rend une Response (rendue telle quelle) ou une valeur (en JSON) ; un Refus, son statut ; le reste, 500 sans détail. */
+async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: string) => void): Promise<Response> {
+  try {
+    const r = await faire();
+    const reponse = r instanceof Response ? r : Response.json(r);
+    noterIssue(reponse.ok ? "ok" : `refuse ${reponse.status}`);
+    return reponse;
+  } catch (e) {
+    if (e instanceof Refus) {
+      noterIssue(`refuse ${e.statut}`);
+      return Response.json({ erreur: e.message }, { status: e.statut });
+    }
+    console.error("admin :", e);
+    noterIssue("erreur");
+    return Response.json({ erreur: TA.erreurInterne }, { status: 500 });
+  }
+}
+
+function journaliste(db: DatabaseSync, compte: Compte, action: string | undefined, cible: string | null, corps: unknown) {
+  return (resultat: string) => {
+    if (action) noter(db, { qui: compte.id, courriel: compte.email, action, cible, resultat, detail: corps });
+  };
+}
+
+function cibleDe<P>(regle: Regle<P>, params: P, corps: unknown): string | null {
+  try {
+    if (regle.cible) return regle.cible(params, corps);
+    return regle.client ? `client:${regle.client(params)}` : null;
+  } catch {
+    return null;
+  }
+}
+
+const marquer = <P>(f: (requete: Request, ctx: { params: Promise<P> }) => Promise<Response>): Gestionnaire<P> =>
+  Object.assign(f, { [GARDE]: true as const });
+
+/** Ordre : session (401), membre en cours (404), hors GET l'origine (403), le droit (403), le client (404), puis traiter. */
+export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter: (c: Contexte<P>) => Promise<unknown>): Gestionnaire<P> {
+  return marquer<P>(async (requete, ctx) => {
+    const s = await sessionDe(requete);
+    if (!s) return Response.json({ erreur: TA.connectezVous }, { status: 401 });
+    const db = base();
+    const params = await ctx.params;
+    const corps = await lireCorps(requete);
+    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), corps);
+    return issue(async () => {
+      const acces = accesDe(db, s.user);
+      if (!acces) throw new Refus(404, TA.introuvable);
+      if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
+      exiger(acces, regle.droit);
+      if (regle.client) exigerClient(acces, regle.client(params));
+      return traiter({ acces, params, corps, requete, db });
+    }, noterIssue);
+  });
+}
+
+/** Pour qui n'est pas encore membre (rejoindre par une invitation) : une session et la bonne origine suffisent. */
+export function gardeSession<P extends Record<string, string>>(
+  regle: { action: string },
+  traiter: (c: { compte: Compte; params: P; corps: unknown; db: DatabaseSync }) => Promise<unknown>,
+): Gestionnaire<P> {
+  return marquer<P>(async (requete, ctx) => {
+    const s = await sessionDe(requete);
+    if (!s) return Response.json({ erreur: TA.connectezVous }, { status: 401 });
+    const db = base();
+    const params = await ctx.params;
+    const corps = await lireCorps(requete);
+    const compte = { id: s.user.id, email: s.user.email, name: s.user.name };
+    return issue(async () => {
+      if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
+      return traiter({ compte, params, corps, db });
+    }, journaliste(db, compte, regle.action, null, corps));
+  });
+}
+
+/** Pour une page : sans session, la connexion puis retour à /admin ; sinon 404 pour qui n'a pas le droit ou le client. */
+export async function gardePage(droit?: Droit, client?: string): Promise<Acces> {
+  const s = await session();
+  if (!s) redirect("/connexion?retour=/admin");
+  const a = accesDe(base(), s.user);
+  if (!a || (droit && !peut(a, droit)) || (client !== undefined && !voitClient(a, client))) notFound();
+  return a;
+}

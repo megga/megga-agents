@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { messageErreur } from "@/app/connexion/connexion";
+import { messageErreur, retourSur } from "@/app/connexion/connexion";
 import { fournisseurs } from "@/lib/auth";
 
 describe("Google et Microsoft", () => {
@@ -23,5 +23,18 @@ describe("les erreurs de connexion", () => {
     expect(messageErreur("USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL")).toBe("Ce courriel a déjà un compte.");
     expect(messageErreur("PASSWORD_TOO_SHORT")).toBe("Le mot de passe fait 8 caractères au moins.");
     expect(messageErreur("AUTRE_CHOSE")).toBe("Un souci est survenu. Réessayez.");
+  });
+});
+
+describe("le retour après la connexion", () => {
+  it("ne mène qu'à l'admin ou à une invitation, sinon à la console", () => {
+    expect(retourSur("/admin")).toBe("/admin");
+    expect(retourSur("/admin/invitation/" + "a".repeat(43))).toBe("/admin/invitation/" + "a".repeat(43));
+    expect(retourSur("https://ailleurs.example")).toBe("/");
+    expect(retourSur("//ailleurs.example/admin")).toBe("/");
+    expect(retourSur("/admin/invitation/" + "a".repeat(42))).toBe("/");
+    expect(retourSur("/admin/clients")).toBe("/");
+    expect(retourSur(["/admin"])).toBe("/");
+    expect(retourSur(undefined)).toBe("/");
   });
 });
