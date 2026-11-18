@@ -286,6 +286,21 @@ export const TA = {
   aucunModele: "Aucun tour sur la période.",
   nombre: (n: number) => NOMBRE.format(n),
 
+  // Les alertes et la vue d'ensemble
+  client: "Client",
+  soucis: "Soucis",
+  parDate: "Par date",
+  parClient: "Par client",
+  parGenre: "Par genre",
+  enCours: "En cours",
+  resolueLe: (quand: string) => `Résolue le ${quand}`,
+  videAlertes: "Aucune alerte sur la période.",
+  videASurveiller: "Rien à surveiller sur la période.",
+  videActivite: "Aucune activité lue sur la période.",
+  injoignables: (clients: string) => `Ces clients ne répondent pas : ${clients}.`,
+  /** Un instant en secondes depuis 1970 (ceux de l'atelier), à l'heure de Zurich ; autre chose reste tel quel. */
+  moment: (secondes: number) => (Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : String(secondes)),
+
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {
     ecart: "Écart de version",
