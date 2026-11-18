@@ -37,6 +37,26 @@ describe("le journal", () => {
     expect(JSON.stringify(db.prepare("SELECT * FROM admin_journal").all())).not.toContain("secret");
   });
 
+  it("nettoie aussi la cible : un numéro réduit, un secret masqué", () => {
+    const s = acces({ utilisateur: "s", superadmin: true });
+    for (const cible of ["personne:+41791234567", "cle:mk_1", "jeton:abc", "client:a1", "+41791234567", "role:ro_1:2", null]) {
+      noter(db, geste("s", "essai", cible), T0);
+    }
+    expect(lireJournal(db, s, { page: 1 }).lignes.map((l) => l.cible).reverse())
+      .toEqual(["personne:…4567", "cle:[masqué]", "jeton:[masqué]", "client:a1", "…4567", "role:ro_1:2", null]);
+    expect(JSON.stringify(db.prepare("SELECT cible FROM admin_journal").all())).not.toMatch(/41791234567|mk_1|abc/);
+  });
+
+  it("borne un détail à 2048 caractères, rendu alors tel quel", () => {
+    const s = acces({ utilisateur: "s", superadmin: true });
+    const gros = { liste: Array.from({ length: 500 }, (_, i) => `élément ${i}`) };
+    noter(db, geste("s", "essai", null, gros), T0);
+    expect((db.prepare("SELECT length(detail) AS n FROM admin_journal").get() as { n: number }).n).toBe(2048);
+    expect(lireJournal(db, s, { page: 1 }).lignes[0].detail).toBe(JSON.stringify(gros).slice(0, 2048));
+    noter(db, geste("s", "essai", null, { court: "oui" }), minute(1));
+    expect(lireJournal(db, s, { page: 1 }).lignes[0].detail).toEqual({ court: "oui" });
+  });
+
   it("se lit par pages de cinquante", () => {
     const s = acces({ utilisateur: "s", superadmin: true });
     for (let i = 0; i < 120; i++) noter(db, geste("s", `geste.${i}`, null), minute(i));

@@ -24,6 +24,8 @@ export type FiltresJournal = { membre?: string; action?: string; client?: string
 const MASQUE = "[masqué]";
 const CLE_SECRETE = /jeton|cle|token|secret|passe|password|authorization/i;
 const NUMERO = /^\+?\d{6,20}$/;
+/** Au-delà, le détail sérialisé est coupé : le journal ne se remplit pas d'un corps démesuré. */
+const DETAIL_MAX = 2048;
 
 /** Le détail sans secret, à toute profondeur ; un numéro (de personne) réduit à ses quatre derniers chiffres. */
 export function nettoyer(detail: unknown): unknown {
@@ -35,10 +37,21 @@ export function nettoyer(detail: unknown): unknown {
   return detail;
 }
 
+/** Une cible « genre:valeur » nettoyée comme le détail { genre: valeur } : un numéro réduit, la valeur d'un genre secret masquée. */
+function nettoyerCible(cible: string | null): string | null {
+  if (cible === null) return null;
+  const i = cible.indexOf(":");
+  if (i < 0) return nettoyer(cible) as string;
+  const genre = cible.slice(0, i);
+  return `${genre}:${(nettoyer({ [genre]: cible.slice(i + 1) }) as Record<string, string>)[genre]}`;
+}
+
+/** Nettoie lui-même la cible et le détail ; le détail sérialisé est coupé à DETAIL_MAX caractères. */
 export function noter(db: DatabaseSync, e: Omit<LigneJournal, "id" | "quand">, maintenant = new Date()): void {
   const detail = nettoyer(e.detail);
+  const texte = detail === undefined || detail === null ? null : (JSON.stringify(detail)?.slice(0, DETAIL_MAX) ?? null);
   db.prepare("INSERT INTO admin_journal (quand, qui, courriel, action, cible, resultat, detail) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(maintenant.toISOString(), e.qui, e.courriel, e.action, e.cible, e.resultat, detail === undefined || detail === null ? null : JSON.stringify(detail));
+    .run(maintenant.toISOString(), e.qui, e.courriel, e.action, nettoyerCible(e.cible), e.resultat, texte);
 }
 
 type Ligne = Omit<LigneJournal, "detail"> & { detail: string | null };
@@ -60,12 +73,13 @@ function conditions(a: Acces, f: FiltresJournal): { sql: string; valeurs: SQLInp
   return { sql: c.length ? `WHERE ${c.join(" AND ")}` : "", valeurs };
 }
 
+/** Le détail relu ; un détail coupé (JSON incomplet) est rendu tel quel, en texte. */
 function detailLu(json: string | null): unknown {
   if (json === null) return null;
   try {
     return JSON.parse(json);
   } catch {
-    return null;
+    return json;
   }
 }
 
