@@ -45,6 +45,12 @@ Puis la console contre lui (ou `ATELIER_URL` et `ATELIER_JETON` dans `.env.local
 ATELIER_URL=http://127.0.0.1:8198 ATELIER_JETON=<le même> npm run dev
 ```
 
+Pour entrer dans `/admin`, il faut un superadmin : cette commande imprime le lien d'invitation du premier, à ouvrir une fois connecté avec ce courriel. Elle ne lit pas `.env.local` : passez-lui `BETTER_AUTH_URL` (par défaut `http://localhost:3000`) et `CONSOLE_BASE` (par défaut `.donnees/console.sqlite`) quand ils diffèrent de ceux de la console.
+
+```bash
+npm run admin:inviter -- <courriel>
+```
+
 ## Essais
 
 ```bash
