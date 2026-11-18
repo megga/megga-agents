@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { atelier, atelierBranche, ATTENTE_MS, GARDE_MS, lireErreur, oublier, RefusChamps } from "@/lib/admin/atelier";
+import { atelier, atelierBranche, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
 import { refusAsync } from "./aides";
 
@@ -111,6 +111,15 @@ describe("les appels", () => {
     expect(fini).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await attente).toMatchObject({ statut: 504, message: TA.atelierLent });
+  });
+
+  it("pour un écran, un refus se rend au lieu de lever, même sans ATELIER_URL", async () => {
+    delete process.env.ATELIER_URL;
+    const r = await ouRefus(atelier.suivi("garage-essai", 7));
+    expect(r).toBeInstanceOf(RefusChamps);
+    expect(r).toMatchObject({ statut: 503, message: TA.moteurNonBranche });
+    process.env.ATELIER_URL = "http://atelier.test";
+    expect(await ouRefus(atelier.clients())).toEqual({ clients: [], porte: true });
   });
 
   it("un refus de l'atelier devient un RefusChamps", async () => {

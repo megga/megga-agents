@@ -13,6 +13,8 @@ const INSTANT = new Intl.DateTimeFormat("fr-CH", {
   minute: "2-digit",
 });
 
+const NOMBRE = new Intl.NumberFormat("fr-CH");
+
 /** Un jour AAAA-MM-JJ s'écrit JJ.MM.AAAA, sans fuseau ; autre chose reste tel quel. */
 function jour(v: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
@@ -242,6 +244,47 @@ export const TA = {
   dejaMembre: "Ce compte est déjà membre de l'admin.",
   usageCommande: "Usage : npm run admin:inviter -- <courriel>",
   erreurInterne: "Un souci est survenu. Réessayez.",
+
+  // Les clients du moteur
+  entreprise: "Entreprise",
+  agent: "Agent",
+  identifiant: "Identifiant",
+  version: "Version",
+  etat: "État",
+  rechercherClient: "Rechercher un client",
+  videClients: "Aucun client.",
+  aucunClientTrouve: "Aucun client ne correspond.",
+  versionsClient: (enService: number | null, derniere: number | null) =>
+    enService === null ? "Aucune en service" : derniere === null || derniere === enService ? `${enService}` : `${enService}, dernière ${derniere}`,
+  enService: "En service",
+  jamaisEnService: "Jamais mis en service",
+  ecart: "Écart",
+  tenuParMegga: "Tenu par MEGGA",
+  conteneurDemarre: "Conteneur démarré",
+  conteneurArrete: "Conteneur arrêté",
+  installationRelevee: "Relevée",
+  installationSilencieuse: "Silencieuse",
+  installationRevoquee: "Révoquée",
+  sansInstallation: "Aucune installation",
+  porteMuette: "La porte ne répond pas : l'état des conteneurs et l'écart sont inconnus pour toute la liste.",
+
+  // Le suivi d'un client
+  periode: "Période",
+  dontApi: "Dont par API",
+  echecs: "Échecs",
+  secours: "Secours",
+  rappelsEnAttente: "Rappels en attente",
+  voixCaracteres: "Voix, caractères dits",
+  vocauxEntendus: "Vocaux entendus",
+  vocauxDits: "Vocaux dits",
+  parModele: "Par modèle",
+  modele: "Modèle",
+  entree: "Entrée",
+  sortie: "Sortie",
+  cacheLecture: "Cache lu",
+  cacheEcriture: "Cache écrit",
+  aucunModele: "Aucun tour sur la période.",
+  nombre: (n: number) => NOMBRE.format(n),
 
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {

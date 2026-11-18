@@ -7,6 +7,7 @@ import {
   exigerClient,
   filtrerClients,
   lirePerimetre,
+  ongletsClient,
   perimetreInclus,
   peut,
   peutCreerClient,
@@ -142,5 +143,26 @@ describe("le rail", () => {
     expect(entreesRail(acces({ externe: true, droits: DROITS, perimetre: ["garage-essai"] })).map((e) => e.href))
       .toEqual(["/admin", "/admin/clients", "/admin/alertes", "/admin/installations"]);
     expect(entreesRail(acces({ superadmin: true }))[0]).toEqual({ href: "/admin", texte: TA.vueEnsemble });
+  });
+});
+
+describe("les onglets d'un client", () => {
+  const textes = (o: { texte: string }[]) => o.map((x) => x.texte);
+
+  it("un externe voit Suivi, Alertes, Conversations, Versions, et Installation hors Cloudflare seulement", () => {
+    const e = acces({ externe: true, droits: DROITS, perimetre: ["garage-essai"] });
+    expect(textes(ongletsClient(e, "garage-essai", false))).toEqual([TA.suivi, TA.alertes, TA.conversations, TA.versions]);
+    expect(textes(ongletsClient(e, "chalet-essai", true))).toEqual([TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.installation]);
+  });
+
+  it("un membre Finance voit Suivi, Alertes, Versions ; Accès s'ouvre avec acces.gerer ou clients.piloter", () => {
+    const finance = ROLES_DE_DEPART.find((r) => r.id === "finance")!;
+    expect(textes(ongletsClient(acces({ droits: finance.droits }), "garage-essai", false))).toEqual([TA.suivi, TA.alertes, TA.versions]);
+    for (const d of ["acces.gerer", "clients.piloter"] as const)
+      expect(textes(ongletsClient(acces({ droits: ["clients.voir", d] }), "garage-essai", false)), d).toContain(TA.acces);
+    expect(ongletsClient(acces({ superadmin: true }), "garage-essai", true).map((o) => o.href)).toEqual([
+      "/admin/clients/garage-essai", "/admin/clients/garage-essai/alertes", "/admin/clients/garage-essai/conversations",
+      "/admin/clients/garage-essai/versions", "/admin/clients/garage-essai/acces", "/admin/clients/garage-essai/installation",
+    ]);
   });
 });

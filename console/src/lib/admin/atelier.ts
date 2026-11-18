@@ -125,7 +125,7 @@ export function oublier(): void {
 }
 
 /** Une lecture, gardée GARDE_MS : deux lectures rapprochées n'en font qu'une ; un refus n'est pas gardé. */
-function lire<T>(chemin: string): Promise<T> {
+async function lire<T>(chemin: string): Promise<T> {
   const url = adresse() + chemin;
   const g = gardees.get(url);
   if (g && Date.now() - g.quand < GARDE_MS) return g.valeur as Promise<T>;
@@ -183,6 +183,15 @@ export const atelier = {
   reglerTarifs: (corps: Corps) => ecrire<Tarifs>("/tarifs", "PUT", corps),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
 };
+
+/** Pour un écran : la réponse, ou le refus de l'atelier (sa phrase, son statut), que l'écran montre au lieu de lever. */
+export function ouRefus<T>(lecture: Promise<T>): Promise<T | RefusChamps> {
+  return lecture.catch((e: unknown) => {
+    if (e instanceof RefusChamps) return e;
+    console.error("atelier :", e);
+    return new RefusChamps(500, TA.erreurInterne);
+  });
+}
 
 /** Ce que le suivi lit (suivi.ts, lireTout) : remplaçable dans les essais. */
 export type Lecteur = Pick<typeof atelier, "clients" | "suivi" | "alertes">;
