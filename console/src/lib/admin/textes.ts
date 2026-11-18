@@ -18,6 +18,31 @@ export const TA = {
   equipe: "Équipe",
   journal: "Journal",
 
+  // La coquille
+  railAdmin: "L'admin MEGGA",
+
+  // La page d'une invitation
+  invitationTitre: "Rejoindre l'admin",
+  invitationPour: (courriel: string) => `Une invitation pour ${courriel}.`,
+  rejoindre: "Rejoindre",
+  votreNom: "Votre nom",
+  courriel: "Courriel",
+  motDePasse: "Mot de passe",
+  creerEtRejoindre: "Créer mon compte et rejoindre",
+  dejaUnCompte: "Déjà un compte ?",
+  seConnecter: "Se connecter",
+  seDeconnecter: "Se déconnecter",
+  motDePasseCourt: "Le mot de passe fait 8 caractères au moins.",
+  courrielDejaInscrit: "Ce courriel a déjà un compte : connectez-vous.",
+
+  // Les pièces communes
+  annuler: "Annuler",
+  fermer: "Fermer",
+  copier: "Copier",
+  copie: "Copié",
+  secretTitre: "À copier maintenant",
+  secretUneFois: "Il ne sera plus jamais montré. Copiez-le avant de fermer.",
+
   // Les onglets d'un client
   suivi: "Suivi",
   conversations: "Conversations",

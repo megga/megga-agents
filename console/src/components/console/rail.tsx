@@ -1,18 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { authClient } from "@/lib/auth-client";
+import { TA } from "@/lib/admin/textes";
 import { metier } from "@/lib/metiers";
 import { T } from "@/lib/textes";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Epingle, HautBas, Loupe, Plus } from "./icones";
+import { Compte } from "./compte";
+import { Epingle, Loupe, Plus } from "./icones";
 import { Tete } from "./tete";
 import type { AgentVu } from "./types";
 
@@ -22,6 +15,7 @@ type Props = {
   nouveau: string | null;
   apercus: Record<string, string>;
   entreprise: string;
+  membre: boolean; // membre de l'admin : le menu du compte y mène
   onChoisir: (id: string) => void;
   onNouvel: () => void;
   onChercher: () => void;
@@ -78,7 +72,7 @@ export function Rail(p: Props) {
         </>
       )}
 
-      <Compte entreprise={p.entreprise} />
+      <Compte entreprise={p.entreprise} lien={p.membre ? { href: "/admin", texte: TA.administration } : undefined} />
     </nav>
   );
 }
@@ -142,73 +136,5 @@ function MenuAgent({ agent: a, onEpingler, children }: { agent: AgentVu; onEping
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
-  );
-}
-
-function initiale(nom: string): string {
-  return ([...nom.trim()][0] ?? "M").toUpperCase();
-}
-
-function Compte({ entreprise }: { entreprise: string }) {
-  const [theme, setTheme] = useState<string | null>(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      return localStorage.getItem("theme");
-    } catch {
-      return null;
-    }
-  });
-  function choisirTheme(t: "clair" | "sombre" | null) {
-    try {
-      if (t) localStorage.setItem("theme", t);
-      else localStorage.removeItem("theme");
-    } catch {}
-    setTheme(t);
-    (window as unknown as { __theme?: () => void }).__theme?.();
-  }
-  async function sortir() {
-    await authClient.signOut();
-    // Un rechargement complet : rien de la session (conversations gardées en mémoire) ne reste dans la page.
-    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
-    window.location.assign("/connexion");
-  }
-  const choix: [string | null, string][] = [["clair", T.themeClair], ["sombre", T.themeSombre], [null, T.themeAppareil]];
-  return (
-    <div className="sticky bottom-0 mt-auto w-full bg-side px-2.5 pt-2 pb-3 before:pointer-events-none before:absolute before:inset-x-0 before:-top-[18px] before:h-[18px] before:bg-linear-to-b before:from-transparent before:to-side">
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          aria-label={T.compteEtReglages}
-          className="flex w-full min-w-0 items-center gap-2.5 rounded-[14px] px-2.5 py-2 text-left text-ink hover:bg-hover aria-expanded:bg-hover"
-        >
-          <span className="grid size-9 flex-none place-items-center rounded-[11px] bg-ink text-[14px] font-extrabold text-bg">{initiale(entreprise)}</span>
-          <b className="truncate text-[14.5px] font-bold max-[760px]:hidden">{entreprise}</b>
-          <HautBas className="ml-auto size-4 flex-none text-muted-ink max-[760px]:hidden" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" sideOffset={8} className="min-w-[230px] rounded-2xl p-1.5 shadow-[0_16px_40px_rgba(27,27,47,.18)]">
-          <div className="mb-1 flex items-center gap-2.5 px-2.5 pt-1.5 pb-2 [border-bottom:var(--fin)_solid_var(--trait)]">
-            <span className="grid size-[30px] flex-none place-items-center rounded-[9px] bg-ink text-[12.5px] font-extrabold text-bg">{initiale(entreprise)}</span>
-            <b className="truncate text-[14.5px]">{entreprise}</b>
-          </div>
-          <div className="px-2.5 pt-1 text-[11.5px] font-bold tracking-[.06em] text-faint uppercase">{T.theme}</div>
-          <div className="flex gap-1 px-1.5 pt-1 pb-1.5" role="group" aria-label={T.theme}>
-            {choix.map(([v, nom]) => (
-              <button
-                key={nom}
-                type="button"
-                aria-pressed={theme === v}
-                onClick={() => choisirTheme(v as "clair" | "sombre" | null)}
-                className="rounded-full px-2.5 py-1 text-[12.5px] font-semibold text-ink hover:bg-hover aria-pressed:bg-ink aria-pressed:text-bg"
-              >
-                {nom}
-              </button>
-            ))}
-          </div>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={sortir} className="rounded-[10px] px-2.5 py-2 text-[14px]">
-            {T.seDeconnecter}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
   );
 }

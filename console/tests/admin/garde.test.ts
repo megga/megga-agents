@@ -9,7 +9,14 @@ import { config, proxy } from "@/proxy";
 import { acces, baseEssai, compte, membre, roleVide } from "./aides";
 
 // La session vient de l'en-tête x-essai-qui (routes) ou de etat.qui (pages) ; la base est celle de l'essai.
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
+// connection() note seulement son appel : hors de Next.js, la vraie refuse de répondre.
+const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null, connexions: 0 }));
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  connection: async () => {
+    etat.connexions++;
+  },
+}));
 const sessionPour = (qui: string | null) => (qui ? { user: { id: qui, email: `${qui}@megga.test`, name: qui.toUpperCase() } } : null);
 
 vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
@@ -189,6 +196,14 @@ describe("la garde des pages", () => {
     await expect(gardePage("clients.voir", "Garage-essai")).rejects.toThrow("404");
     const a = await gardePage("clients.voir", "garage-essai");
     expect(a).toMatchObject({ utilisateur: "p", courriel: "p@megga.test", perimetre: ["garage-essai"] });
+  });
+
+  it("ne se rend qu'à la requête, jamais dans un préchargement", async () => {
+    membre(etat.db, { utilisateur: "p", role: "lecture" });
+    etat.qui = "p";
+    etat.connexions = 0;
+    await gardePage("clients.voir");
+    expect(etat.connexions).toBe(1);
   });
 });
 

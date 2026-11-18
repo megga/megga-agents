@@ -1,6 +1,7 @@
 import "server-only";
 import type { DatabaseSync } from "node:sqlite";
 import { notFound, redirect } from "next/navigation";
+import { connection } from "next/server";
 import { Refus } from "@/lib/agents";
 import { session, sessionDe } from "@/lib/auth";
 import { base } from "@/lib/base";
@@ -127,8 +128,13 @@ export function gardeSession<P extends Record<string, string>>(
   });
 }
 
-/** Pour une page : sans session, la connexion puis retour à /admin ; sinon 404 pour qui n'a pas le droit ou le client. */
+/**
+ * Pour une page : sans session, la connexion puis retour à /admin ; sinon 404 pour qui n'a pas le droit ou le client.
+ * connection() d'abord : une page de l'admin ne se rend qu'à la requête, jamais dans un préchargement (la fin d'accès
+ * se compare à l'heure du moment, et un droit retiré doit valoir tout de suite).
+ */
 export async function gardePage(droit?: Droit, client?: string): Promise<Acces> {
+  await connection();
   const s = await session();
   if (!s) redirect("/connexion?retour=/admin");
   const a = accesDe(base(), s.user);
