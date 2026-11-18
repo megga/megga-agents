@@ -1,15 +1,20 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { TA } from "@/lib/admin/textes";
 import { METIERS } from "@/lib/metiers";
 import { T } from "@/lib/textes";
 
+/** Les textes d'un objet de textes, à toute profondeur (TA.genres, par exemple) ; une fonction est appelée avec des valeurs d'essai. */
+function textesDe(v: unknown): string[] {
+  if (typeof v === "string") return [v];
+  if (typeof v === "function") return [(v as (...a: unknown[]) => string)("Alix", "à l'accueil de votre agence")];
+  if (v && typeof v === "object") return Object.values(v).flatMap(textesDe);
+  return [];
+}
+
 function tousLesTextes(): string[] {
-  const t: string[] = [];
-  for (const v of Object.values(T)) {
-    if (typeof v === "string") t.push(v);
-    else t.push((v as (...a: unknown[]) => string)("Alix", "à l'accueil de votre agence"));
-  }
+  const t: string[] = [...textesDe(T), ...textesDe(TA)];
   for (const m of METIERS) t.push(m.nom, m.sous, m.qui);
   return t;
 }
