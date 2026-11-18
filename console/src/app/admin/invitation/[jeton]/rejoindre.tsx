@@ -13,6 +13,12 @@ import { authClient } from "@/lib/auth-client";
 
 type Etat = ReturnType<typeof etatInvitation>;
 
+/**
+ * Le jeton, gardé le temps d'aller se connecter : dans cet onglet seulement, jamais envoyé au serveur ni mis dans une
+ * adresse de retour (il partirait vers Google ou Microsoft). /admin/invitation le relit puis l'efface.
+ */
+export const CLE_JETON = "megga.admin.invitation";
+
 /** La phrase d'un refus de Better Auth à l'inscription. */
 function erreurInscription(code: string | undefined): string {
   if (code?.startsWith("USER_ALREADY_EXISTS")) return TA.courrielDejaInscrit;
@@ -64,8 +70,18 @@ export function Rejoindre({ etat, jeton, courriel }: { etat: Etat; jeton: string
         setErreur(erreurInscription(error.code));
         return false;
       }
-      return rejoindre();
+      const rejoint = await rejoindre();
+      if (!rejoint) router.refresh(); // le compte existe : la page se relit avec sa session, sans rester en « sans session »
+      return rejoint;
     });
+  }
+
+  function garderJeton() {
+    try {
+      sessionStorage.setItem(CLE_JETON, jeton);
+    } catch {
+      // sans stockage, le retour de la connexion montrera l'invitation comme invalide : rouvrir le lien suffit
+    }
   }
 
   async function sortir() {
@@ -129,7 +145,7 @@ export function Rejoindre({ etat, jeton, courriel }: { etat: Etat; jeton: string
             </form>
             <p className="mt-5 mb-0 text-center text-[13.5px] text-muted-ink">
               {TA.dejaUnCompte}{" "}
-              <Link href={`/connexion?retour=/admin/invitation/${jeton}`} className="font-bold text-ink hover:underline">
+              <Link href="/connexion?retour=/admin/invitation" onClick={garderJeton} className="font-bold text-ink hover:underline">
                 {TA.seConnecter}
               </Link>
             </p>

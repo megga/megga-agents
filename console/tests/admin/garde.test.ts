@@ -214,6 +214,8 @@ describe("le tri de /admin, avant toute page", () => {
     expect(vers("http://localhost/admin")).toBe("http://localhost/connexion?retour=/admin");
     expect(vers("http://localhost/")).toBe("http://localhost/connexion");
     expect(vers("http://localhost/admin/invitation/abc")).toBeNull();
+    expect(vers("http://localhost/admin/invitation")).toBeNull();
+    expect(vers("http://localhost/admin/invitations")).toBe("http://localhost/connexion?retour=/admin");
     const avecCookie = new NextRequest("http://localhost/admin/clients", { headers: { cookie: "better-auth.session_token=x" } });
     expect(proxy(avecCookie).headers.get("location")).toBeNull();
     expect(config.matcher).toEqual(["/", "/admin/:path*"]);

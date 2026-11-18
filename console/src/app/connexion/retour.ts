@@ -1,8 +1,8 @@
-// Où aller après la connexion : l'admin, la page d'une invitation, sinon la console.
+// Où aller après la connexion : l'admin, la page d'invitation, sinon la console.
+// Jamais un jeton d'invitation : il partirait vers Google ou Microsoft (callbackURL) et serait gardé en clair dans l'état OAuth.
+// La page d'invitation range son jeton dans sessionStorage avant la connexion ; /admin/invitation l'y relit.
 // À part du composant client (connexion.tsx) pour que la page, côté serveur, puisse l'appeler aussi.
 
-const INVITATION = /^\/admin\/invitation\/[A-Za-z0-9_-]{43}$/;
-
 export function retourSur(v: unknown): string {
-  return v === "/admin" || (typeof v === "string" && INVITATION.test(v)) ? v : "/";
+  return v === "/admin" || v === "/admin/invitation" ? v : "/";
 }
