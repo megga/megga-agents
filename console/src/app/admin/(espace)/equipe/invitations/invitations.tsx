@@ -15,7 +15,8 @@ import { SUPERADMIN } from "@/lib/admin/droits";
 import { TA } from "@/lib/admin/textes";
 
 // Inviter (courriel, rôle, externe, périmètre, fin d'accès) : le lien complet n'est montré qu'une fois, puis oublié.
-// Les invitations en attente, et le retrait de celles que le membre aurait pu faire.
+// Les invitations en attente, et le retrait de celles que le membre aurait pu faire. Dans un cadre étroit, comme les membres,
+// les colonnes secondaires se replient sous le courriel : le tableau ne défile pas de côté.
 
 export type InvitationVue = {
   id: string;
@@ -39,7 +40,7 @@ export function Invitations({ invitations, roles, defaut, tousPermis }: {
   const [lien, setLien] = useState<string | null>(null);
 
   const lignes = invitations.map((i) => [
-    <span key="courriel" className="whitespace-nowrap">{i.courriel}</span>,
+    <span key="courriel" className="wrap-anywhere">{i.courriel}</span>,
     <span key="role" className="whitespace-nowrap">{i.roleNom}</span>,
     <Pastille key="statut" etat={i.externe ? "warn" : "faint"} texte={i.externe ? TA.externe : TA.interne} />,
     <PerimetreVu key="perimetre" p={i.perimetre} />,
@@ -79,6 +80,7 @@ export function Invitations({ invitations, roles, defaut, tousPermis }: {
         colonnes={[TA.courriel, TA.role, TA.statut, TA.perimetre, TA.finAcces, TA.valableJusqua, ""]}
         lignes={lignes}
         vide={TA.videInvitations}
+        replier={[1, 2, 3, 4, 5]}
       />
       <SecretUnique valeur={lien} onFermer={() => setLien(null)} />
     </>

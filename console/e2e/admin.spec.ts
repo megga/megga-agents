@@ -84,6 +84,14 @@ const deborde = (page: Page) =>
       [...document.querySelectorAll("main")].some((m) => m.scrollWidth > m.clientWidth),
   );
 
+/** Les tableaux qui défilent de côté dans leur cadre (components/admin/tableau.tsx), par leurs en-têtes : à 800 px, aucun. */
+const tableauxQuiDefilent = (page: Page) =>
+  page.evaluate(() =>
+    [...document.querySelectorAll("main .overflow-x-auto")]
+      .filter((cadre) => cadre.querySelector("table") && cadre.scrollWidth > cadre.clientWidth + 1)
+      .map((cadre) => [...cadre.querySelectorAll("th")].map((th) => th.textContent).join(" / ")),
+  );
+
 test("un superadmin invité par la commande pilote un client et le retrouve au journal", async ({ page, baseURL }) => {
   const ailleurs = requetesAilleurs(page);
   // La commande, lancée sur le serveur de la console, imprime le lien d'invitation superadmin.
@@ -102,6 +110,10 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   await expect(titre(page, TA.vueEnsemble)).toBeVisible();
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(TA.cout, { exact: true }).first()).toBeVisible();
+  // Le coût se lit en entier, devise comprise : la tuile passe à la ligne plutôt que de le couper.
+  const valeurCout = page.getByText(TA.cout, { exact: true }).first().locator("xpath=following-sibling::b");
+  await expect(valeurCout).toContainText(/\d/);
+  expect(await valeurCout.evaluate((b) => b.scrollWidth <= b.clientWidth)).toBe(true);
   const aSurveiller = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: TA.soucis, exact: true }) });
   await expect(aSurveiller.getByRole("link", { name: GARAGE.entreprise, exact: true })).toBeVisible();
   await page.screenshot({ path: "captures/admin-vue.png", fullPage: true });
@@ -200,6 +212,11 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   const enAttente = page.getByRole("row").filter({ hasText: EXTERNE_ESSAI.courriel });
   await expect(enAttente).toContainText(TA.externe);
   await expect(enAttente).toContainText(GARAGE.id);
+  // À 800 px, l'invitation en attente se lit sans défilement de côté : ses colonnes secondaires se replient sous le courriel.
+  await page.setViewportSize({ width: 800, height: 900 });
+  await expect(enAttente).toContainText(GARAGE.id);
+  expect(await tableauxQuiDefilent(page)).toEqual([]);
+  await page.setViewportSize({ width: 1440, height: 900 });
 
   // L'externe, dans son propre navigateur : il rejoint par le lien.
   const contexte = await navigateur(browser, baseURL);
@@ -341,34 +358,45 @@ test("un compte suspendu ne se connecte plus", async ({ browser, baseURL }) => {
   await chef.close();
 });
 
-test("à 390 px, en clair et en Nuit douce", async ({ browser, baseURL }) => {
+test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL }) => {
   const { contexte: chef, page } = await superadmin(browser, baseURL);
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   expect((await rail(page).boundingBox())?.width).toBeCloseTo(76, 0);
   expect(await deborde(page)).toBe(false);
-
-  // Chaque entrée du rail mène à sa page, qui ne défile pas de côté.
   const entrees = [TA.vueEnsemble, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.tarifs, TA.equipe, TA.journal];
   await expect(rail(page).getByRole("link")).toHaveText(entrees);
-  for (const entree of entrees) {
-    await rail(page).getByRole("link", { name: entree, exact: true }).click();
-    await expect(titre(page, entree)).toBeVisible({ timeout: 15_000 });
-    expect(await deborde(page), entree).toBe(false);
-  }
 
-  // Chaque onglet de la fiche d'un client installé hors Cloudflare mène à sa page.
-  await page.goto(`/admin/clients/${CHALET.id}`);
-  await expect(titre(page, CHALET.entreprise)).toBeVisible();
-  for (const onglet of [TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.acces, TA.installation]) {
-    const lien = page.getByRole("main").getByRole("link", { name: onglet, exact: true });
-    await lien.click();
-    await expect(lien).toHaveAttribute("aria-current", "page");
+  for (const largeur of [390, 800]) {
+    await page.setViewportSize({ width: largeur, height: 844 });
+    /** La page ne défile pas de côté ; à 800 px, aucun tableau non plus (ses colonnes secondaires se replient). */
+    const sansDefilement = async (ou: string) => {
+      expect(await deborde(page), `${ou}, ${largeur} px`).toBe(false);
+      if (largeur === 800) expect(await tableauxQuiDefilent(page), `${ou}, ${largeur} px`).toEqual([]);
+    };
+
+    // Chaque entrée du rail mène à sa page.
+    for (const entree of entrees) {
+      await rail(page).getByRole("link", { name: entree, exact: true }).click();
+      await expect(titre(page, entree)).toBeVisible({ timeout: 15_000 });
+      await sansDefilement(entree);
+    }
+
+    // Chaque onglet de la fiche d'un client installé hors Cloudflare se voit (aucun caché hors du cadre) et mène à sa page.
+    await page.goto(`/admin/clients/${CHALET.id}`);
     await expect(titre(page, CHALET.entreprise)).toBeVisible();
-    expect(await deborde(page), onglet).toBe(false);
+    for (const onglet of [TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.acces, TA.installation]) {
+      const lien = page.getByRole("main").getByRole("link", { name: onglet, exact: true });
+      await expect(lien).toBeInViewport();
+      await lien.click();
+      await expect(lien).toHaveAttribute("aria-current", "page");
+      await expect(titre(page, CHALET.entreprise)).toBeVisible();
+      await sansDefilement(onglet);
+    }
   }
 
-  // La vue d'ensemble, en clair puis en Nuit douce (le thème du menu du compte).
+  // La vue d'ensemble à 390 px, en clair puis en Nuit douce (le thème du menu du compte).
+  await page.setViewportSize({ width: 390, height: 844 });
   await rail(page).getByRole("link", { name: TA.vueEnsemble, exact: true }).click();
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
