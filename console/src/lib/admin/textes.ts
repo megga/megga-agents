@@ -168,6 +168,7 @@ export const TA = {
     "roles.modifier": "Modifier un rôle",
     "roles.retirer": "Retirer un rôle",
     "tarifs.regler": "Changer les tarifs",
+    "conversations.lire": "Lire une conversation",
   } as Record<string, string>,
 
   // Les onglets d'un client
@@ -331,6 +332,15 @@ export const TA = {
   ajouterModele: (modele: string) => `Ajouter ${modele}`,
   tarifsEnregistres: "Tarifs enregistrés.",
   tarifsInvalides: "Tarifs invalides : un objet attendu.",
+
+  // Les conversations (conversations.lire), en lecture seule
+  personne: "Personne",
+  dernierMessage: "Dernier message",
+  videConversations: "Aucune conversation.",
+  videFil: "Aucun message.",
+  recu: "Reçu",
+  envoye: "Envoyé par l'agent",
+  jamaisSansConversation: "Aucune conversation : ce client n'a pas encore été mis en service.",
 
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {

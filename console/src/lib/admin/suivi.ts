@@ -89,7 +89,24 @@ export function horsCloudflare(zone: string | null, zonesPorte: readonly string[
   return zone !== null && zonesPorte !== null && !zonesPorte.includes(zone);
 }
 
-export type EtatClient = { service: "en_service" | "jamais"; ecart: boolean; tenuParMegga: boolean; conteneur: "demarre" | "arrete" | "inconnu" };
+/** Une personne, comme le moteur la nomme (noyau/suivi.py, PERSONNE) : un numéro, ou api:<logiciel>:<identifiant>. */
+const PERSONNE = /^(\+?\d{6,20}|api:[a-z0-9][a-z0-9-]{0,19}:(?=[^:]*[A-Za-z])[A-Za-z0-9._-]{1,40})$/;
+
+/**
+ * La personne d'une adresse (le fil d'une conversation), décodée une seule fois ; mal formée, rien : une adresse tapée à la
+ * main ne va pas jusqu'à l'atelier (« .. » y remonterait d'un dossier).
+ */
+export function personneDe(brut: string): string | null {
+  let p: string;
+  try {
+    p = decodeURIComponent(brut);
+  } catch {
+    return null;
+  }
+  return PERSONNE.test(p) ? p : null;
+}
+
+export type EtatClient ={ service: "en_service" | "jamais"; ecart: boolean; tenuParMegga: boolean; conteneur: "demarre" | "arrete" | "inconnu" };
 
 export function etatClient(c: ClientAtelier): EtatClient {
   const demarre = c.annuaire?.conteneur?.demarre;
