@@ -18,7 +18,17 @@ import { TA } from "./textes";
 /** La marque d'une route gardée (tests/admin/routes.test.ts vérifie que chaque route la porte). */
 export const GARDE = Symbol("garde");
 
-export type Regle<P> = { droit: Droit; client?: (p: P) => string; action?: string; cible?: (p: P, corps: unknown) => string | null };
+/**
+ * detail : ce que le journal garde du geste (puis nettoyé et coupé), au lieu du corps entier ; pour un corps qui porte ce
+ * qu'un autre membre ne doit pas lire au journal (les tarifs d'achat, réservés à couts.voir).
+ */
+export type Regle<P> = {
+  droit: Droit;
+  client?: (p: P) => string;
+  action?: string;
+  cible?: (p: P, corps: unknown) => string | null;
+  detail?: (corps: unknown, params: P) => unknown;
+};
 export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: DatabaseSync };
 export type Gestionnaire<P> = ((requete: Request, ctx: { params: Promise<P> }) => Promise<Response>) & { [GARDE]: true };
 
@@ -103,7 +113,8 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
     const params = await ctx.params;
     const corps = await lireCorps(requete);
     let membre = false; // un inconnu (404) ne laisse aucun détail au journal
-    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), () => (membre ? corps : null));
+    const detail = () => (!membre ? null : regle.detail ? regle.detail(corps, params) : corps);
+    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), detail);
     return issue(async () => {
       const acces = accesDe(db, s.user);
       if (!acces) throw new Refus(404, TA.introuvable);

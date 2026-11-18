@@ -90,6 +90,22 @@ describe("la garde des routes", () => {
     ]);
   });
 
+  it("une règle avec detail ne note que ce qu'il rend, jamais le corps entier, réussi ou refusé", async () => {
+    membre(etat.db, { utilisateur: "s", role: "superadmin" });
+    membre(etat.db, { utilisateur: "l", role: "lecture" });
+    const resume = garde({ droit: "clients.piloter", client: (p: { id: string }) => p.id, action: "essai.resume",
+      detail: (corps, p) => ({ id: p.id, ton: (corps as { ton?: unknown }).ton }) }, async () => ({}));
+    const envoi = (qui: string) => resume(new Request("http://localhost/api/admin/essai/garage-essai", { method: "POST",
+      headers: { "x-essai-qui": qui, origin: "http://localhost" }, body: JSON.stringify({ ton: "chaleureux", prix: 31.4159 }) }),
+    { params: Promise.resolve({ id: "garage-essai" }) });
+    expect([(await envoi("s")).status, (await envoi("l")).status]).toEqual([200, 403]);
+    expect(lignes().map((l) => [l.qui, l.resultat, l.detail])).toEqual([
+      ["l", "refuse 403", { id: "garage-essai", ton: "chaleureux" }],
+      ["s", "ok", { id: "garage-essai", ton: "chaleureux" }],
+    ]);
+    expect(JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all())).not.toContain("31.4159");
+  });
+
   it("rend une réponse telle quelle, un refus à son statut, une autre erreur en 500 sans détail", async () => {
     membre(etat.db, { utilisateur: "s", role: "superadmin" });
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
