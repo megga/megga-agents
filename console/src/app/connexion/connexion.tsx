@@ -16,6 +16,7 @@ export function messageErreur(code: string | undefined): string {
   if (code === "INVALID_EMAIL_OR_PASSWORD" || code === "INVALID_EMAIL" || code === "INVALID_PASSWORD") return T.erreurIdentifiants;
   if (code.startsWith("USER_ALREADY_EXISTS")) return T.erreurDejaInscrit;
   if (code === "PASSWORD_TOO_SHORT") return T.erreurMotDePasse;
+  if (code === "BANNED_USER") return T.compteSuspendu;
   return T.erreurGenerale;
 }
 

@@ -160,8 +160,14 @@ export function ajouterMembre(
   return lireMembre(db, m.utilisateur)!;
 }
 
-function superadminsEnCours(db: DatabaseSync, maintenant: Date): number {
-  const lignes = db.prepare("SELECT fin_acces FROM admin_membre WHERE role = ? AND externe = 0").all(SUPERADMIN) as { fin_acces: string | null }[];
+/** Les autres superadmins qui peuvent se connecter : en cours, et dont le compte n'est pas suspendu (comptes.ts). */
+function autresSuperadmins(db: DatabaseSync, utilisateur: string, maintenant: Date): number {
+  const lignes = db
+    .prepare(
+      `SELECT m.fin_acces FROM admin_membre m LEFT JOIN "user" u ON u.id = m.utilisateur
+       WHERE m.role = ? AND m.externe = 0 AND m.utilisateur <> ? AND COALESCE(u.banned, 0) = 0`,
+    )
+    .all(SUPERADMIN, utilisateur) as { fin_acces: string | null }[];
   return lignes.filter((l) => enCours(l.fin_acces, maintenant)).length;
 }
 
@@ -177,7 +183,7 @@ function membreAToucher(db: DatabaseSync, a: Acces, utilisateur: string): Membre
 }
 
 function exigerAutreSuperadmin(db: DatabaseSync, cible: Membre, maintenant: Date): void {
-  if (cible.role === SUPERADMIN && superadminsEnCours(db, maintenant) <= 1) throw new Refus(409, TA.dernierSuperadmin);
+  if (cible.role === SUPERADMIN && autresSuperadmins(db, cible.utilisateur, maintenant) < 1) throw new Refus(409, TA.dernierSuperadmin);
 }
 
 /** Corps : { role?, perimetre?, finAcces? } ; externe ne change pas (l'invitation le fixe). */

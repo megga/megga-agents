@@ -3,9 +3,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
+import { admin } from "better-auth/plugins/admin";
 import { headers } from "next/headers";
 import { noterConnexion } from "./admin/usage";
 import { base } from "./base";
+import { T } from "./textes";
 
 type Fournisseurs = NonNullable<BetterAuthOptions["socialProviders"]>;
 
@@ -34,7 +36,17 @@ function noterSansBloquer(db: DatabaseSync, utilisateur: string): void {
   }
 }
 
-/** Les options de Better Auth sur une base donnée (celle de la console par défaut, une base en mémoire dans les essais). */
+/**
+ * Les quinze routes HTTP de l'extension admin de Better Auth (ban-user, impersonate-user, set-role…), toutes fermées : ses
+ * rôles ne servent pas. L'extension ne sert qu'au bannissement, écrit côté serveur par les routes gardées de l'admin (comptes.ts).
+ */
+export const CHEMINS_ADMIN_FERMES: string[] = Object.values(admin().endpoints).map((e) => e.path);
+
+/**
+ * Les options de Better Auth sur une base donnée (celle de la console par défaut, une base en mémoire dans les essais).
+ * L'extension admin refuse toute nouvelle session à un compte suspendu (BANNED_USER, T.compteSuspendu) ; nextCookies reste
+ * la dernière extension.
+ */
 export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
   return {
     appName: "MEGGA",
@@ -43,7 +55,8 @@ export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
     socialProviders: fournisseurs(),
     telemetry: { enabled: false },
     databaseHooks: { session: { create: { after: async (s) => noterSansBloquer(db, s.userId) } } },
-    plugins: [nextCookies()],
+    disabledPaths: CHEMINS_ADMIN_FERMES,
+    plugins: [admin({ bannedUserMessage: T.compteSuspendu }), nextCookies()],
   };
 }
 

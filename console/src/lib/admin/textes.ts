@@ -580,6 +580,11 @@ export const TA = {
   } as Record<string, string>,
   genreInconnu: (genre: string) => `Autre alerte (${genre})`,
 
+  // Les comptes de la console (comptes.voir ; comptes.gerer pour suspendre)
+  compteInconnu: "Compte inconnu.",
+  motifManquant: "Donnez un motif, en 200 caractères au plus.",
+  suspensionInterdite: "Vous ne pouvez pas agir sur ce compte : ni le vôtre, ni celui d'un superadmin ; celui d'un membre de l'admin, un superadmin seulement.",
+
   // L'atelier (le moteur)
   moteurNonBranche: "Le moteur n'est pas branché à cette console.",
   atelierInjoignable: "L'atelier ne répond pas. Réessayez dans un instant.",

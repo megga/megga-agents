@@ -20,6 +20,7 @@ export const T = {
   erreurDejaInscrit: "Ce courriel a déjà un compte.",
   erreurMotDePasse: "Le mot de passe fait 8 caractères au moins.",
   erreurGenerale: "Un souci est survenu. Réessayez.",
+  compteSuspendu: "Ce compte est suspendu : il ne peut plus se connecter. Contactez MEGGA pour en savoir plus.", // nouveau
 
   // Rail (maquette)
   chercherAgent: "Chercher un agent",

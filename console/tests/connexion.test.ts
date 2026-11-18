@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { messageErreur, retourSur } from "@/app/connexion/connexion";
 import { fournisseurs } from "@/lib/auth";
+import { T } from "@/lib/textes";
 
 describe("Google et Microsoft", () => {
   it("restent éteints sans leurs clés", () => {
@@ -25,6 +26,10 @@ describe("les erreurs de connexion", () => {
     expect(messageErreur("USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL")).toBe("Ce courriel a déjà un compte.");
     expect(messageErreur("PASSWORD_TOO_SHORT")).toBe("Le mot de passe fait 8 caractères au moins.");
     expect(messageErreur("AUTRE_CHOSE")).toBe("Un souci est survenu. Réessayez.");
+  });
+
+  it("un compte suspendu lit une phrase claire", () => {
+    expect(messageErreur("BANNED_USER")).toBe(T.compteSuspendu);
   });
 });
 
