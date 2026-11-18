@@ -23,16 +23,22 @@ export type FiltresJournal = { membre?: string; action?: string; client?: string
 
 const MASQUE = "[masqué]";
 const CLE_SECRETE = /jeton|cle|token|secret|passe|password|authorization/i;
+/** Le numéro d'une personne : sous la clé personne, avec ou sans « + » ; ailleurs, seulement la forme internationale. */
 const NUMERO = /^\+?\d{6,20}$/;
+const INTERNATIONAL = /^\+\d{6,20}$/;
 /** Au-delà, le détail sérialisé est coupé : le journal ne se remplit pas d'un corps démesuré. */
 const DETAIL_MAX = 2048;
 
-/** Le détail sans secret, à toute profondeur ; un numéro (de personne) réduit à ses quatre derniers chiffres. */
-export function nettoyer(detail: unknown): unknown {
-  if (typeof detail === "string") return NUMERO.test(detail) ? "…" + detail.slice(-4) : detail;
-  if (Array.isArray(detail)) return detail.map(nettoyer);
+/**
+ * Le détail sans secret, à toute profondeur. Un numéro de personne est réduit à ses quatre derniers chiffres : sous la clé
+ * personne, ou partout sous sa forme internationale (+ et 6 à 20 chiffres). Un identifiant de client tout en chiffres
+ * (« 1234567 », dans client ou perimetre) reste entier. cle : la clé sous laquelle se trouve la valeur.
+ */
+export function nettoyer(detail: unknown, cle: string | null = null): unknown {
+  if (typeof detail === "string") return (cle === "personne" ? NUMERO : INTERNATIONAL).test(detail) ? "…" + detail.slice(-4) : detail;
+  if (Array.isArray(detail)) return detail.map((v) => nettoyer(v, cle));
   if (detail && typeof detail === "object") {
-    return Object.fromEntries(Object.entries(detail).map(([k, v]) => [k, CLE_SECRETE.test(k) ? MASQUE : nettoyer(v)]));
+    return Object.fromEntries(Object.entries(detail).map(([k, v]) => [k, CLE_SECRETE.test(k) ? MASQUE : nettoyer(v, k)]));
   }
   return detail;
 }
@@ -48,7 +54,7 @@ function nettoyerCible(cible: string | null): string | null {
   const genre = cible.slice(0, i);
   const valeur = cible.slice(i + 1);
   if (CLE_SECRETE.test(genre)) return `${genre}:${MASQUE}`;
-  return `${genre}:${genre === "personne" ? (nettoyer(valeur) as string) : valeur}`;
+  return `${genre}:${genre === "personne" ? (nettoyer(valeur, "personne") as string) : valeur}`;
 }
 
 /** Nettoie lui-même la cible et le détail ; le détail sérialisé est coupé à DETAIL_MAX caractères. */
@@ -60,6 +66,31 @@ export function noter(db: DatabaseSync, e: Omit<LigneJournal, "id" | "quand">, m
 }
 
 type Ligne = Omit<LigneJournal, "detail"> & { detail: string | null };
+
+const ZURICH = new Intl.DateTimeFormat("en-US", {
+  timeZone: "Europe/Zurich",
+  hourCycle: "h23",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+/** L'avance de Zurich sur UTC, en millisecondes, à un instant donné (une heure en hiver, deux en été). */
+function avanceZurich(t: number): number {
+  const p = Object.fromEntries(ZURICH.formatToParts(new Date(t)).map((x) => [x.type, Number(x.value)]));
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(t / 1000) * 1000;
+}
+
+/** Le premier instant (ISO UTC) d'un jour AAAA-MM-JJ de Zurich, le fuseau où l'écran montre le journal (TA.instant). */
+function debutJour(jour: string): string {
+  const minuitUtc = Date.parse(`${jour}T00:00:00Z`);
+  return new Date(minuitUtc - avanceZurich(minuitUtc - avanceZurich(minuitUtc))).toISOString();
+}
+
+const lendemain = (jour: string) => new Date(Date.parse(`${jour}T00:00:00Z`) + 24 * 3600 * 1000).toISOString().slice(0, 10);
 
 /** Ce que le membre voit, puis ses filtres. Limité à une liste : ses propres gestes et ceux qui touchent ses clients. */
 function conditions(a: Acces, f: FiltresJournal): { sql: string; valeurs: SQLInputValue[] } {
@@ -73,8 +104,9 @@ function conditions(a: Acces, f: FiltresJournal): { sql: string; valeurs: SQLInp
   if (f.membre) et("qui = ?", f.membre);
   if (f.action) et("action = ?", f.action);
   if (f.client) et("cible = ?", `client:${f.client}`);
-  if (f.depuis) et("quand >= ?", `${f.depuis}T00:00:00.000Z`);
-  if (f.jusqua) et("quand <= ?", `${f.jusqua}T23:59:59.999Z`);
+  // depuis et jusqua sont des jours de Zurich, inclus : un geste montré « 05.01 00:30 » est du 5 janvier.
+  if (f.depuis) et("quand >= ?", debutJour(f.depuis));
+  if (f.jusqua) et("quand < ?", debutJour(lendemain(f.jusqua)));
   return { sql: c.length ? `WHERE ${c.join(" AND ")}` : "", valeurs };
 }
 
@@ -88,16 +120,16 @@ function detailLu(json: string | null): unknown {
   }
 }
 
-/** Le plus récent d'abord, par pages de LIGNES_PAR_PAGE. */
-export function lireJournal(db: DatabaseSync, a: Acces, f: FiltresJournal): { lignes: LigneJournal[]; pages: number } {
+/** Le plus récent d'abord, par pages de LIGNES_PAR_PAGE ; une page demandée trop loin est ramenée à la dernière (page). */
+export function lireJournal(db: DatabaseSync, a: Acces, f: FiltresJournal): { lignes: LigneJournal[]; pages: number; page: number } {
   const { sql, valeurs } = conditions(a, f);
   const total = (db.prepare(`SELECT COUNT(*) AS n FROM admin_journal ${sql}`).get(...valeurs) as { n: number }).n;
   const pages = Math.max(1, Math.ceil(total / LIGNES_PAR_PAGE));
-  if (f.page > pages) return { lignes: [], pages };
+  const page = Math.min(f.page, pages);
   const lignes = db
     .prepare(`SELECT * FROM admin_journal ${sql} ORDER BY quand DESC, id DESC LIMIT ? OFFSET ?`)
-    .all(...valeurs, LIGNES_PAR_PAGE, (f.page - 1) * LIGNES_PAR_PAGE) as Ligne[];
-  return { lignes: lignes.map((l) => ({ ...l, detail: detailLu(l.detail) })), pages };
+    .all(...valeurs, LIGNES_PAR_PAGE, (page - 1) * LIGNES_PAR_PAGE) as Ligne[];
+  return { lignes: lignes.map((l) => ({ ...l, detail: detailLu(l.detail) })), pages, page };
 }
 
 /** Les filtres tels que l'adresse les donne ; une valeur mal formée est ignorée, la page retombe sur 1. */

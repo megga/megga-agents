@@ -38,7 +38,7 @@ const lien = "font-semibold text-ink hover:underline";
 export default async function PageJournal({ searchParams }: PageProps<"/admin/journal">) {
   const a = await gardePage("journal.voir");
   const f = filtresDe(await searchParams);
-  const { lignes, pages } = lireJournal(base(), a, f);
+  const { lignes, pages, page } = lireJournal(base(), a, f); // page : ramenée à la dernière si l'adresse va trop loin
   const avec = (changer: Partial<FiltresJournal>) => adresse({ ...f, page: 1, ...changer });
   const qui = (l: LigneJournal) =>
     l.qui ? (
@@ -119,14 +119,14 @@ export default async function PageJournal({ searchParams }: PageProps<"/admin/jo
 
       {pages > 1 && (
         <nav className="flex flex-wrap items-center gap-3 text-[14px]">
-          {f.page > 1 && (
-            <Link href={adresse({ ...f, page: f.page - 1 })} className={"trait rounded-full bg-bg px-3.5 py-1.5 " + lien}>
+          {page > 1 && (
+            <Link href={adresse({ ...f, page: page - 1 })} className={"trait rounded-full bg-bg px-3.5 py-1.5 " + lien}>
               {TA.pagePrecedente}
             </Link>
           )}
-          <span className="text-muted-ink">{TA.pageSur(Math.min(f.page, pages), pages)}</span>
-          {f.page < pages && (
-            <Link href={adresse({ ...f, page: f.page + 1 })} className={"trait rounded-full bg-bg px-3.5 py-1.5 " + lien}>
+          <span className="text-muted-ink">{TA.pageSur(page, pages)}</span>
+          {page < pages && (
+            <Link href={adresse({ ...f, page: page + 1 })} className={"trait rounded-full bg-bg px-3.5 py-1.5 " + lien}>
               {TA.pageSuivante}
             </Link>
           )}
