@@ -1,5 +1,6 @@
 import { Refus } from "@/lib/agents";
 import { atelier } from "@/lib/admin/atelier";
+import { estObjet } from "@/lib/admin/champs";
 import { garde } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
 import { numeroVersion } from "@/lib/admin/versions";
@@ -7,7 +8,6 @@ import { numeroVersion } from "@/lib/admin/versions";
 // Mettre une version en service, revenir à une version publiée, ou forcer un brouillon jamais essayé ({ forcer? }) :
 // clients.piloter, qu'un externe n'a jamais. La réponse de l'atelier telle quelle ; le journal note la version et forcer.
 type P = { id: string; numero: string };
-const estObjet = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 export const POST = garde(
   {

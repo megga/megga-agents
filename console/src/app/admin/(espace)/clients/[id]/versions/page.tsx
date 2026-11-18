@@ -6,10 +6,13 @@ import { Tableau } from "@/components/admin/tableau";
 import { peut, type Acces } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type ClientAtelier, type Version } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
+import { estObjet } from "@/lib/admin/champs";
 import { horsCloudflare, zoneClient } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 import { differences, lisible, numeroVersion } from "@/lib/admin/versions";
-import { Essai, GestesVersion, Preparer, TableauDifferences } from "./versions";
+import { Essai } from "./essai";
+import { Preparer } from "./preparer";
+import { GestesVersion, TableauDifferences } from "./versions";
 
 // L'onglet Versions d'un client (clients.voir) : l'historique (brouillon ou publiée, en service, préparée par MEGGA ou par le
 // client : l'atelier ne garde que ce rôle, le membre se lit au journal) ; ?v= ouvre une version : ce qui change par rapport à
@@ -17,8 +20,6 @@ import { Essai, GestesVersion, Preparer, TableauDifferences } from "./versions";
 // avec clients.piloter, la mettre en service, y revenir ou forcer. Un client jamais mis en service a ses brouillons.
 
 type Client = ClientAtelier & { config: Record<string, unknown> | null };
-
-const estObjet = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 function creeLe(v: Version["cree_le"]): string {
   if (typeof v === "number") return TA.moment(v);
@@ -65,7 +66,7 @@ function Historique({ id, versions, enService, choisie }: { id: string; versions
 }
 
 /** Une version ouverte : ses gestes, l'essai d'un brouillon, ce qui change par rapport à celle en service, sa configuration. */
-function DetailVersion({ a, c, v, ordre }: { a: Acces; c: Client; v: Version; ordre: boolean }) {
+function DetailVersion({ a, c, v, ordre }: { a: Acces; c: Client; v: Version; ordre: boolean | null }) {
   const config = v.config ?? {};
   const enService = c.version_en_service;
   return (
@@ -126,8 +127,14 @@ export default async function PageVersions({ params, searchParams }: PageProps<"
   ]);
   const lue = derniere instanceof RefusChamps ? null : derniere;
   const cat = catalogue instanceof RefusChamps ? null : catalogue;
-  // Hors Cloudflare (la zone de la version en service, sinon de la dernière) : un ordre part à l'installation.
-  const ordre = horsCloudflare(zoneClient(c.config, lue?.config), cat?.zones_porte ?? null);
+  // Hors Cloudflare (la zone de la version en service, sinon de la dernière) : un ordre part à l'installation. Zone ou catalogue
+  // inconnus : null, la confirmation dit alors les deux cas.
+  const zone = zoneClient(c.config, lue?.config);
+  const ordre = zone !== null && cat ? horsCloudflare(zone, cat.zones_porte) : null;
+  // La base d'un brouillon : pour un externe, la version en service (sinon la dernière) ; pour un interne, la dernière.
+  const base = a.externe && c.version_en_service != null && c.config
+    ? { numero: c.version_en_service, config: c.config, enService: true }
+    : lue?.config ? { numero: lue.version, config: lue.config, enService: lue.version === c.version_en_service } : null;
   return (
     <>
       {vue instanceof RefusChamps ? <Bandeau>{vue.message}</Bandeau> : vue && <DetailVersion a={a} c={c} v={vue} ordre={ordre} />}
@@ -139,7 +146,7 @@ export default async function PageVersions({ params, searchParams }: PageProps<"
           externe={a.externe}
           gabarits={gabarits && !(gabarits instanceof RefusChamps) ? gabarits.gabarits.map((g) => ({ id: g.id, titre: g.titre, description: g.description })) : []}
           champsSimples={cat?.champs_client ?? null}
-          derniere={lue?.config ? { numero: lue.version, config: lue.config } : null}
+          base={base}
         />
       )}
     </>

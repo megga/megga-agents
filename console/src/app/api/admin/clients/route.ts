@@ -1,13 +1,13 @@
 import { Refus } from "@/lib/agents";
 import { ID_CLIENT, peutCreerClient } from "@/lib/admin/acces";
 import { atelier } from "@/lib/admin/atelier";
+import { estObjet } from "@/lib/admin/champs";
 import { garde } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
 
 // Créer un client : d'après un modèle par métier ({ gabarit, client: { id, entreprise, zone, numero_id? }, nom_agent }), ou
 // d'une configuration entière ({ config }). clients.creer, et le périmètre de tous les clients : limité à une liste, le client
 // naîtrait hors du sien. La réponse de l'atelier, 201 ; le journal ne garde que son identité, jamais la configuration collée.
-const estObjet = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const texte = (v: unknown) => (typeof v === "string" ? v : null);
 
 /** L'identité du client à créer : celle du modèle par métier (client), sinon celle de la configuration collée. */

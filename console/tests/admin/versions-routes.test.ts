@@ -96,40 +96,66 @@ describe("préparer une version", () => {
     expect(ecritures()).toEqual([]);
   });
 
-  it("un externe : la voix par son identifiant, d'après la dernière version ; la réponse de l'atelier, 201", async () => {
+  it("un externe : sa base est la version en service, nommée à l'atelier ; la voix par son identifiant ; la réponse, 201", async () => {
     const r = await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { voix: "v1" }, forcer: true });
     expect([r.status, await r.json()]).toEqual([201, BROUILLON]);
-    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { changements: { voix: { voix: "v1" } } }]]);
-    expect(simule.version.mock.calls).toEqual([["garage-essai", 3]]);
+    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements: { voix: { voix: "v1" } } }]]);
+    expect(simule.version.mock.calls).toEqual([["garage-essai", 2]]);
     expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["versions.preparer", "ok", { base: null, changements: ["voix"] }]]);
   });
 
-  it("un externe : changer de métier d'après la base qu'il nomme retire les outils que ce métier ne permet pas", async () => {
-    simule.version.mockResolvedValueOnce({ version: 1, etat: "publiee", config: { ...CONFIG, outils: ["immobilier"] } });
-    await appeler(preparer, { id: "garage-essai" }, "invite", { base: 1, changements: { metier: "general" } });
-    expect(simule.version.mock.calls).toEqual([["garage-essai", 1]]);
-    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 1, changements: { metier: "general", outils: [] } }]]);
-    expect(journal()[0].detail).toEqual({ base: 1, changements: ["metier"] });
-  });
-
-  it("un externe qui nomme une base qui n'est pas un numéro : 400, rien de lu ni d'écrit", async () => {
-    for (const base of ["2", 0, -1, 1.5, "abc", {}]) {
+  it("un externe qui nomme une base ancienne (d'autres consignes de MEGGA) : 403, l'atelier n'est pas appelé", async () => {
+    simule.version.mockImplementation(async (_: string, n: number) =>
+      ({ version: n, etat: "publiee", config: { ...CONFIG, consignes: n === 1 ? "Anciennes consignes de MEGGA" : CONSIGNES } }));
+    for (const base of [1, 3, "2", 0, 1.5, "abc", {}]) {
       const r = await appeler(preparer, { id: "garage-essai" }, "invite", { base, changements: { ton: "x" } });
-      expect([r.status, await r.json()], JSON.stringify(base)).toEqual([400, { erreur: TA.baseInvalide }]);
+      expect([r.status, await r.json()], JSON.stringify(base)).toEqual([403, { erreur: TA.baseImposee }]);
+      expect((await appeler(valider, { id: "garage-essai" }, "invite", { base, changements: { ton: "x" } })).status, JSON.stringify(base)).toBe(403);
     }
-    expect([simule.version.mock.calls, ecritures()]).toEqual([[], []]);
+    expect(ecritures()).toEqual([]);
+    expect(simule.version).not.toHaveBeenCalled();
   });
 
-  it("un membre interne : un modèle par métier va à depuisGabarit, des changements à ajouterVersion, tels quels", async () => {
+  it("un externe qui nomme la version en service, ou une base nulle : accepté, la base en service part", async () => {
+    await appeler(preparer, { id: "garage-essai" }, "invite", { base: 2, changements: { ton: "x" } });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { base: null, changements: { ton: "y" } });
+    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements: { ton: "x" } }],
+      ["garage-essai", { base: 2, changements: { ton: "y" } }]]);
+  });
+
+  it("un externe : changer de métier retire les outils que ce métier ne permet pas, d'après la version en service", async () => {
+    simule.version.mockResolvedValueOnce({ version: 2, etat: "publiee", config: { ...CONFIG, outils: ["immobilier"] } });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { metier: "general" } });
+    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements: { metier: "general", outils: [] } }]]);
+  });
+
+  it("un client jamais mis en service : la base d'un externe est sa dernière version", async () => {
+    simule.client.mockResolvedValue({ id: "garage-essai", derniere_version: 3, version_en_service: null, gere_par_megga: false, config: null });
+    await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { ton: "x" } });
+    expect(simule.version.mock.calls).toEqual([["garage-essai", 3]]);
+    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 3, changements: { ton: "x" } }]]);
+  });
+
+  it("un membre interne choisit sa base, sinon la dernière ; le corps envoyé la porte toujours, modèle par métier compris", async () => {
     const r = await appeler(preparer, { id: "garage-essai" }, "exploitant", { gabarit: "immobilier", nom_agent: "Max" });
     expect(r.status).toBe(201);
-    expect(simule.depuisGabarit.mock.calls).toEqual([["garage-essai", { gabarit: "immobilier", nom_agent: "Max" }]]);
+    expect(simule.depuisGabarit.mock.calls).toEqual([["garage-essai", { gabarit: "immobilier", nom_agent: "Max", base: 3 }]]);
     const changements = { consignes: CONSIGNES, whatsapp: { numero_id: "100000000000012" } };
-    await appeler(preparer, { id: "garage-essai" }, "exploitant", { base: 2, changements });
-    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements }]]);
+    await appeler(preparer, { id: "garage-essai" }, "exploitant", { base: 1, changements });
+    await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
+    expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 1, changements }], ["garage-essai", { base: 3, changements: { ton: "x" } }]]);
     expect([simule.version.mock.calls, simule.catalogue.mock.calls]).toEqual([[], []]);
-    expect(journal().map((l) => l.detail)).toEqual([{ base: 2, changements: ["consignes", "whatsapp"] }, { base: null, gabarit: "immobilier" }]);
+    expect(journal().map((l) => l.detail)).toEqual([{ base: null, changements: ["ton"] }, { base: 1, changements: ["consignes", "whatsapp"] },
+      { base: null, gabarit: "immobilier" }]);
     expect(tableJournal()).not.toContain("Consignes sur mesure");
+  });
+
+  it("un membre interne qui nomme une base qui n'est pas un numéro : 400, rien ne part", async () => {
+    for (const base of ["2", 0, -1, 1.5, "abc", {}]) {
+      const r = await appeler(preparer, { id: "garage-essai" }, "exploitant", { base, changements: { ton: "x" } });
+      expect([r.status, await r.json()], JSON.stringify(base)).toEqual([400, { erreur: TA.baseInvalide }]);
+    }
+    expect(ecritures()).toEqual([]);
   });
 
   it("un refus de l'atelier rend sa phrase et ses messages champ par champ", async () => {
@@ -142,13 +168,15 @@ describe("préparer une version", () => {
 });
 
 describe("valider des changements", () => {
-  it("rend le résultat de l'atelier sans rien noter ; un externe y est filtré comme pour préparer", async () => {
+  it("rend le résultat de l'atelier sans rien noter ; un externe y est filtré comme pour préparer, d'après la version en service", async () => {
     const r = await appeler(valider, { id: "garage-essai" }, "invite", { changements: { ton: "chaleureux" } });
     expect([r.status, await r.json()]).toEqual([200, { base: 3, config: CONFIG, manques: [] }]);
-    expect(simule.valider.mock.calls).toEqual([["garage-essai", { changements: { ton: "chaleureux" } }]]);
+    expect(simule.valider.mock.calls).toEqual([["garage-essai", { base: 2, changements: { ton: "chaleureux" } }]]);
     expect((await appeler(valider, { id: "garage-essai" }, "invite", { changements: { consignes: "x" } })).status).toBe(403);
     expect((await appeler(valider, { id: "garage-essai" }, "invite", { gabarit: "immobilier" })).status).toBe(403);
-    expect(simule.valider).toHaveBeenCalledTimes(1);
+    await appeler(valider, { id: "garage-essai" }, "exploitant", { changements: { consignes: CONSIGNES } });
+    expect(simule.valider.mock.calls[1]).toEqual(["garage-essai", { base: 3, changements: { consignes: CONSIGNES } }]);
+    expect(simule.valider).toHaveBeenCalledTimes(2);
     expect(journal()).toEqual([]);
   });
 });

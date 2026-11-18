@@ -1,7 +1,7 @@
 import { TEXTE_ETAT } from "./pastille";
 
 // Un refus, tel que l'écran le montre : la phrase de la console (ou de l'atelier), et ses messages champ par champ ;
-// pour tout un écran, un bandeau (le moteur pas branché, l'atelier injoignable, la porte muette).
+// pour tout un écran, un bandeau (le moteur pas branché, l'atelier injoignable, la porte muette) ; la réussite d'un geste.
 
 export function ErreursChamps({ erreur, champs }: { erreur: string | null; champs?: { champ: string; message: string }[] }) {
   if (!erreur && !champs?.length) return null;
@@ -26,6 +26,16 @@ export function Bandeau({ children, etat = "accent" }: { children: React.ReactNo
   return (
     <p role={etat === "accent" ? "alert" : "status"} className={"trait m-0 rounded-2xl bg-bg px-4 py-3 text-[14px] font-semibold " + TEXTE_ETAT[etat]}>
       {children}
+    </p>
+  );
+}
+
+/** La réussite d'un geste, sous lui (rien tant qu'il n'a pas réussi). */
+export function Fait({ texte }: { texte: string | null }) {
+  if (!texte) return null;
+  return (
+    <p role="status" className="m-0 text-[13.5px] font-semibold text-ok">
+      {texte}
     </p>
   );
 }

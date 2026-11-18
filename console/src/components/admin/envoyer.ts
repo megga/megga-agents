@@ -31,3 +31,8 @@ export async function envoyer<T>(url: string, methode: "POST" | "PUT" | "PATCH" 
   }
   return c as T;
 }
+
+/** Le refus d'un geste pour l'écran : sa phrase, et ses messages champ par champ s'il vient d'une route (RefusEnvoi). */
+export function refusDe(e: unknown): { erreur: string; champs: ChampErreur[] } {
+  return { erreur: e instanceof Error && e.message ? e.message : TA.erreurInterne, champs: e instanceof RefusEnvoi ? e.champs : [] };
+}

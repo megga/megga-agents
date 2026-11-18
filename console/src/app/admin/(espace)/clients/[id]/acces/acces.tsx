@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
 import { envoyer } from "@/components/admin/envoyer";
-import { champ, etiquette } from "@/components/admin/formulaire";
+import { Fait } from "@/components/admin/erreurs";
+import { cadre, champ, etiquette, titreBloc } from "@/components/admin/formulaire";
 import { Pastille } from "@/components/admin/pastille";
 import { SecretUnique } from "@/components/admin/secret";
 import { Tableau } from "@/components/admin/tableau";
@@ -17,17 +18,6 @@ import { TA } from "@/lib/admin/textes";
 // tenu que par SecretUnique, le temps de le copier : fermé, il est oublié (aucun autre état ne le garde).
 
 const adresse = (id: string) => `/api/admin/clients/${encodeURIComponent(id)}`;
-const section = "trait flex min-w-0 flex-col gap-3 rounded-2xl bg-bg px-5 pt-4 pb-5";
-const titre2 = "m-0 text-[18px] font-extrabold";
-
-function Fait({ texte }: { texte: string | null }) {
-  if (!texte) return null;
-  return (
-    <p role="status" className="m-0 text-[13.5px] font-semibold text-ok">
-      {texte}
-    </p>
-  );
-}
 
 /** Qui tient l'agent : reprendre la main (seul MEGGA met alors en service) ou la rendre au client. */
 export function Main({ id, gere }: { id: string; gere: boolean }) {
@@ -35,8 +25,8 @@ export function Main({ id, gere }: { id: string; gere: boolean }) {
   const [fait, setFait] = useState<string | null>(null);
   const bouton = gere ? TA.rendreMain : TA.reprendreMain;
   return (
-    <section className={section}>
-      <h2 className={titre2}>{TA.quiTientAgent}</h2>
+    <section className={cadre}>
+      <h2 className={titreBloc}>{TA.quiTientAgent}</h2>
       <p className="m-0 text-[14px]">{gere ? TA.tenuParMeggaPhrase : TA.tenuParClient}</p>
       <div className="flex flex-wrap items-center gap-3">
         <Confirmation
@@ -62,8 +52,8 @@ export function Jetons({ id }: { id: string }) {
   const [secret, setSecret] = useState<string | null>(null);
   const [fait, setFait] = useState<string | null>(null);
   return (
-    <section className={section}>
-      <h2 className={titre2}>{TA.jetonsClient}</h2>
+    <section className={cadre}>
+      <h2 className={titreBloc}>{TA.jetonsClient}</h2>
       <p className="m-0 text-[13.5px] text-muted-ink">{TA.jetonsSansListe}</p>
       <div className="flex flex-wrap items-center gap-2">
         <Confirmation
@@ -116,8 +106,8 @@ export function Cles({ id, cles }: { id: string; cles: CleVue[] }) {
   }
 
   return (
-    <section className={section}>
-      <h2 className={titre2}>{TA.clesLogiciels}</h2>
+    <section className={cadre}>
+      <h2 className={titreBloc}>{TA.clesLogiciels}</h2>
       <Tableau
         colonnes={[TA.logiciel, TA.identifiant, TA.parMinute, TA.creeeLe, TA.etat]}
         vide={TA.videCles}

@@ -367,6 +367,7 @@ export const TA = {
   voixIdentifiant: "La voix se donne par son identifiant, ou null pour aucune.",
   gabaritReserve: "Un modèle par métier ne s'applique que par un membre interne de MEGGA.",
   numeroInvalide: "Numéro de version invalide : un entier positif.",
+  baseImposee: "Un invité prépare d'après la version en service, sinon la dernière : il ne choisit pas sa base.",
   baseInvalide: "Base invalide : le numéro d'une version.",
 
   // L'onglet Versions
@@ -393,9 +394,10 @@ export const TA = {
   dApresModele: "Un modèle par métier",
   changements: "Les changements",
   exempleChangements: '{"ton": "chaleureux"}',
-  changementsAide: "Un objet JSON : chaque clé est un réglage. Dans modeles, voix et whatsapp, les changements se fusionnent clé par clé ; ailleurs, la valeur remplace l'ancienne.",
+  changementsAide: "Un objet JSON : chaque clé est un réglage. Dans modeles, voix, whatsapp, roles et gestion, les changements se fusionnent clé par clé ; ailleurs, la valeur remplace l'ancienne.",
   reglagesSimples: (champs: string) => `Vous réglez seulement : ${champs}. La voix se donne par son identifiant.`,
   dApresVersion: (n: number) => `D'après la version ${n}, la dernière.`,
+  dApresEnService: (n: number) => `D'après la version ${n}, en service.`,
   changementsIllisibles: "Les changements ne sont pas un objet JSON lisible.",
   resultatValide: (n: number) => `Valide, d'après la version ${n}. Ce qui changerait :`,
   manquesVersion: (m: string) => `Pour être mise en service, il manque : ${m}.`,
@@ -418,10 +420,12 @@ export const TA = {
   relancerTitre: (n: number) => `Relancer la mise en service de la version ${n} ?`,
   effetActiver: (n: number) => `La version ${n} entre en service : le conteneur du client redémarre dès qu'il a fini ses tours en cours.`,
   effetOrdre: (n: number) => `La version ${n} entre en service dans l'atelier : un ordre signé part à l'installation du client, à son prochain relevé.`,
+  effetSelonZone: (n: number) => `La version ${n} entre en service : selon la zone du client, son conteneur redémarre dès qu'il a fini ses tours, ou un ordre signé part à son installation, à son prochain relevé.`,
   jamaisEssayee: "Elle n'a jamais été essayée.",
   ecartARelancer: "L'annuaire ou l'installation ne sert pas cette version : la relancer remet les deux d'accord.",
   enServiceFait: (n: number) => `La version ${n} est en service.`,
   ordreParti: (n: number) => `L'ordre ${n} part à l'installation à son prochain relevé.`,
+  ordrePartiSansNumero: "Un ordre part à l'installation à son prochain relevé.",
 
   // L'onglet Accès : la main, les jetons, les clés des logiciels
   repriseInvalide: "Reprise invalide : gere_par_megga vaut true ou false.",
@@ -471,9 +475,11 @@ export const TA = {
   configurationAide: "Une configuration complète, en JSON, telle que l'atelier la garde.",
   configurationIllisible: "La configuration n'est pas un objet JSON lisible.",
   creerClient: "Créer le client",
+  creerClientTitre: (id: string) => (id ? `Créer le client ${id} ?` : "Créer ce client ?"),
+  creerClientEffet: "Son identifiant ne changera plus : l'atelier ne le recrée jamais, même après une suppression. Le client naît avec une version 1 en brouillon, hors service.",
+  modelesIllisibles: "Les modèles par métier ou les zones ne se lisent pas : seule une configuration entière peut être collée.",
 
   // Les installations hors Cloudflare (installations.gerer pour les piloter)
-  imageInvalide: "Image invalide.",
   versionImageAttendue: "La version de l'image, par exemple 0.2.0.",
   imageAttendue: "L'image signée par MEGGA : ghcr.io/megga/megga-agents@sha256:<empreinte>.",
   sansClePilotage: "L'atelier n'a pas sa clé de pilotage : aucun ordre ne peut être signé.",

@@ -125,13 +125,13 @@ describe("l'installation d'un client", () => {
     expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["installation.image", "ok", { version: "0.3.0", image: IMAGE }]]);
   });
 
-  it("une image de mauvaise forme : 400 champ par champ, rien ne part", async () => {
+  it("une image de mauvaise forme : la console ne juge pas, l'atelier le fait et sa phrase est rendue", async () => {
+    const phrase = "version : celle de l'image, par exemple 0.2.0";
+    simule.proposerImage.mockRejectedValueOnce(new RefusChamps(400, phrase));
     const r = await appeler(proposerImage, "POST", CHALET, "exploitant", { version: "v3", image: "docker.io/autre:latest" });
-    expect([r.status, await r.json()]).toEqual([400, { erreur: TA.imageInvalide, champs: [
-      { champ: "version", message: TA.versionImageAttendue }, { champ: "image", message: TA.imageAttendue }] }]);
-    const seule = await appeler(proposerImage, "POST", CHALET, "exploitant", { version: "0.3.0", image: IMAGE.toUpperCase() });
-    expect((await seule.json()).champs).toEqual([{ champ: "image", message: TA.imageAttendue }]);
-    expect(simule.proposerImage).not.toHaveBeenCalled();
+    expect([r.status, await r.json()]).toEqual([400, { erreur: phrase }]);
+    expect(simule.proposerImage.mock.calls).toEqual([["chalet-essai", { version: "v3", image: "docker.io/autre:latest" }]]);
+    expect(journal().map((l) => [l.resultat, l.detail])).toEqual([["refuse 400", { version: "v3", image: "docker.io/autre:latest" }]]);
   });
 
   it("un externe n'enregistre, ne révoque ni ne propose rien, même d'un corps écrit à la main : 403", async () => {

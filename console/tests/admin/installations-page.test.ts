@@ -39,7 +39,7 @@ vi.mock("next/link", async () => {
 const BREF = { cle: "263dfa8b264b31a1", enregistree: 1_800_000_000, revoquee: null, releve: 1_800_000_100, silencieuse: false, pilotage: "complet",
   accord: true, mises_a_jour: false, agent: { ok: true, version: "0.2.0", licence: { etat: "valide", jusqu_au: "2027-12-31" } },
   configuration: { source: "pilotage", version: 2 }, ecart: false };
-const simule = vi.hoisted(() => ({ appels: [] as string[], installations: {} as unknown, installation: {} as unknown }));
+const simule = vi.hoisted(() => ({ appels: [] as string[], installations: {} as unknown, installation: {} as unknown, gabarits: null as unknown }));
 vi.mock("@/lib/admin/atelier", async (original) => {
   const vrai = await original<typeof import("@/lib/admin/atelier")>();
   const noter = (quoi: string) => simule.appels.push(quoi);
@@ -55,7 +55,8 @@ vi.mock("@/lib/admin/atelier", async (original) => {
         derniere_version: 2, gere_par_megga: false, installation: BREF }], porte: true }),
       installations: async () => (noter("installations"), repondre(simule.installations)),
       installation: async (id: string) => (noter(`installation ${id}`), repondre(simule.installation)),
-      gabarits: async () => (noter("gabarits"), { gabarits: [{ id: "generaliste", titre: "Généraliste", description: "", metier: "general", reglages: {} }] }),
+      gabarits: async () => (noter("gabarits"), repondre(simule.gabarits ?? { gabarits: [{ id: "generaliste", titre: "Généraliste", description: "",
+        metier: "general", reglages: {} }] })),
       catalogue: async () => (noter("catalogue"), { metiers: {}, champs_client: [], zones: ["suisse", "europe", "client"], zones_porte: ["europe"], modeles: [] }),
     },
   };
@@ -75,6 +76,7 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 beforeEach(async () => {
   etat.db = await baseEssai();
   simule.appels = [];
+  simule.gabarits = null;
   simule.installations = { installations: [{ client: "chalet-essai", ...BREF }], cle_pilotage: true };
   simule.installation = { client: "chalet-essai", version_en_service: 2, installation: BREF,
     ordres: [{ numero: 2, genre: "config", version: 2, etat: "applique", detail: "", cree: 1_800_000_000, expire: 1_800_600_000, maj: 1_800_000_100 }],
@@ -135,7 +137,12 @@ describe("l'onglet Installation", () => {
 describe("le nouveau client", () => {
   it("proposé à qui peut créer (clients.creer et tous les clients), avec les modèles et les zones", async () => {
     expect(elements(await PageClients(), Clients)[0].props.creation).toEqual({ gabarits: [{ id: "generaliste", titre: "Généraliste" }],
-      zones: ["suisse", "europe", "client"] });
+      zones: ["suisse", "europe", "client"], avertissement: null });
+  });
+
+  it("les modèles illisibles : toujours proposé, la configuration collée seule, avec l'avertissement qui dit pourquoi", async () => {
+    simule.gabarits = new RefusChamps(502, TA.atelierInjoignable);
+    expect(elements(await PageClients(), Clients)[0].props.creation).toEqual({ gabarits: [], zones: [], avertissement: TA.modelesIllisibles });
   });
 
   it("un membre limité à une liste, ou sans clients.creer : ni le formulaire, ni les modèles lus", async () => {

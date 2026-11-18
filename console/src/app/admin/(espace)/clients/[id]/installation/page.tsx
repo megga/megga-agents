@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import { Bandeau } from "@/components/admin/erreurs";
+import { titreBloc } from "@/components/admin/formulaire";
 import { EcartInstallation, etatInstallation, Pastille } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
 import { peut } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps } from "@/lib/admin/atelier";
+import { estObjet } from "@/lib/admin/champs";
 import { gardePage } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
 import { GestesInstallation } from "./installation";
@@ -13,7 +15,6 @@ import { GestesInstallation } from "./installation";
 // Un client servi par la porte n'a pas d'installation : la phrase de l'atelier (409).
 
 type Objet = Record<string, unknown>;
-const estObjet = (v: unknown): v is Objet => !!v && typeof v === "object" && !Array.isArray(v);
 const liste = (v: unknown): Objet[] => (Array.isArray(v) ? v.filter(estObjet) : []);
 const moment = (v: unknown) => (typeof v === "number" ? TA.moment(v) : TA.inconnu);
 const texte = (v: unknown) => (typeof v === "string" && v ? v : TA.inconnu);
@@ -75,13 +76,12 @@ export default async function PageInstallation({ params }: PageProps<"/admin/cli
     return <Bandeau etat={r.statut === 409 ? "faint" : "accent"}>{r.message}</Bandeau>;
   }
   const i = estObjet(r.installation) ? r.installation : null;
-  const titre2 = "m-0 text-[18px] font-extrabold";
   return (
     <>
-      <h2 className={titre2}>{TA.lInstallation}</h2>
+      <h2 className={titreBloc}>{TA.lInstallation}</h2>
       {i ? <EtatInstallation i={i} /> : <Bandeau etat="faint">{TA.aucuneInstallation}</Bandeau>}
       {peut(a, "installations.gerer") && <GestesInstallation id={id} revocable={!!i && i.revoquee == null} />}
-      <h2 className={titre2}>{TA.ordres}</h2>
+      <h2 className={titreBloc}>{TA.ordres}</h2>
       <Tableau
         colonnes={[TA.ordre, TA.genre, TA.version, TA.etat, TA.detail, TA.deposeLe, TA.majLe, TA.expireLe]}
         vide={TA.videOrdres}
@@ -97,7 +97,7 @@ export default async function PageInstallation({ params }: PageProps<"/admin/cli
           <span key="expire" className="whitespace-nowrap">{moment(o.expire)}</span>,
         ])}
       />
-      <h2 className={titre2}>{TA.journalPilotage}</h2>
+      <h2 className={titreBloc}>{TA.journalPilotage}</h2>
       <Tableau
         colonnes={[TA.quand, TA.evenement, TA.ordre, TA.detail]}
         vide={TA.videJournalPilotage}

@@ -3,7 +3,10 @@ import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PageVersions from "@/app/admin/(espace)/clients/[id]/versions/page";
-import { gesteDe, Preparer } from "@/app/admin/(espace)/clients/[id]/versions/versions";
+import { Essai } from "@/app/admin/(espace)/clients/[id]/versions/essai";
+import { Preparer } from "@/app/admin/(espace)/clients/[id]/versions/preparer";
+import { gesteDe, GestesVersion } from "@/app/admin/(espace)/clients/[id]/versions/versions";
+import { RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
 import { baseEssai, membre } from "./aides";
 
@@ -42,7 +45,8 @@ const CATALOGUE = { metiers: { general: [] }, champs_client: ["metier", "nom_age
   zones_porte: ["europe"], modeles: [] };
 const GABARITS = { gabarits: [{ id: "immobilier", titre: "Immobilier", description: "Une agence.", metier: "immobilier", reglages: {} }] };
 
-const simule = vi.hoisted(() => ({ appels: [] as string[], config: {} as Record<string, unknown>, surClient: {} as Record<string, unknown> }));
+const simule = vi.hoisted(() => ({ appels: [] as string[], config: {} as Record<string, unknown>, surClient: {} as Record<string, unknown>,
+  catalogue: null as unknown }));
 vi.mock("@/lib/admin/atelier", async (original) => {
   const vrai = await original<typeof import("@/lib/admin/atelier")>();
   const noter = (quoi: string) => simule.appels.push(quoi);
@@ -55,7 +59,11 @@ vi.mock("@/lib/admin/atelier", async (original) => {
       versions: async (id: string) => (noter(`versions ${id}`), { versions: VERSIONS }),
       version: async (id: string, n: number) => (noter(`version ${id} ${n}`), { ...VERSIONS.find((v) => v.version === n),
         config: { ...simule.config, ton: `ton ${n}` } }),
-      catalogue: async () => (noter("catalogue"), CATALOGUE),
+      catalogue: async () => {
+        noter("catalogue");
+        if (simule.catalogue instanceof Error) throw simule.catalogue;
+        return CATALOGUE;
+      },
       gabarits: async () => (noter("gabarits"), GABARITS),
     },
   };
@@ -73,11 +81,23 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
   return [...(el.type === type ? [el] : []), ...Object.values(el.props).flatMap((v) => elements(v, type))];
 }
 
+/** Déplie les composants du serveur de la page (DetailVersion…), pour lire les props des composants du navigateur qu'ils rendent. */
+function deplier(n: unknown): unknown {
+  if (Array.isArray(n)) return n.map(deplier);
+  if (!isValidElement(n)) return n;
+  const el = n as ReactElement<Record<string, unknown>>;
+  if (typeof el.type === "function" && ![GestesVersion, Preparer, Essai].includes(el.type as never)) {
+    return deplier((el.type as (p: unknown) => unknown)(el.props));
+  }
+  return { ...el, props: Object.fromEntries(Object.entries(el.props).map(([k, v]) => [k, deplier(v)])) };
+}
+
 beforeEach(async () => {
   etat.db = await baseEssai();
   simule.appels = [];
   simule.config = CONFIG;
   simule.surClient = {};
+  simule.catalogue = null;
   membre(etat.db, { utilisateur: "chef", role: "superadmin" });
   membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
   membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
@@ -104,7 +124,7 @@ describe("l'onglet Versions", () => {
     expect(h).toContain("ton 4");
     const [p] = elements(arbre, Preparer);
     expect(p.props).toMatchObject({ id: "garage-essai", externe: false, gabarits: [{ id: "immobilier", titre: "Immobilier", description: "Une agence." }],
-      derniere: { numero: 4, config: { ...CONFIG, ton: "ton 4" } } });
+      base: { numero: 4, config: { ...CONFIG, ton: "ton 4" }, enService: false } });
   });
 
   it("un externe : il prépare et essaie, limité aux réglages simples ; ni modèle par métier, ni geste de pilotage", async () => {
@@ -115,7 +135,7 @@ describe("l'onglet Versions", () => {
       for (const t of [TA.forcer, TA.mettreEnService, TA.revenirVersion, TA.dApresModele]) expect(h, `${v} ${t}`).not.toContain(enHtml(t));
       expect(h).toContain(TA.preparerBrouillon);
       expect(h).toContain(enHtml(TA.reglagesSimples("metier, nom_agent, voix, ton, outils")));
-      expect(elements(arbre, Preparer)[0].props).toMatchObject({ externe: true, gabarits: [] });
+      expect(elements(arbre, Preparer)[0].props).toMatchObject({ externe: true, gabarits: [], base: { numero: 2, config: CONFIG, enService: true } });
     }
     expect(simule.appels).not.toContain("gabarits");
     expect(html(await page("4"))).toContain(TA.essaiTitre(4));
@@ -146,6 +166,17 @@ describe("l'onglet Versions", () => {
   });
 });
 
+describe("l'effet annoncé par la page", () => {
+  it("la zone du client connue, en Europe : un redémarrage ; le catalogue illisible : zone inconnue (null)", async () => {
+    const ordre = async () => elements(deplier(await page("3")), GestesVersion)[0].props.ordre;
+    expect(await ordre()).toBe(false);
+    simule.config = { ...CONFIG, zone: "client" };
+    expect(await ordre()).toBe(true);
+    simule.catalogue = new RefusChamps(502, TA.atelierInjoignable);
+    expect(await ordre()).toBeNull();
+  });
+});
+
 describe("le geste de pilotage d'une version", () => {
   const v = (numero: number, etat: "brouillon" | "publiee", essais: number) => ({ numero, etat, essais });
 
@@ -164,5 +195,10 @@ describe("le geste de pilotage d'une version", () => {
       effet: `${TA.ecartARelancer} ${TA.effetActiver(2)}`, forcer: false });
     expect(gesteDe(v(3, "brouillon", 1), 2, false, true)?.effet).toBe(TA.effetOrdre(3));
     expect(gesteDe(v(4, "brouillon", 0), 2, false, true)?.effet).toBe(`${TA.jamaisEssayee} ${TA.effetOrdre(4)}`);
+  });
+
+  it("la zone inconnue (catalogue illisible) : l'effet dit les deux cas, jamais un redémarrage annoncé à tort", () => {
+    expect(gesteDe(v(3, "brouillon", 1), 2, false, null)?.effet).toBe(TA.effetSelonZone(3));
+    expect(gesteDe(v(1, "publiee", 0), 2, false, null)?.effet).toBe(TA.effetSelonZone(1));
   });
 });

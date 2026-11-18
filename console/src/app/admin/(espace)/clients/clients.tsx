@@ -3,20 +3,22 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { envoyer, RefusEnvoi } from "@/components/admin/envoyer";
-import { ErreursChamps } from "@/components/admin/erreurs";
-import { champ, etiquette, zoneTexte } from "@/components/admin/formulaire";
+import { Confirmation } from "@/components/admin/confirmation";
+import { envoyer, refusDe } from "@/components/admin/envoyer";
+import { Bandeau, ErreursChamps } from "@/components/admin/erreurs";
+import { cadre, champ, etiquette, titreBloc, zoneTexte } from "@/components/admin/formulaire";
 import { Pastille, PastillesEtat, type Etat } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ChampErreur } from "@/lib/admin/champs";
+import { estObjet, type ChampErreur } from "@/lib/admin/champs";
 import type { EtatClient } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 
 // La liste des clients du moteur, déjà bornée au périmètre côté serveur : la recherche se fait ici, dans le navigateur
 // (entreprise, agent, identifiant). Dans un cadre étroit, les colonnes se replient sous l'entreprise. « Nouveau client » pour
-// qui peut créer : d'après un modèle par métier, ou d'une configuration entière ; l'atelier dit ce qui ne va pas, champ par champ.
+// qui peut créer : d'après un modèle par métier, ou d'une configuration entière (seule offerte si les modèles ou les zones ne se
+// lisent pas) ; derrière une confirmation (l'identifiant ne changera plus) ; l'atelier dit ce qui ne va pas, champ par champ.
 
 export type LigneClient = {
   id: string;
@@ -27,11 +29,10 @@ export type LigneClient = {
   installation: { etat: Etat; texte: string };
 };
 
-/** Ce que le formulaire du nouveau client propose : les modèles par métier et les zones du catalogue. */
-export type Creation = { gabarits: { id: string; titre: string }[]; zones: string[] };
+/** Ce que le formulaire du nouveau client propose : les modèles par métier et les zones ; avertissement : ils ne se lisent pas. */
+export type Creation = { gabarits: { id: string; titre: string }[]; zones: string[]; avertissement: string | null };
 
 const trouve = (l: LigneClient, q: string) => [l.entreprise, l.agent, l.id].some((v) => v?.toLocaleLowerCase("fr").includes(q));
-const estObjet = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 function Champ({ id, titre, aide, valeur, onChange }: { id: string; titre: string; aide?: string; valeur: string; onChange: (v: string) => void }) {
   return (
@@ -45,7 +46,8 @@ function Champ({ id, titre, aide, valeur, onChange }: { id: string; titre: strin
 
 function NouveauClient({ creation }: { creation: Creation }) {
   const router = useRouter();
-  const [mode, setMode] = useState<"modele" | "config">("modele");
+  const modeles = creation.gabarits.length > 0 && creation.zones.length > 0;
+  const [mode, setMode] = useState<"modele" | "config">(modeles ? "modele" : "config");
   const [gabarit, setGabarit] = useState(creation.gabarits[0]?.id ?? "");
   const [id, setId] = useState("");
   const [entreprise, setEntreprise] = useState("");
@@ -54,50 +56,54 @@ function NouveauClient({ creation }: { creation: Creation }) {
   const [prenom, setPrenom] = useState("");
   const [config, setConfig] = useState("");
   const [refus, setRefus] = useState<{ erreur: string; champs: ChampErreur[] } | null>(null);
-  const [envoi, setEnvoi] = useState(false);
 
-  function corps(): Record<string, unknown> | null {
+  /** La configuration collée, si elle forme un objet JSON. */
+  function collee(): Record<string, unknown> | null {
+    try {
+      const c: unknown = JSON.parse(config);
+      return estObjet(c) ? c : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function corps(): Record<string, unknown> {
     if (mode === "modele") {
       const client = { id: id.trim(), entreprise: entreprise.trim(), zone, ...(numero.trim() ? { numero_id: numero.trim() } : {}) };
       return { gabarit, client, nom_agent: prenom.trim() };
     }
-    try {
-      const c: unknown = JSON.parse(config);
-      if (estObjet(c)) return { config: c };
-    } catch {
-      // la même phrase, plus bas
-    }
-    setRefus({ erreur: TA.configurationIllisible, champs: [] });
-    return null;
+    const c = collee();
+    if (!c) throw new Error(TA.configurationIllisible);
+    return { config: c };
   }
 
-  async function creer(e: React.FormEvent) {
-    e.preventDefault();
+  /** Après confirmation : un refus s'affiche dans la confirmation (qui reste ouverte) et, champ par champ, sous le formulaire. */
+  async function creer() {
     setRefus(null);
-    const c = corps();
-    if (!c) return;
-    setEnvoi(true);
     try {
-      const r = await envoyer<{ client: string }>("/api/admin/clients", "POST", c);
+      const r = await envoyer<{ client: string }>("/api/admin/clients", "POST", corps());
       if (r) router.push(`/admin/clients/${encodeURIComponent(r.client)}/versions`);
     } catch (e) {
-      setRefus({ erreur: e instanceof Error ? e.message : TA.erreurInterne, champs: e instanceof RefusEnvoi ? e.champs : [] });
-    } finally {
-      setEnvoi(false);
+      setRefus(refusDe(e));
+      throw e;
     }
   }
 
+  const idVu = mode === "modele" ? id.trim() : String(collee()?.id ?? "");
   return (
-    <form noValidate onSubmit={creer} className="trait flex flex-col gap-3.5 rounded-2xl bg-bg px-5 pt-4 pb-5">
-      <h2 className="m-0 text-[18px] font-extrabold">{TA.nouveauClient}</h2>
-      <div role="radiogroup" className="flex flex-wrap gap-x-4 gap-y-1.5 text-[14px]">
-        {(["modele", "config"] as const).map((m) => (
-          <label key={m} className="flex items-center gap-2">
-            <input type="radio" name="nouveau-mode" checked={mode === m} onChange={() => { setMode(m); setRefus(null); }} className="accent-marque" />
-            {m === "modele" ? TA.dApresModele : TA.configEntiere}
-          </label>
-        ))}
-      </div>
+    <section className={cadre}>
+      <h2 className={titreBloc}>{TA.nouveauClient}</h2>
+      {creation.avertissement && <Bandeau etat="warn">{creation.avertissement}</Bandeau>}
+      {modeles && (
+        <div role="radiogroup" className="flex flex-wrap gap-x-4 gap-y-1.5 text-[14px]">
+          {(["modele", "config"] as const).map((m) => (
+            <label key={m} className="flex items-center gap-2">
+              <input type="radio" name="nouveau-mode" checked={mode === m} onChange={() => { setMode(m); setRefus(null); }} className="accent-marque" />
+              {m === "modele" ? TA.dApresModele : TA.configEntiere}
+            </label>
+          ))}
+        </div>
+      )}
       {mode === "modele" ? (
         <div className="grid gap-3.5 min-[761px]:grid-cols-2">
           <div className="flex flex-col gap-1.5">
@@ -133,10 +139,12 @@ function NouveauClient({ creation }: { creation: Creation }) {
         </div>
       )}
       <ErreursChamps erreur={refus?.erreur ?? null} champs={refus?.champs} />
-      <button type="submit" disabled={envoi} className="h-10 self-start rounded-full bg-marque px-5 text-[14.5px] font-bold text-on-marque disabled:opacity-60">
-        {TA.creerClient}
-      </button>
-    </form>
+      <div>
+        <Confirmation titre={TA.creerClientTitre(idVu)} effet={TA.creerClientEffet} bouton={TA.creerClient} onConfirmer={creer}>
+          {TA.creerClient}
+        </Confirmation>
+      </div>
+    </section>
   );
 }
 

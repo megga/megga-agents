@@ -1,11 +1,11 @@
+import { estObjet } from "./champs";
 import { TA } from "./textes";
 
 // L'écart entre deux configurations, et une configuration lue à plat : des chemins pointés (voix.voix), une liste ou un objet
-// vide comparés entiers. Pur, sans serveur : l'onglet Versions s'en sert aussi dans le navigateur, après « Valider ».
+// vide comparés entiers ; le numéro d'une version ; ce que le journal garde du corps d'une version. Pur, sans serveur :
+// l'onglet Versions s'en sert aussi dans le navigateur, après « Valider ».
 
 export type Difference = { champ: string; avant: unknown; apres: unknown };
-
-const estObjet = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** Les feuilles d'une configuration, dans son ordre : un objet non vide se déplie, tout le reste est une valeur. */
 function aPlat(config: Record<string, unknown>, prefixe = ""): [string, unknown][] {
@@ -42,4 +42,17 @@ const NUMERO = /^[1-9]\d{0,8}$/;
 export function numeroVersion(v: unknown): number | null {
   if (typeof v === "string") return NUMERO.test(v) ? Number(v) : null;
   return typeof v === "number" && Number.isInteger(v) && v >= 1 && v < 1e9 ? v : null;
+}
+
+/**
+ * Ce que le journal garde du corps d'une version (valider, préparer) : la base, les noms des réglages changés ou le modèle par
+ * métier demandé ; jamais une valeur (ni la configuration, ni les consignes).
+ */
+export function detailVersion(corps: unknown) {
+  if (!estObjet(corps)) return null;
+  return {
+    base: typeof corps.base === "number" ? numeroVersion(corps.base) : null,
+    ...(typeof corps.gabarit === "string" ? { gabarit: corps.gabarit } : {}),
+    ...(estObjet(corps.changements) ? { changements: Object.keys(corps.changements).sort() } : {}),
+  };
 }

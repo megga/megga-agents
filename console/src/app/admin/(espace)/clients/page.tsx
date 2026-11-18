@@ -10,12 +10,15 @@ import { Clients, type Creation, type LigneClient } from "./clients";
 // Les clients du moteur : la liste de l'atelier, bornée au périmètre ici, côté serveur, avant d'arriver au navigateur.
 // « Nouveau client » pour qui peut créer (clients.creer et le périmètre de tous les clients) : les modèles et les zones.
 
-/** Ce que le formulaire du nouveau client propose ; rien si le membre ne crée pas, ou si l'atelier ne les donne pas. */
+/**
+ * Ce que le formulaire du nouveau client propose ; rien si le membre ne crée pas. Les modèles ou les zones illisibles : seule
+ * la configuration collée est offerte, avec un avertissement qui dit pourquoi.
+ */
 async function creation(peut: boolean): Promise<Creation | null> {
   if (!peut) return null;
   const [g, c] = await Promise.all([ouRefus(atelier.gabarits()), ouRefus(atelier.catalogue())]);
-  if (g instanceof RefusChamps || c instanceof RefusChamps) return null;
-  return { gabarits: g.gabarits.map((x) => ({ id: x.id, titre: x.titre })), zones: c.zones };
+  if (g instanceof RefusChamps || c instanceof RefusChamps) return { gabarits: [], zones: [], avertissement: TA.modelesIllisibles };
+  return { gabarits: g.gabarits.map((x) => ({ id: x.id, titre: x.titre })), zones: c.zones, avertissement: null };
 }
 
 export default async function PageClients() {
