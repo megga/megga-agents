@@ -37,13 +37,18 @@ export function nettoyer(detail: unknown): unknown {
   return detail;
 }
 
-/** Une cible « genre:valeur » nettoyée comme le détail { genre: valeur } : un numéro réduit, la valeur d'un genre secret masquée. */
+/**
+ * Une cible « genre:valeur » : la valeur d'un genre secret masquée ; le numéro d'une personne réduit à ses quatre derniers
+ * chiffres ; toute autre valeur entière (un identifiant de client peut être tout en chiffres).
+ */
 function nettoyerCible(cible: string | null): string | null {
   if (cible === null) return null;
   const i = cible.indexOf(":");
   if (i < 0) return nettoyer(cible) as string;
   const genre = cible.slice(0, i);
-  return `${genre}:${(nettoyer({ [genre]: cible.slice(i + 1) }) as Record<string, string>)[genre]}`;
+  const valeur = cible.slice(i + 1);
+  if (CLE_SECRETE.test(genre)) return `${genre}:${MASQUE}`;
+  return `${genre}:${genre === "personne" ? (nettoyer(valeur) as string) : valeur}`;
 }
 
 /** Nettoie lui-même la cible et le détail ; le détail sérialisé est coupé à DETAIL_MAX caractères. */

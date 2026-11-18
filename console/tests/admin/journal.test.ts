@@ -47,6 +47,13 @@ describe("le journal", () => {
     expect(JSON.stringify(db.prepare("SELECT cible FROM admin_journal").all())).not.toMatch(/41791234567|mk_1|abc/);
   });
 
+  it("ne réduit le numéro d'une cible que pour une personne : un client tout en chiffres reste entier", () => {
+    const s = acces({ utilisateur: "s", superadmin: true });
+    for (const cible of ["client:1234567", "compte:00123456", "membre:9876543", "personne:0041791234567"]) noter(db, geste("s", "essai", cible), T0);
+    expect(lireJournal(db, s, { page: 1 }).lignes.map((l) => l.cible).reverse())
+      .toEqual(["client:1234567", "compte:00123456", "membre:9876543", "personne:…4567"]);
+  });
+
   it("borne un détail à 2048 caractères, rendu alors tel quel", () => {
     const s = acces({ utilisateur: "s", superadmin: true });
     const gros = { liste: Array.from({ length: 500 }, (_, i) => `élément ${i}`) };

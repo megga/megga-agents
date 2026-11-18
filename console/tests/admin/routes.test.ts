@@ -15,7 +15,14 @@ const CONSOLE = join(__dirname, "../..");
 const API_ADMIN = join(CONSOLE, "src/app/api/admin");
 
 type Methode = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "session"; params: Record<string, string>; client: boolean }[] = [];
+export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "session"; params: Record<string, string>; client: boolean }[] = [
+  { fichier: "equipe/membres/[id]/route.ts", methodes: ["PATCH", "DELETE"], droit: "equipe.gerer", params: { id: "limite" }, client: false },
+  { fichier: "equipe/invitations/route.ts", methodes: ["POST"], droit: "equipe.gerer", params: {}, client: false },
+  { fichier: "equipe/invitations/[id]/route.ts", methodes: ["DELETE"], droit: "equipe.gerer", params: { id: "in_x" }, client: false },
+  { fichier: "equipe/roles/route.ts", methodes: ["POST"], droit: "equipe.gerer", params: {}, client: false },
+  { fichier: "equipe/roles/[id]/route.ts", methodes: ["PATCH", "DELETE"], droit: "equipe.gerer", params: { id: "lecture" }, client: false },
+  { fichier: "invitation/route.ts", methodes: ["POST"], droit: "session", params: {}, client: false },
+];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
 function fichiersDe(dossier: string, garder: (nom: string, chemin: string) => boolean): string[] {
