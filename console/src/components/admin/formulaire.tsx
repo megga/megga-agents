@@ -8,6 +8,9 @@ import { TA } from "@/lib/admin/textes";
 
 export const champ = "h-10 rounded-xl bg-bg px-3 text-[14.5px] text-ink placeholder:text-faint";
 export const etiquette = "text-[13px] font-semibold text-muted-ink";
+/** Une zone de texte sur plusieurs lignes (du JSON, une clé publique), aux contours d'un champ. */
+export const zoneTexte =
+  "trait min-h-28 w-full min-w-0 rounded-xl bg-bg px-3 py-2 text-[14px] text-ink outline-none placeholder:text-faint focus-visible:border-trait-fort";
 
 /** Un rôle proposé dans un formulaire. */
 export type RoleChoix = { id: string; nom: string };

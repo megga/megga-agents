@@ -215,6 +215,19 @@ describe("la garde en mémoire", () => {
     expect(tailleGarde()).toBe(1);
   });
 
+  it("est partagée par les copies du module (une page, une route) : l'écriture de l'une oublie ce que l'autre a gardé", async () => {
+    vi.resetModules();
+    const route = await import("@/lib/admin/atelier");
+    expect(route.atelier).not.toBe(atelier);
+    await atelier.clients();
+    expect(route.tailleGarde()).toBe(1);
+    fetchSimule.mockResolvedValueOnce(reponse({ client: "garage-essai", jeton: "j" }, 201));
+    await route.atelier.creerJeton("garage-essai");
+    expect(tailleGarde()).toBe(0);
+    await atelier.clients();
+    expect(fetchSimule).toHaveBeenCalledTimes(3);
+  });
+
   it("ne garde pas un refus", async () => {
     fetchSimule.mockResolvedValueOnce(reponse({ erreur: "x" }, 500));
     await refusAsync(() => atelier.clients());

@@ -52,7 +52,7 @@ export type Version = {
   auteur: "megga" | "client" | null;
   base: number | null;
   essais: number;
-  cree_le: string | null;
+  cree_le: number | string | null; // en secondes depuis 1970 (Agno)
   config?: Record<string, unknown>;
 };
 export type Catalogue = { metiers: Record<string, string[]>; champs_client: string[]; zones: string[]; zones_porte: string[]; modeles: string[] };
@@ -131,7 +131,13 @@ async function appel<T>(url: string, methode: Methode, corps?: unknown, attente 
   }
 }
 
-const gardees = new Map<string, { quand: number; valeur: Promise<unknown> }>();
+/**
+ * Les lectures gardées, une seule fois par processus : Next charge ce module une fois pour une page et une autre pour une
+ * route ; sans ce partage, l'écriture d'une route n'oublierait pas ce que la page a gardé, qui montrerait l'état d'avant.
+ */
+const GARDEES = Symbol.for("megga.admin.atelier.gardees");
+type Gardee = { quand: number; valeur: Promise<unknown> };
+const gardees: Map<string, Gardee> = ((globalThis as { [GARDEES]?: Map<string, Gardee> })[GARDEES] ??= new Map());
 
 /** Oublie toutes les lectures gardées (après une écriture). */
 export function oublier(): void {
