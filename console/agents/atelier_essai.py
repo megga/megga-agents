@@ -330,7 +330,10 @@ def creer_app() -> FastAPI:
         """L'installation reste vivante tant qu'on lit l'atelier : un relevé par minute au plus."""
         if pilote.branche and requete.url.path.startswith("/atelier") and time.time() - pilote.quand > RELEVE_CHAQUE:
             pilote.quand = time.time()
-            await pilote.relever_au_fil(app)
+            try:
+                await pilote.relever_au_fil(app)
+            except Exception as e:  # un relevé manqué ne casse jamais la lecture en cours
+                journal.warning("relevé de %s manqué : %s", CHALET, e)
         return await suite(requete)
 
     t = TestClient(app, headers={"authorization": f"Bearer {jeton}"})

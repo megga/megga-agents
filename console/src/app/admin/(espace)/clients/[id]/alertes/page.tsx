@@ -15,12 +15,7 @@ export default async function PageAlertesClient({ params, searchParams }: PagePr
   const periode = <ChoixPeriode jours={jours} chemin={`/admin/clients/${encodeURIComponent(id)}/alertes`} />;
   if (r instanceof RefusChamps) {
     if (r.statut === 404) notFound();
-    return (
-      <>
-        {periode}
-        <Bandeau>{r.message}</Bandeau>
-      </>
-    );
+    return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   }
   return (
     <>

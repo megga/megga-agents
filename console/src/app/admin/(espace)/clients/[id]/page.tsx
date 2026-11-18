@@ -22,12 +22,7 @@ export default async function PageSuivi({ params, searchParams }: PageProps<"/ad
   const periode = <ChoixPeriode jours={jours} chemin={`/admin/clients/${encodeURIComponent(id)}`} />;
   if (r instanceof RefusChamps) {
     if (r.statut === 404) notFound();
-    return (
-      <>
-        {periode}
-        <Bandeau>{r.message}</Bandeau>
-      </>
-    );
+    return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   }
   const x = sansCouts(r, a).activite;
   const tuiles = [

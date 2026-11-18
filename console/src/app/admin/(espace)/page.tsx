@@ -28,7 +28,7 @@ function parGenre(soucis: Souci[]): { genre: string; enCours: boolean; nombre: n
 
 async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
   const r = await ouRefus(lireTout(a, jours, atelier));
-  if (r instanceof RefusChamps) return <Bandeau>{r.message}</Bandeau>;
+  if (r instanceof RefusChamps) return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   const v = agreger(r.lectures, a);
   const noms = new Map(r.lectures.map((l) => [l.client.id, l.client.entreprise || l.client.id]));
   const lien = (id: string, onglet = "") => (
@@ -38,6 +38,7 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
   );
   return (
     <>
+      <ChoixPeriode jours={jours} chemin="/admin" />
       {v.injoignables.length > 0 && <Bandeau etat="warn">{TA.injoignables(v.injoignables.map((id) => noms.get(id)).join(", "))}</Bandeau>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
         <Tuile titre={TA.clientsEnService} valeur={TA.nombre(v.tuiles.enService)} />
@@ -54,7 +55,7 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
           <span key="client">{lien(x.client, "/alertes")}</span>,
           <span key="soucis" className="flex flex-wrap gap-1">
             {parGenre(x.soucis).map((g) => (
-              <Pastille key={`${g.enCours}:${g.genre}`} etat={g.enCours ? "accent" : "warn"} texte={texteGenre(g.genre) + (g.nombre > 1 ? ` (${g.nombre})` : "")} />
+              <Pastille key={`${g.enCours}:${g.genre}`} etat={g.enCours ? "accent" : "warn"} texte={TA.avecNombre(texteGenre(g.genre), g.nombre)} />
             ))}
           </span>,
         ])}
@@ -83,7 +84,6 @@ export default async function VueEnsemble({ searchParams }: PageProps<"/admin">)
   return (
     <>
       {titre}
-      <ChoixPeriode jours={jours} chemin="/admin" />
       <BlocMoteur jours={jours} a={a} />
     </>
   );
