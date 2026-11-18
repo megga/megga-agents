@@ -6,6 +6,7 @@ import { Refus } from "@/lib/agents";
 import { session, sessionDe } from "@/lib/auth";
 import { base } from "@/lib/base";
 import { exiger, exigerClient, peut, voitClient, type Acces } from "./acces";
+import { RefusChamps } from "./atelier";
 import type { Droit } from "./droits";
 import { noter } from "./journal";
 import { accesDe } from "./membres";
@@ -42,6 +43,12 @@ async function lireCorps(requete: Request): Promise<unknown> {
   return lecture(requete) ? null : requete.json().catch(() => null);
 }
 
+/** Un refus en JSON : sa phrase, et pour un refus de l'atelier, ses messages champ par champ (ErreursChamps). */
+function reponseRefus(e: Refus): Response {
+  const champs = e instanceof RefusChamps && e.champs.length ? { champs: e.champs } : {};
+  return Response.json({ erreur: e.message, ...champs }, { status: e.statut });
+}
+
 /**
  * traiter rend une Response (rendue telle quelle), une valeur (en JSON) ou rien (204, comme un retrait) ;
  * un Refus, son statut ; le reste, 500 sans détail.
@@ -55,7 +62,7 @@ async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: strin
   } catch (e) {
     if (e instanceof Refus) {
       noterIssue(`refuse ${e.statut}`);
-      return Response.json({ erreur: e.message }, { status: e.statut });
+      return reponseRefus(e);
     }
     console.error("admin :", e);
     noterIssue("erreur");

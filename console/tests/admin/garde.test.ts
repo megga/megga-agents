@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RefusChamps } from "@/lib/admin/atelier";
 import { GARDE, garde, gardePage, gardeSession, origineAdmise } from "@/lib/admin/garde";
 import { lireJournal } from "@/lib/admin/journal";
 import { Refus } from "@/lib/agents";
@@ -103,12 +104,21 @@ describe("la garde des routes", () => {
       throw new Refus(409, TA.nomPris);
     });
     expect([refusee.status, await refusee.json()]).toEqual([409, { erreur: TA.nomPris }]);
+    const champs = [{ champ: "nom_agent", message: "Le prénom doit faire 40 caractères au plus." }];
+    const parChamp = await faire(async () => {
+      throw new RefusChamps(422, "configuration invalide", champs);
+    });
+    expect([parChamp.status, await parChamp.json()]).toEqual([422, { erreur: "configuration invalide", champs }]);
+    const sansChamp = await faire(async () => {
+      throw new RefusChamps(504, TA.atelierLent);
+    });
+    expect(await sansChamp.json()).toEqual({ erreur: TA.atelierLent });
     const cassee = await faire(async () => {
       throw new Error("le secret interne");
     });
     expect([cassee.status, await cassee.json()]).toEqual([500, { erreur: TA.erreurInterne }]);
     expect(erreur).toHaveBeenCalledOnce();
-    expect(lignes().map((l) => `${l.cible} ${l.resultat}`)).toEqual(["role:r erreur", "role:r refuse 409", "role:r ok"]);
+    expect(lignes().map((l) => `${l.cible} ${l.resultat}`)).toEqual(["role:r erreur", "role:r refuse 504", "role:r refuse 422", "role:r refuse 409", "role:r ok"]);
   });
 
   it("un geste qui ne rend rien répond 204 et note ok", async () => {

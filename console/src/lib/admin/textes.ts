@@ -242,4 +242,10 @@ export const TA = {
   dejaMembre: "Ce compte est déjà membre de l'admin.",
   usageCommande: "Usage : npm run admin:inviter -- <courriel>",
   erreurInterne: "Un souci est survenu. Réessayez.",
+
+  // L'atelier (le moteur)
+  moteurNonBranche: "Le moteur n'est pas branché à cette console.",
+  atelierInjoignable: "L'atelier ne répond pas. Réessayez dans un instant.",
+  atelierLent: "L'atelier n'a pas répondu à temps. Réessayez.",
+  atelierRefus: "L'atelier a refusé cette demande.",
 } as const;

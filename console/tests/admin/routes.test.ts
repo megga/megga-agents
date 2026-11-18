@@ -63,7 +63,19 @@ vi.mock("@/lib/auth", async (original) => ({
   },
 }));
 
+// L'atelier simulé : chaque fonction note son appel ; une route refusée n'en appelle aucune.
+const appelsAtelier = vi.hoisted(() => [] as string[]);
+vi.mock("@/lib/admin/atelier", async (original) => {
+  const vrai = await original<typeof import("@/lib/admin/atelier")>();
+  const atelier = Object.fromEntries(Object.keys(vrai.atelier).map((f) => [f, async () => {
+    appelsAtelier.push(f);
+    return {};
+  }]));
+  return { ...vrai, atelier, atelierBranche: () => true };
+});
+
 beforeEach(async () => {
+  appelsAtelier.length = 0;
   etat.db = await baseEssai();
   compte(etat.db, { id: "inconnu", courriel: "inconnu@megga.test" });
   membre(etat.db, { utilisateur: "vide", role: roleVide(etat.db) });
@@ -131,6 +143,7 @@ describe("les routes de /api/admin", () => {
           const dehors = { ...r.params, id: "boulangerie-essai" };
           expect((await appeler(f, r.fichier, m, dehors, "limite")).status, `${m} hors périmètre`).toBe(404);
         }
+        expect(appelsAtelier, `${m} : aucun appel à l'atelier sur un refus`).toEqual([]);
       }
     });
   }

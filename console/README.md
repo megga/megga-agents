@@ -39,6 +39,12 @@ L'admin (`/admin`) lit l'atelier. En local, jamais la production : l'atelier d'e
 ATELIER_JETON=<un jeton> ../.venv/bin/python -m uvicorn atelier_essai:app --app-dir agents --host 127.0.0.1 --port 8198
 ```
 
+Puis la console contre lui (ou `ATELIER_URL` et `ATELIER_JETON` dans `.env.local`) ; sans `ATELIER_URL`, les écrans du moteur disent qu'il n'est pas branché :
+
+```bash
+ATELIER_URL=http://127.0.0.1:8198 ATELIER_JETON=<le même> npm run dev
+```
+
 ## Essais
 
 ```bash
