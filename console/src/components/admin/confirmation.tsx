@@ -7,12 +7,14 @@ import { TA } from "@/lib/admin/textes";
 /**
  * Un geste qui demande confirmation : children est le libellé du bouton qui ouvre la fenêtre ; elle dit l'effet du geste
  * (obligatoire), puis Annuler ou `bouton`. Si onConfirmer échoue, sa phrase s'affiche et la fenêtre reste ouverte.
+ * desactive : le bouton n'ouvre rien tant que le geste n'est pas prêt (un motif encore vide).
  */
-export function Confirmation({ titre, effet, bouton, onConfirmer, children }: {
+export function Confirmation({ titre, effet, bouton, onConfirmer, desactive = false, children }: {
   titre: string;
   effet: string;
   bouton: string;
   onConfirmer: () => Promise<void>;
+  desactive?: boolean;
   children: React.ReactNode;
 }) {
   const [ouvert, setOuvert] = useState(false);
@@ -40,7 +42,12 @@ export function Confirmation({ titre, effet, bouton, onConfirmer, children }: {
         if (o) setErreur(null);
       }}
     >
-      <DialogTrigger className="trait rounded-full bg-bg px-3 py-1 text-[13px] font-semibold whitespace-nowrap text-ink hover:bg-hover">{children}</DialogTrigger>
+      <DialogTrigger
+        disabled={desactive}
+        className="trait rounded-full bg-bg px-3 py-1 text-[13px] font-semibold whitespace-nowrap text-ink hover:bg-hover disabled:cursor-default disabled:opacity-50 disabled:hover:bg-bg"
+      >
+        {children}
+      </DialogTrigger>
       <DialogContent showCloseButton={false} className="gap-3 rounded-[22px] bg-bg p-5 shadow-doux sm:max-w-[420px]">
         <DialogTitle className="text-[17px] font-extrabold">{titre}</DialogTitle>
         <DialogDescription className="text-[14px] text-muted-ink">{effet}</DialogDescription>

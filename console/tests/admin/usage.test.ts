@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { betterAuth } from "better-auth";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { agentDuTour, compterSansBloquer, compterTour, messagesDepuis, messagesParJour, noterConnexion } from "@/lib/admin/usage";
+import { TA } from "@/lib/admin/textes";
+import { agentDuTour, compterSansBloquer, compterTour, jourZurich, joursZurich, messagesDepuis, messagesParJour, noterConnexion } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
 import { optionsAuth } from "@/lib/auth";
 import { baseEssai, compte, T0 } from "./aides";
@@ -11,7 +12,12 @@ import { baseEssai, compte, T0 } from "./aides";
 // Le compteur de messages (usage_agent) et la dernière connexion (compte_connexion). Le compteur s'écrit après la réponse de
 // l'agent (after de Next.js), sans texte, et une panne du compteur ne fait jamais échouer ni attendre une conversation.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null, apres: [] as (() => unknown)[] }));
+const etat = vi.hoisted(() => ({
+  db: undefined as unknown as DatabaseSync,
+  qui: null as string | null,
+  apres: [] as (() => unknown)[],
+  statut: 200,
+}));
 vi.mock("next/server", async (original) => ({
   ...(await original<typeof import("next/server")>()),
   after: (f: () => unknown) => {
@@ -23,10 +29,10 @@ vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
 }));
-// CopilotKit répond tout de suite, comme le flux d'un agent qui commence.
+// CopilotKit répond tout de suite, comme le flux d'un agent qui commence (ou le refuse, au statut de etat.statut).
 vi.mock("@copilotkit/runtime/v2", () => ({
   CopilotRuntime: class {},
-  createCopilotRuntimeHandler: () => async () => new Response("flux de l'agent", { status: 200 }),
+  createCopilotRuntimeHandler: () => async () => new Response("flux de l'agent", { status: etat.statut }),
 }));
 
 let db: DatabaseSync;
@@ -35,6 +41,7 @@ beforeEach(async () => {
   etat.db = db;
   etat.qui = null;
   etat.apres = [];
+  etat.statut = 200;
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -67,10 +74,10 @@ describe("le tour d'un agent dans une requête de CopilotKit", () => {
 });
 
 describe("le compteur de messages", () => {
-  it("compte par agent et par jour UTC : deux tours le même jour, puis un le lendemain", () => {
+  it("compte par agent et par jour de Zurich : deux tours le même jour, puis un le lendemain", () => {
     compterTour(db, "ag_1", T0);
-    compterTour(db, "ag_1", new Date("2026-11-18T23:59:00Z"));
-    compterTour(db, "ag_1", new Date("2026-11-19T00:01:00Z"));
+    compterTour(db, "ag_1", new Date("2026-11-18T22:59:00Z")); // 23 h 59 à Zurich
+    compterTour(db, "ag_1", new Date("2026-11-18T23:01:00Z")); // 0 h 01 le 19 à Zurich
     compterTour(db, "ag_2", T0);
     expect(lignes()).toEqual([
       { agent: "ag_1", jour: "2026-11-18", messages: 2 },
@@ -98,7 +105,7 @@ describe("le compteur de messages", () => {
 
   it("sans bloquer, sur une bonne base : compte", () => {
     compterSansBloquer(() => db, "ag_1");
-    expect(lignes()).toEqual([{ agent: "ag_1", jour: new Date().toISOString().slice(0, 10), messages: 1 }]);
+    expect(lignes()).toEqual([{ agent: "ag_1", jour: jourZurich(new Date()), messages: 1 }]);
   });
 
   it("messagesDepuis : la somme de chaque agent demandé depuis un jour inclus, zéro sans message", () => {
@@ -111,8 +118,8 @@ describe("le compteur de messages", () => {
     expect(messagesDepuis(db, [], "2026-11-01")).toEqual({});
   });
 
-  it("messagesParJour : les derniers jours UTC, zéros compris, le plus ancien d'abord, tous agents ensemble", () => {
-    compterTour(db, "ag_1", new Date("2026-11-11T23:59:00Z")); // hors des 7 jours
+  it("messagesParJour : les derniers jours de Zurich, zéros compris, le plus ancien d'abord, tous agents ensemble", () => {
+    compterTour(db, "ag_1", new Date("2026-11-11T22:59:00Z")); // 23 h 59 le 11 à Zurich : hors des 7 jours
     compterTour(db, "ag_1", new Date("2026-11-13T10:00:00Z"));
     compterTour(db, "ag_1", T0);
     compterTour(db, "ag_2", T0);
@@ -128,6 +135,47 @@ describe("le compteur de messages", () => {
     expect(messagesParJour(db, 1, T0)).toEqual([{ jour: "2026-11-18", messages: 2 }]);
     expect(messagesParJour(db, 30, T0)).toHaveLength(30);
     expect(messagesParJour(db, 30, T0)[0].jour).toBe("2026-10-20");
+  });
+});
+
+describe("les jours de Zurich", () => {
+  it("un tour à 0 h 30 de Zurich compte dans le jour affiché, en hiver comme en été", () => {
+    compterTour(db, "hiver", new Date("2026-11-17T23:30:00Z")); // 0 h 30 le 18 novembre, heure d'hiver (+1)
+    compterTour(db, "ete", new Date("2026-07-14T22:30:00Z")); // 0 h 30 le 15 juillet, heure d'été (+2)
+    expect(lignes()).toEqual([
+      { agent: "ete", jour: "2026-07-15", messages: 1 },
+      { agent: "hiver", jour: "2026-11-18", messages: 1 },
+    ]);
+    expect(messagesParJour(db, 1, T0)).toEqual([{ jour: "2026-11-18", messages: 1 }]);
+    expect(messagesParJour(db, 1, new Date("2026-07-15T08:00:00Z"))).toEqual([{ jour: "2026-07-15", messages: 1 }]);
+    expect(TA.jour(jourZurich(new Date("2026-11-17T23:30:00Z")))).toBe("18.11.2026");
+  });
+
+  it("les périodes : aujourd'hui ; aujourd'hui et les 6 jours d'avant ; aujourd'hui et les 29 jours d'avant", () => {
+    expect(joursZurich(1, T0)).toEqual(["2026-11-18"]);
+    expect(joursZurich(7, T0)).toEqual(["2026-11-12", "2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16", "2026-11-17", "2026-11-18"]);
+    const trente = joursZurich(30, T0);
+    expect([trente.length, trente[0], trente[29]]).toEqual([30, "2026-10-20", "2026-11-18"]);
+    // Tard le soir en UTC, c'est déjà demain à Zurich ; un changement d'heure ne saute ni ne double un jour.
+    expect(joursZurich(1, new Date("2026-11-18T23:30:00Z"))).toEqual(["2026-11-19"]);
+    expect(joursZurich(3, new Date("2026-10-26T10:00:00Z"))).toEqual(["2026-10-24", "2026-10-25", "2026-10-26"]);
+    expect(joursZurich(3, new Date("2026-03-30T10:00:00Z"))).toEqual(["2026-03-28", "2026-03-29", "2026-03-30"]);
+  });
+
+  it("les bornes : le premier instant du premier jour compte, celui d'avant non", () => {
+    const bornes: [1 | 7 | 30, string, string][] = [
+      [1, "2026-11-17T23:00:00Z", "2026-11-17T22:59:59Z"], // le 18, heure d'hiver
+      [7, "2026-11-11T23:00:00Z", "2026-11-11T22:59:59Z"], // le 12
+      [30, "2026-10-19T22:00:00Z", "2026-10-19T21:59:59Z"], // le 20 octobre, encore en heure d'été
+    ];
+    for (const [jours, dedans, dehors] of bornes) {
+      const d = new DatabaseSync(":memory:");
+      d.exec("CREATE TABLE usage_agent (agent TEXT NOT NULL, jour TEXT NOT NULL, messages INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (agent, jour))");
+      compterTour(d, "dedans", new Date(dedans));
+      compterTour(d, "dehors", new Date(dehors));
+      const total = messagesParJour(d, jours, T0).reduce((n, j) => n + j.messages, 0);
+      expect(total, `${jours} jours`).toBe(1);
+    }
   });
 });
 
@@ -181,7 +229,7 @@ describe("la route de CopilotKit", () => {
     expect(lignes()).toEqual([]); // rien d'écrit tant que la réponse n'est pas finie
     expect(etat.apres).toHaveLength(1);
     await etat.apres[0]();
-    expect(lignes()).toEqual([{ agent: agent.id, jour: new Date().toISOString().slice(0, 10), messages: 1 }]);
+    expect(lignes()).toEqual([{ agent: agent.id, jour: jourZurich(new Date()), messages: 1 }]);
   });
 
   it("ne compte ni une autre route, ni l'agent d'un autre compte", async () => {
@@ -193,6 +241,17 @@ describe("la route de CopilotKit", () => {
     await envoyer("/api/copilotkit/info", "GET");
     await envoyer(`/api/copilotkit/agent/${sien.id}/connect`);
     await envoyer(`/api/copilotkit/agent/${autre.id}/run`);
+    expect(etat.apres).toEqual([]);
+  });
+
+  it("un tour refusé par CopilotKit ne compte rien", async () => {
+    compte(db, { id: "u1", courriel: "u1@exemple.test" });
+    const agent = creer(db, "u1", { prenom: "Lou", metier: "garage" }, T0);
+    etat.qui = "u1";
+    for (const statut of [400, 404, 500]) {
+      etat.statut = statut;
+      expect((await envoyer(`/api/copilotkit/agent/${agent.id}/run`)).status).toBe(statut);
+    }
     expect(etat.apres).toEqual([]);
   });
 

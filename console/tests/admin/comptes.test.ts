@@ -3,11 +3,14 @@ import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  COMPTES_PAR_PAGE,
   deconnecter,
   ficheCompte,
+  filtresComptesDe,
   listerComptes,
   peutAgirSur,
   reactiver,
+  SessionsRestent,
   suspendre,
   totauxConsole,
   type AdaptateurComptes,
@@ -42,6 +45,9 @@ beforeEach(async () => {
 });
 
 const SECRET = "secret-des-essais-de-la-console-assez-long";
+
+/** La première page des comptes, sans recherche. */
+const tous = (d: DatabaseSync, maintenant: Date) => listerComptes(d, { page: 1 }, maintenant).comptes;
 
 describe("les routes HTTP de l'extension admin de Better Auth", () => {
   it("sont toutes les quinze fermées", () => {
@@ -144,6 +150,29 @@ describe("suspendre un compte", () => {
     expect(peutAgirSur(db, exploitant, "parti", new Date("2026-11-19T10:00:00Z"))).toBe(true);
   });
 
+  it("des sessions qui ne s'effacent pas : un second essai ; s'il échoue aussi, le compte reste suspendu et le geste le dit", async () => {
+    const a = membre(db, { utilisateur: "exploitant", role: "exploitation" });
+    let echecs = 1;
+    const fragile: AdaptateurComptes = {
+      updateUser: async (...x: unknown[]) => appels.push(["updateUser", ...x]),
+      deleteUserSessions: async (...x: unknown[]) => {
+        appels.push(["deleteUserSessions", ...x]);
+        if (echecs-- > 0) throw new Error("base occupée");
+      },
+    };
+    await suspendre(db, a, "c", { motif: "Abus" }, fragile); // un échec, puis réussi au second essai
+    expect(appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
+    appels = [];
+    echecs = 2;
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    const e = await refusAsync(() => suspendre(db, a, "c", { motif: "Abus" }, fragile));
+    expect(e).toBeInstanceOf(SessionsRestent);
+    expect([e.statut, e.message]).toEqual([500, TA.sessionsRestent]);
+    expect(appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
+    expect(erreur).toHaveBeenCalled();
+    erreur.mockRestore();
+  });
+
   it("réactiver : le bannissement levé ; déconnecter : seulement ses sessions", async () => {
     const a = membre(db, { utilisateur: "exploitant", role: "exploitation" });
     await reactiver(db, a, "c", ad);
@@ -171,12 +200,12 @@ describe("avec le vrai Better Auth", () => {
     expect(await auth.api.getSession({ headers: cookie })).toBeNull(); // son cookie ne vaut plus rien, dès la requête suivante
     const refus = await auth.api.signInEmail({ body: { email: "fleurs@exemple.test", password: "motdepasse" } }).catch((e: unknown) => e);
     expect(refus).toMatchObject({ body: { code: "BANNED_USER", message: T.compteSuspendu } });
-    expect(listerComptes(db, T0).find((c) => c.id === user.id)).toMatchObject({ suspendu: true, motif: "Abus" });
+    expect(tous(db, T0).find((c) => c.id === user.id)).toMatchObject({ suspendu: true, motif: "Abus" });
 
     await reactiver(db, chef, user.id, reel);
     const r = await auth.api.signInEmail({ body: { email: "fleurs@exemple.test", password: "motdepasse" } });
     expect(r.token).toBeTruthy();
-    expect(listerComptes(db, T0).find((c) => c.id === user.id)).toMatchObject({ suspendu: false, motif: null });
+    expect(tous(db, T0).find((c) => c.id === user.id)).toMatchObject({ suspendu: false, motif: null });
   });
 
   it("les migrations ajoutent les colonnes de l'extension à une base qui existait avant elle, sans rien perdre", async () => {
@@ -189,7 +218,7 @@ describe("avec le vrai Better Auth", () => {
     expect(colonnes()).not.toContain("banned");
     await (await getMigrations(optionsAuth(ancienne))).runMigrations();
     expect(colonnes()).toEqual(expect.arrayContaining(["banned", "banReason", "banExpires", "role"]));
-    expect(listerComptes(ancienne, T0)).toMatchObject([{ id: "ancien", entreprise: "Ancien", suspendu: false, motif: null }]);
+    expect(tous(ancienne, T0)).toMatchObject([{ id: "ancien", entreprise: "Ancien", suspendu: false, motif: null }]);
   });
 });
 
@@ -206,7 +235,7 @@ describe("la liste des comptes", () => {
     compterTour(db, a1.id, T0);
     compterTour(db, a2.id, T0);
     noterConnexion(db, "c", T0);
-    expect(listerComptes(db, T0)).toEqual([
+    expect(tous(db, T0)).toEqual([
       { id: "c", entreprise: "Garage du Lac", courriel: "garage@exemple.test", inscritLe: T0.toISOString(), derniereConnexion: T0.toISOString(),
         agents: 2, messages30j: 3, suspendu: false, motif: null, membre: false },
       { id: "d", entreprise: "Fleurs", courriel: "fleurs@exemple.test", inscritLe: avant(1).toISOString(), derniereConnexion: null,
@@ -218,8 +247,53 @@ describe("la liste des comptes", () => {
 
   it("un membre dont l'accès a pris fin n'est plus marqué membre", () => {
     membre(db, { utilisateur: "parti", role: "lecture", finAcces: "2026-11-18" });
-    expect(listerComptes(db, T0).find((c) => c.id === "parti")?.membre).toBe(true);
-    expect(listerComptes(db, new Date("2026-11-19T10:00:00Z")).find((c) => c.id === "parti")?.membre).toBe(false);
+    expect(tous(db, T0).find((c) => c.id === "parti")?.membre).toBe(true);
+    expect(tous(db, new Date("2026-11-19T10:00:00Z")).find((c) => c.id === "parti")?.membre).toBe(false);
+  });
+});
+
+describe("les pages et la recherche", () => {
+  function inscrire(n: number) {
+    for (let i = 0; i < n; i++) {
+      const quand = new Date(T0.getTime() - (i + 1) * 60_000).toISOString();
+      compte(db, { id: `n${i}`, courriel: `client${i}@exemple.test`, nom: `Entreprise ${i}`, creeLe: quand });
+    }
+  }
+
+  it("par pages de 50, l'inscription la plus récente d'abord ; une page trop loin ramène à la dernière", () => {
+    inscrire(120); // et « c », inscrit à T0
+    const p1 = listerComptes(db, { page: 1 }, T0);
+    expect([p1.pages, p1.page, p1.comptes.length, p1.comptes[0].id, p1.comptes[1].id]).toEqual([3, 1, 50, "c", "n0"]);
+    const p3 = listerComptes(db, { page: 3 }, T0);
+    expect([p3.page, p3.comptes.length, p3.comptes.at(-1)?.id]).toEqual([3, 21, "n119"]);
+    expect(listerComptes(db, { page: 99 }, T0)).toMatchObject({ page: 3, pages: 3 });
+    expect(COMPTES_PAR_PAGE).toBe(50);
+  });
+
+  it("cherche dans l'entreprise ou le courriel, sans tenir compte de la casse ; les pages comptent ce qui correspond", () => {
+    inscrire(60);
+    expect(listerComptes(db, { q: "LAC", page: 1 }, T0).comptes.map((c) => c.id)).toEqual(["c"]);
+    expect(listerComptes(db, { q: "garage@exemple", page: 1 }, T0).comptes.map((c) => c.id)).toEqual(["c"]);
+    const cinq = listerComptes(db, { q: "Entreprise 5", page: 1 }, T0);
+    expect([cinq.pages, cinq.comptes.map((c) => c.id)]).toEqual([1, ["n5", "n50", "n51", "n52", "n53", "n54", "n55", "n56", "n57", "n58", "n59"]]);
+    expect(listerComptes(db, { q: "rien de tel", page: 4 }, T0)).toEqual({ comptes: [], pages: 1, page: 1 });
+  });
+
+  it("prend % et _ à la lettre", () => {
+    compte(db, { id: "pourcent", courriel: "p@exemple.test", nom: "Remise 100% garage" });
+    compte(db, { id: "souligne", courriel: "s_x@exemple.test", nom: "Souligné" });
+    expect(listerComptes(db, { q: "%", page: 1 }, T0).comptes.map((c) => c.id)).toEqual(["pourcent"]);
+    expect(listerComptes(db, { q: "_", page: 1 }, T0).comptes.map((c) => c.id)).toEqual(["souligne"]);
+    expect(listerComptes(db, { q: "\\", page: 1 }, T0).comptes).toEqual([]);
+  });
+
+  it("les filtres tels que l'adresse les donne : une page mal formée retombe sur 1, une recherche vide n'en est pas une", () => {
+    expect(filtresComptesDe({})).toEqual({ page: 1 });
+    expect(filtresComptesDe({ page: "2", q: "  lac  " })).toEqual({ page: 2, q: "lac" });
+    for (const page of ["0", "-1", "abc", "1.5", "99999999999999999999"]) expect(filtresComptesDe({ page }), page).toEqual({ page: 1 });
+    expect(filtresComptesDe({ q: "   " })).toEqual({ page: 1 });
+    expect(filtresComptesDe({ q: ["lac", "autre"], page: ["2"] })).toEqual({ page: 2, q: "lac" });
+    expect(filtresComptesDe({ q: "x".repeat(300) }).q).toHaveLength(100);
   });
 });
 
@@ -261,6 +335,17 @@ describe("les totaux de la console", () => {
     expect(t.parJour[6]).toEqual({ jour: "2026-11-18", inscriptions: 1, messages: 2 });
     expect(totauxConsole(db, 30, T0).messages).toBe(4);
   });
+
+  it("les inscriptions par jour de Zurich : 0 h 30 compte dans le jour affiché, 23 h 59 la veille non", () => {
+    compte(db, { id: "minuit", courriel: "m@exemple.test", creeLe: "2026-11-11T23:30:00.000Z" }); // le 12 à 0 h 30, à Zurich
+    compte(db, { id: "veille", courriel: "v@exemple.test", creeLe: "2026-11-11T22:59:00.000Z" }); // le 11 à 23 h 59
+    compte(db, { id: "soir", courriel: "s@exemple.test", creeLe: "2026-11-18T23:30:00.000Z" }); // déjà le 19 à Zurich
+    const t = totauxConsole(db, 7, T0);
+    expect(t.parJour[0]).toEqual({ jour: "2026-11-12", inscriptions: 1, messages: 0 });
+    expect(t.parJour.reduce((n, j) => n + j.inscriptions, 0)).toBe(2); // « minuit » et « c » (T0) ; ni la veille, ni demain
+    expect(t.comptes).toBe(4); // en tout
+    expect(totauxConsole(db, 1, new Date("2026-11-18T23:45:00Z")).parJour).toEqual([{ jour: "2026-11-19", inscriptions: 1, messages: 0 }]);
+  });
 });
 
 describe("le dernier superadmin", () => {
@@ -268,7 +353,8 @@ describe("le dernier superadmin", () => {
     const chef = membre(db, { utilisateur: "chef", role: "superadmin" });
     membre(db, { utilisateur: "lecteur", role: "lecture" });
     db.prepare("UPDATE \"user\" SET banned = 1 WHERE id = 'lecteur'").run();
-    modifierMembre(db, chef, "lecteur", { role: "superadmin" }, T0);
+    // modifierMembre refuse de nommer superadmin un compte suspendu (equipe.test.ts) : une ligne d'avant, écrite à la main.
+    db.prepare("UPDATE admin_membre SET role = 'superadmin' WHERE utilisateur = 'lecteur'").run();
     const e = await refusAsync(async () => retirerMembre(db, chef, "chef", T0));
     expect([e.statut, e.message]).toEqual([409, TA.dernierSuperadmin]);
     // Le superadmin suspendu, lui, peut perdre ce rôle : il en reste un qui se connecte.

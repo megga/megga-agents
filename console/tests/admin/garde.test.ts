@@ -106,6 +106,29 @@ describe("la garde des routes", () => {
     expect(JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all())).not.toContain("31.4159");
   });
 
+  it("preciser : le détail décidé pendant le traitement remplace celui de la règle, même si le geste échoue ensuite", async () => {
+    membre(etat.db, { utilisateur: "s", role: "superadmin" });
+    const geste = garde({ droit: "clients.piloter", client: (p: { id: string }) => p.id, action: "essai.precis",
+      detail: (corps) => ({ demande: (corps as { base?: unknown }).base ?? null }) }, async ({ corps, preciser }) => {
+      const c = corps as { base?: number; echec?: boolean; preciser?: boolean };
+      if (c.preciser) preciser({ envoyee: 3 });
+      if (c.echec) throw new Refus(422, "refusé après l'envoi");
+      return {};
+    });
+    const envoi = (corps: unknown) => geste(new Request("http://localhost/api/admin/essai/garage-essai", { method: "POST",
+      headers: { "x-essai-qui": "s", origin: "http://localhost" }, body: JSON.stringify(corps) }), { params: Promise.resolve({ id: "garage-essai" }) });
+    await envoi({ preciser: true });
+    await envoi({ preciser: true, echec: true });
+    await envoi({ base: 1 });
+    await envoi({ base: 1, echec: true });
+    expect(lignes().map((l) => [l.resultat, l.detail]).reverse()).toEqual([
+      ["ok", { envoyee: 3 }],
+      ["refuse 422", { envoyee: 3 }],
+      ["ok", { demande: 1 }],
+      ["refuse 422", { demande: 1 }],
+    ]);
+  });
+
   it("rend une réponse telle quelle, un refus à son statut, une autre erreur en 500 sans détail", async () => {
     membre(etat.db, { utilisateur: "s", role: "superadmin" });
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});

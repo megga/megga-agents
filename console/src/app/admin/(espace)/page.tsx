@@ -88,19 +88,24 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
   );
 }
 
-/** La console (comptes.voir) : comptes et agents en tout, messages de la période ; inscriptions et messages par jour. */
+/**
+ * La console (comptes.voir) : comptes et agents en tout, messages de la période ; inscriptions et messages par jour (jours
+ * de Zurich). Sous le titre, ce que le bloc compte pour la période choisie.
+ */
 function BlocConsole({ jours }: { jours: Jours }) {
   const t = totauxConsole(base(), jours);
   return (
     <>
-      <h2 className="m-0 text-[17px] font-extrabold">{TA.console}</h2>
+      <div className="flex flex-col gap-1">
+        <h2 className="m-0 text-[17px] font-extrabold">{TA.console}</h2>
+        <p className="m-0 text-[13px] text-muted-ink">{TA.periodeConsole(jours)}</p>
+      </div>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
         <Tuile titre={TA.comptes} valeur={TA.nombre(t.comptes)} />
         <Tuile titre={TA.agents} valeur={TA.nombre(t.agents)} />
         <Tuile titre={TA.messages} valeur={TA.nombre(t.messages)} />
       </div>
       <Barres jours={t.parJour.map((j) => ({ jour: j.jour, valeurs: [j.inscriptions, j.messages] }))} legendes={[TA.inscriptions, TA.messages]} />
-      <p className="m-0 text-[12.5px] text-faint">{TA.parJourUtc}</p>
     </>
   );
 }

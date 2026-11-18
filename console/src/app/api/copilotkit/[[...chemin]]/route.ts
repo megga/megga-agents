@@ -52,10 +52,12 @@ async function traiter(requete: Request) {
   if (!id) return Response.json({ erreur: T.connectezVous }, { status: 401 });
   const agents = lister(base(), id);
   if (!agents.length) return Response.json({ erreur: "Aucun agent." }, { status: 404 });
-  // Un tour envoyé à un agent du compte se compte une fois la réponse finie (after) : jamais attendu, jamais un texte.
+  // Un tour accepté (réponse réussie : seuls ses en-têtes sont attendus, le flux part tel quel) à un agent du compte se
+  // compte une fois la réponse finie (after) : jamais attendu, jamais un texte. Un tour refusé ne compte rien.
   const tour = agentDuTour(requete.method, new URL(requete.url).pathname);
-  if (tour && agents.some((a) => a.id === tour)) after(() => compterSansBloquer(base, tour));
-  return gerer(requete);
+  const r = await gerer(requete);
+  if (r.ok && tour && agents.some((a) => a.id === tour)) after(() => compterSansBloquer(base, tour));
+  return r;
 }
 
 export { traiter as GET, traiter as POST, traiter as PUT, traiter as PATCH, traiter as DELETE };

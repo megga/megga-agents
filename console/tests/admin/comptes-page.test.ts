@@ -6,7 +6,10 @@ import { GestesCompte } from "@/app/admin/(espace)/comptes/[id]/compte";
 import PageCompte from "@/app/admin/(espace)/comptes/[id]/page";
 import PageComptes from "@/app/admin/(espace)/comptes/page";
 import VueEnsemble from "@/app/admin/(espace)/page";
+import PageJournal from "@/app/admin/(espace)/journal/page";
 import { Barres } from "@/components/admin/barres";
+import { Tableau } from "@/components/admin/tableau";
+import { noter } from "@/lib/admin/journal";
 import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { compterTour } from "@/lib/admin/usage";
@@ -65,7 +68,7 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 /** La valeur d'une tuile, d'après son titre. */
 const tuile = (h: string, titre: string) => new RegExp(`>${titre}</span><b[^>]*>([^<]*)</b>`).exec(h)?.[1];
 
-const liste = () => PageComptes();
+const liste = (p: Record<string, string> = {}) => PageComptes({ searchParams: Promise.resolve(p) } as never);
 const fiche = (id: string) => PageCompte({ params: Promise.resolve({ id }) } as never);
 const vue = () => VueEnsemble({ searchParams: Promise.resolve({ jours: "7" }) } as never);
 
@@ -100,6 +103,23 @@ describe("l'écran Comptes", () => {
     expect(h).toContain(TA.actif);
     expect(h).toContain(enHtml(TA.membreAdmin));
     expect(h).not.toContain("203.0.113.42");
+  });
+
+  it("la recherche (?q=) et les pages (?page=) passent par l'adresse ; une page trop loin montre la dernière", async () => {
+    etat.qui = "lecteur";
+    for (let i = 0; i < 55; i++) compte(etat.db, { id: `n${i}`, courriel: `client${i}@exemple.test`, nom: `Fleuriste ${i}` });
+    const h = await html(await liste({ q: "lac" }));
+    expect(h).toContain("Garage du Lac");
+    expect(h).not.toContain("Fleuriste");
+    expect(h).toMatch(/<input[^>]*name="q"[^>]*value="lac"/);
+    expect(h).toContain(`href="/admin/comptes"`); // effacer la recherche
+    const p1 = await html(await liste({ q: "fleuriste" }));
+    expect(p1).toContain(TA.pageSur(1, 2));
+    expect(p1).toContain(`href="/admin/comptes?q=fleuriste&amp;page=2"`);
+    const loin = await html(await liste({ q: "fleuriste", page: "9" }));
+    expect(loin).toContain(TA.pageSur(2, 2));
+    expect(loin).toContain(`href="/admin/comptes?q=fleuriste"`); // la page précédente, la première, ne s'écrit pas
+    expect(await html(await liste({ q: "personne ici" }))).toContain(TA.aucunCompteTrouve);
   });
 
   it("un externe, ou un membre sans comptes.voir : 404", async () => {
@@ -144,6 +164,23 @@ describe("la fiche d'un compte", () => {
   });
 });
 
+describe("les gestes sur un compte", () => {
+  /** Le bouton qui porte ce libellé, tel que le navigateur le reçoit. */
+  const bouton = (h: string, texte: string) => new RegExp(`<button[^>]*>${texte}</button>`).exec(h)?.[0] ?? "";
+
+  it("« Suspendre » est inactif tant que le motif est vide ; « Déconnecter partout » ne l'est pas", () => {
+    const h = renderToStaticMarkup(createElement(GestesCompte, { id: "c", nom: "Garage du Lac", suspendu: false, sessions: 1 }));
+    expect(bouton(h, TA.suspendre)).toMatch(/\sdisabled=""/);
+    expect(bouton(h, TA.deconnecterPartout)).not.toMatch(/\sdisabled=""/);
+  });
+
+  it("un compte suspendu : « Réactiver », actif, sans motif", () => {
+    const h = renderToStaticMarkup(createElement(GestesCompte, { id: "c", nom: "Garage du Lac", suspendu: true, sessions: 0 }));
+    expect(bouton(h, TA.reactiver)).not.toMatch(/\sdisabled=""/);
+    expect(h).not.toContain(TA.motif + "<");
+  });
+});
+
 describe("le bloc Console de la vue d'ensemble", () => {
   it("avec comptes.voir : comptes, agents, messages de la période, inscriptions et messages par jour", async () => {
     etat.qui = "lecteur";
@@ -152,9 +189,11 @@ describe("le bloc Console de la vue d'ensemble", () => {
     expect(tuile(h, TA.comptes)).toBe("7");
     expect(tuile(h, TA.agents)).toBe("1");
     expect(tuile(h, TA.messages)).toBe("2");
+    // Sous le titre du bloc, ce qu'il compte pour la période choisie (?jours=7).
+    expect(h).toContain(`>${TA.console}</h2><p class="m-0 text-[13px] text-muted-ink">${enHtml(TA.periodeConsole(7))}</p>`);
     // Deux cadres de barres (inscriptions, messages), sept jours chacun ; aujourd'hui, deux messages.
     expect(h).toContain(`>${TA.inscriptions}</span>`);
-    expect(h.match(/<li title=/g)).toHaveLength(14);
+    expect(h.match(/<li[ >]/g)).toHaveLength(14);
     expect(h).toContain(enHtml(TA.barre(TA.jour(new Date().toISOString().slice(0, 10)), 2)));
   });
 
@@ -175,8 +214,21 @@ describe("le bloc Console de la vue d'ensemble", () => {
       expect(tuile(h, TA.agents), qui).toBeUndefined();
       expect(h, qui).not.toContain(`>${TA.console}<`);
       expect(h, qui).not.toContain(TA.inscriptions);
-      expect(h, qui).not.toMatch(/<li title=/);
+      expect(h, qui).not.toMatch(/<li[ >]/);
     }
+  });
+});
+
+describe("le Journal, qui note les gestes sur les comptes", () => {
+  it("replie toutes ses colonnes sauf la première dans un cadre étroit, Détail compris, sans largeur fixe", async () => {
+    etat.qui = "chef";
+    noter(etat.db, { qui: "chef", courriel: "chef@megga.test", action: "comptes.suspendu", cible: "compte:c", resultat: "ok",
+      detail: { motif: "Un motif assez long pour remplir la colonne du détail du journal" } });
+    const arbre = await PageJournal({ searchParams: Promise.resolve({}) } as never);
+    const [tableau] = elements(arbre, Tableau);
+    expect(tableau.props.colonnes).toEqual([TA.quand, TA.qui, TA.quoi, TA.surQuoi, TA.resultat, TA.detail]);
+    expect(tableau.props.replier).toEqual([1, 2, 3, 4, 5]);
+    expect(await html(arbre)).not.toMatch(/[\s"]w-\[340px\]/);
   });
 });
 
@@ -187,7 +239,12 @@ describe("les barres", () => {
       legendes: ["Inscriptions", "Messages"],
     }));
     expect(h).toContain("Inscriptions");
-    expect(h).toContain(enHtml(TA.barre(TA.jour("2026-11-18"), 8)));
+    const texte = enHtml(TA.barre(TA.jour("2026-11-18"), 8));
+    expect(h).toContain(texte);
+    // Le nombre n'est annoncé qu'une fois : le texte caché pour un lecteur d'écran, le title sur un élément aria-hidden.
+    expect(h.split(texte)).toHaveLength(3);
+    expect(h).toContain(`<span class="sr-only">${texte}</span><span aria-hidden="true" title="${texte}"`);
+    expect(h).not.toMatch(/<li[^>]*title=/);
     expect(h).toContain("height:100%");
     expect(h).toContain("height:50%");
     expect(h).not.toMatch(/#[0-9a-f]{3,8}\b|rgb/i);

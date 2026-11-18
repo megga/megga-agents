@@ -1,14 +1,28 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { Jours } from "./atelier";
 
-// Le compteur de messages de la console (usage_agent : un agent, un jour UTC, un nombre, jamais un texte) et la dernière
-// connexion d'un compte (compte_connexion). Le compteur s'écrit après la réponse de l'agent (after, dans la route de
+// Le compteur de messages de la console (usage_agent : un agent, un jour de Zurich, un nombre, jamais un texte) et la dernière
+// connexion d'un compte (compte_connexion). Les jours sont ceux de Europe/Zurich, comme le journal et les dates de l'écran. Le compteur s'écrit après la réponse de l'agent (after, dans la route de
 // CopilotKit) : il ne retarde ni ne fait échouer une conversation. auth.ts importe noterConnexion : rien ici n'importe auth.ts.
 
 const BASE_COPILOTKIT = "/api/copilotkit";
-const JOUR_MS = 24 * 3600 * 1000;
 
-const jourUtc = (quand: Date) => quand.toISOString().slice(0, 10);
+const ZURICH = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Zurich", year: "numeric", month: "2-digit", day: "2-digit" });
+
+/** Le jour de Zurich d'un instant, AAAA-MM-JJ (0 h 30 à Zurich est déjà le jour suivant en UTC moins une ou deux heures). */
+export function jourZurich(quand: Date): string {
+  const p = Object.fromEntries(ZURICH.formatToParts(quand).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+/**
+ * Les jours de Zurich de la période, du plus ancien à aujourd'hui compris : 1, aujourd'hui ; 7, aujourd'hui et les 6 jours
+ * d'avant ; 30, aujourd'hui et les 29 jours d'avant. Compté en dates du calendrier : un changement d'heure ne saute aucun jour.
+ */
+export function joursZurich(jours: number, maintenant = new Date()): string[] {
+  const [a, m, j] = jourZurich(maintenant).split("-").map(Number);
+  return Array.from({ length: jours }, (_, i) => new Date(Date.UTC(a, m - 1, j - (jours - 1 - i))).toISOString().slice(0, 10));
+}
 
 function decode(segment: string): string | null {
   try {
@@ -31,11 +45,11 @@ export function agentDuTour(methode: string, chemin: string): string | null {
   return decode(s[n - 2]) || null;
 }
 
-/** Un tour de plus pour cet agent, le jour UTC de quand. */
+/** Un tour de plus pour cet agent, le jour de Zurich de quand. */
 export function compterTour(db: DatabaseSync, agent: string, quand = new Date()): void {
   db.prepare(
     "INSERT INTO usage_agent (agent, jour, messages) VALUES (?, ?, 1) ON CONFLICT (agent, jour) DO UPDATE SET messages = messages + 1",
-  ).run(agent, jourUtc(quand));
+  ).run(agent, jourZurich(quand));
 }
 
 /** Compte un tour sans jamais lever : une panne (base, table) part à console.error, la conversation n'en sait rien. */
@@ -61,14 +75,9 @@ export function messagesDepuis(db: DatabaseSync, agents: readonly string[], depu
   return total;
 }
 
-/** Les jours UTC de la période, du plus ancien au jour de maintenant compris. */
-export function joursUtc(jours: number, maintenant = new Date()): string[] {
-  return Array.from({ length: jours }, (_, i) => jourUtc(new Date(maintenant.getTime() - (jours - 1 - i) * JOUR_MS)));
-}
-
-/** Les messages de tous les agents, jour par jour sur la période (jours UTC), zéros compris, le plus ancien d'abord. */
+/** Les messages de tous les agents, jour par jour sur la période (jours de Zurich), zéros compris, le plus ancien d'abord. */
 export function messagesParJour(db: DatabaseSync, jours: Jours, maintenant = new Date()): { jour: string; messages: number }[] {
-  const liste = joursUtc(jours, maintenant);
+  const liste = joursZurich(jours, maintenant);
   const lignes = db
     .prepare("SELECT jour, SUM(messages) AS n FROM usage_agent WHERE jour >= ? AND jour <= ? GROUP BY jour")
     .all(liste[0], liste[liste.length - 1]) as { jour: string; n: number }[];

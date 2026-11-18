@@ -29,7 +29,11 @@ export type Regle<P> = {
   cible?: (p: P, corps: unknown) => string | null;
   detail?: (corps: unknown, params: P) => unknown;
 };
-export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: DatabaseSync };
+/**
+ * preciser : ce que le journal garde de ce geste, quand le traitement le sait mieux que la règle (la base réellement envoyée
+ * à l'atelier) ; appelé, il remplace regle.detail pour l'issue du geste, réussie ou refusée ensuite. Nettoyé et coupé comme lui.
+ */
+export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: DatabaseSync; preciser: (detail: unknown) => void };
 export type Gestionnaire<P> = ((requete: Request, ctx: { params: Promise<P> }) => Promise<Response>) & { [GARDE]: true };
 
 type Compte = { id: string; email: string; name: string };
@@ -113,7 +117,8 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
     const params = await ctx.params;
     const corps = await lireCorps(requete);
     let membre = false; // un inconnu (404) ne laisse aucun détail au journal
-    const detail = () => (!membre ? null : regle.detail ? regle.detail(corps, params) : corps);
+    let precis: { detail: unknown } | null = null;
+    const detail = () => (!membre ? null : precis ? precis.detail : regle.detail ? regle.detail(corps, params) : corps);
     const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), detail);
     return issue(async () => {
       const acces = accesDe(db, s.user);
@@ -122,7 +127,10 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
       exiger(acces, regle.droit);
       if (regle.client) exigerClient(acces, regle.client(params));
-      return traiter({ acces, params, corps, requete, db });
+      const preciser = (d: unknown) => {
+        precis = { detail: d };
+      };
+      return traiter({ acces, params, corps, requete, db, preciser });
     }, noterIssue);
   });
 }

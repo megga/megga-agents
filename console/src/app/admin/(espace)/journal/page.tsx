@@ -8,7 +8,8 @@ import { TA } from "@/lib/admin/textes";
 import { base } from "@/lib/base";
 
 // Le journal : quand, qui, quoi, sur quoi, le résultat. Les filtres et la page passent par l'adresse (filtresDe) ;
-// un membre limité à une liste n'y lit que ses gestes et ceux qui touchent ses clients (lireJournal).
+// un membre limité à une liste n'y lit que ses gestes et ceux qui touchent ses clients (lireJournal). Dans un cadre étroit,
+// toutes les colonnes sauf « Quand » se replient sous lui, Détail compris : le tableau ne défile pas de côté.
 
 /** L'adresse du journal avec ces filtres ; la page 1 ne s'écrit pas. */
 function adresse(f: FiltresJournal): string {
@@ -34,6 +35,8 @@ function detailTexte(d: unknown): string {
 }
 
 const lien = "font-semibold text-ink hover:underline";
+/** Une cible d'un seul tenant dans le tableau large ; repliée sous « Quand » (cadre étroit), elle se coupe où il faut. */
+const cibleRepliee = "whitespace-nowrap @max-5xl:whitespace-normal @max-5xl:wrap-anywhere";
 
 export default async function PageJournal({ searchParams }: PageProps<"/admin/journal">) {
   const a = await gardePage("journal.voir");
@@ -50,11 +53,11 @@ export default async function PageJournal({ searchParams }: PageProps<"/admin/jo
     );
   const cible = (c: string | null) =>
     c?.startsWith("client:") ? (
-      <Link key="cible" href={avec({ client: c.slice(7) })} title={TA.filtrerSur} className={lien + " whitespace-nowrap"}>
+      <Link key="cible" href={avec({ client: c.slice(7) })} title={TA.filtrerSur} className={lien + " " + cibleRepliee}>
         {c}
       </Link>
     ) : (
-      <span key="cible" className="whitespace-nowrap">{c ?? ""}</span>
+      <span key="cible" className={cibleRepliee}>{c ?? ""}</span>
     );
 
   const membreFiltre = f.membre && (lignes.find((l) => l.qui === f.membre)?.courriel ?? f.membre);
@@ -102,6 +105,7 @@ export default async function PageJournal({ searchParams }: PageProps<"/admin/jo
       <Tableau
         colonnes={[TA.quand, TA.qui, TA.quoi, TA.surQuoi, TA.resultat, TA.detail]}
         vide={TA.videJournal}
+        replier={[1, 2, 3, 4, 5]}
         lignes={lignes.map((l) => {
           const r = resultat(l.resultat);
           return [
@@ -112,7 +116,7 @@ export default async function PageJournal({ searchParams }: PageProps<"/admin/jo
             </Link>,
             cible(l.cible),
             <Pastille key="resultat" etat={r.etat} texte={r.texte} />,
-            <span key="detail" className="block w-[340px] text-[12.5px] break-words text-muted-ink">{detailTexte(l.detail)}</span>,
+            <span key="detail" className="block max-w-[340px] min-w-[200px] text-[12.5px] wrap-anywhere text-muted-ink">{detailTexte(l.detail)}</span>,
           ];
         })}
       />

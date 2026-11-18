@@ -6,7 +6,7 @@ import type { Jours } from "./atelier";
 import { estObjet } from "./champs";
 import { enCours, membreEnCours } from "./membres";
 import { TA } from "./textes";
-import { joursUtc, messagesDepuis, messagesParJour } from "./usage";
+import { jourZurich, joursZurich, messagesDepuis, messagesParJour } from "./usage";
 
 // Les comptes de la console (la table user de Better Auth et leurs agents), leur fiche, les totaux de la vue d'ensemble ;
 // suspendre, réactiver, déconnecter partout. Le bannissement est celui de l'extension admin de Better Auth (auth.ts), écrit par
@@ -47,8 +47,8 @@ type Ligne = {
   messages: number;
 };
 
-/** Le premier des 30 derniers jours UTC : la période des messages d'un compte. */
-const depuis30j = (maintenant: Date) => joursUtc(30, maintenant)[0];
+/** Le premier des 30 derniers jours de Zurich (aujourd'hui compris) : la période des messages d'un compte. */
+const depuis30j = (maintenant: Date) => joursZurich(30, maintenant)[0];
 
 const CHOIX = `SELECT u.id, u.name, u.email, u.createdAt, u.banned, u.banReason, c.derniere, m.role AS role_membre, m.fin_acces,
   (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
@@ -70,10 +70,44 @@ function versCompte(l: Ligne, maintenant: Date): CompteConsole {
   };
 }
 
-/** Tous les comptes de la console, l'inscription la plus récente d'abord. */
-export function listerComptes(db: DatabaseSync, maintenant = new Date()): CompteConsole[] {
-  const lignes = db.prepare(`${CHOIX} ORDER BY u.createdAt DESC, u.rowid DESC`).all(depuis30j(maintenant)) as Ligne[];
-  return lignes.map((l) => versCompte(l, maintenant));
+export const COMPTES_PAR_PAGE = 50;
+const RECHERCHE_MAX = 100;
+
+/** La recherche (dans l'entreprise ou le courriel) et la page de la liste des comptes. */
+export type FiltresComptes = { q?: string; page: number };
+
+/** Les filtres tels que l'adresse les donne (?q=, ?page=) ; une page mal formée retombe sur 1, une recherche vide n'en est pas une. */
+export function filtresComptesDe(p: Record<string, string | string[] | undefined>): FiltresComptes {
+  const lire = (cle: string) => {
+    const v = p[cle];
+    return (Array.isArray(v) ? v[0] : v)?.trim() || undefined;
+  };
+  const page = Number(lire("page"));
+  const q = lire("q")?.slice(0, RECHERCHE_MAX);
+  return { page: Number.isSafeInteger(page) && page >= 1 ? page : 1, ...(q ? { q } : {}) };
+}
+
+/** Une recherche prise à la lettre dans un LIKE : \, % et _ échappés. */
+const enLike = (q: string) => `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+
+/**
+ * Les comptes de la console, l'inscription la plus récente d'abord, par pages de COMPTES_PAR_PAGE ; la recherche et la page
+ * se font dans le SQL. Une page demandée trop loin est ramenée à la dernière (page).
+ */
+export function listerComptes(db: DatabaseSync, f: FiltresComptes = { page: 1 }, maintenant = new Date()): {
+  comptes: CompteConsole[];
+  pages: number;
+  page: number;
+} {
+  const ou = f.q ? `WHERE (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\')` : "";
+  const valeurs = f.q ? [enLike(f.q), enLike(f.q)] : [];
+  const total = (db.prepare(`SELECT COUNT(*) AS n FROM "user" u ${ou}`).get(...valeurs) as { n: number }).n;
+  const pages = Math.max(1, Math.ceil(total / COMPTES_PAR_PAGE));
+  const page = Math.min(f.page, pages);
+  const lignes = db
+    .prepare(`${CHOIX} ${ou} ORDER BY u.createdAt DESC, u.rowid DESC LIMIT ? OFFSET ?`)
+    .all(depuis30j(maintenant), ...valeurs, COMPTES_PAR_PAGE, (page - 1) * COMPTES_PAR_PAGE) as Ligne[];
+  return { comptes: lignes.map((l) => versCompte(l, maintenant)), pages, page };
 }
 
 /** La fiche d'un compte : ses agents et leurs messages sur 30 jours, ses sessions ouvertes (sans adresse IP ni jeton). */
@@ -129,12 +163,30 @@ export async function adaptateurComptes(): Promise<AdaptateurComptes> {
   return (await auth().$context).internalAdapter;
 }
 
-/** Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. */
+/** Le compte est suspendu, mais ses sessions restent (deux essais d'effacement en échec) : à retirer par « Déconnecter partout ». */
+export class SessionsRestent extends Refus {
+  constructor() {
+    super(500, TA.sessionsRestent);
+  }
+}
+
+/**
+ * Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. Le
+ * bannissement écrit, un effacement des sessions en échec est réessayé une fois ; en échec encore : SessionsRestent.
+ */
 export async function suspendre(db: DatabaseSync, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<void> {
   exigerCompte(db, a, id);
   const motif = lireMotif(corps);
   await ad.updateUser(id, { banned: true, banReason: motif, banExpires: null });
-  await ad.deleteUserSessions(id);
+  for (let essai = 1; ; essai++) {
+    try {
+      await ad.deleteUserSessions(id);
+      return;
+    } catch (e) {
+      console.error(`suspension : sessions non effacées (essai ${essai}) :`, e);
+      if (essai >= 2) throw new SessionsRestent();
+    }
+  }
 }
 
 export async function reactiver(db: DatabaseSync, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {
@@ -148,7 +200,11 @@ export async function deconnecter(db: DatabaseSync, a: Acces, id: string, ad: Ad
   await ad.deleteUserSessions(id);
 }
 
-/** La console sur la vue d'ensemble : comptes et agents en tout ; messages et inscriptions jour par jour (jours UTC). */
+/**
+ * La console sur la vue d'ensemble : comptes et agents en tout ; messages et inscriptions jour par jour, en jours de Zurich
+ * (une inscription à 0 h 30 de Zurich compte ce jour-là). Les comptes inscrits dès la veille UTC du premier jour sont lus,
+ * puis rangés par leur jour de Zurich.
+ */
 export function totauxConsole(db: DatabaseSync, jours: Jours, maintenant = new Date()): {
   comptes: number;
   agents: number;
@@ -157,10 +213,13 @@ export function totauxConsole(db: DatabaseSync, jours: Jours, maintenant = new D
 } {
   const compter = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
   const messages = messagesParJour(db, jours, maintenant);
-  const inscrits = db
-    .prepare('SELECT substr(createdAt, 1, 10) AS jour, COUNT(*) AS n FROM "user" WHERE substr(createdAt, 1, 10) BETWEEN ? AND ? GROUP BY jour')
-    .all(messages[0].jour, messages[messages.length - 1].jour) as { jour: string; n: number }[];
-  const parJour = new Map(inscrits.map((i) => [i.jour, i.n]));
+  const veille = new Date(Date.parse(`${messages[0].jour}T00:00:00Z`) - 24 * 3600 * 1000).toISOString();
+  const inscrits = db.prepare('SELECT createdAt FROM "user" WHERE createdAt >= ?').all(veille) as { createdAt: string }[];
+  const parJour = new Map<string, number>();
+  for (const i of inscrits) {
+    const jour = jourZurich(new Date(i.createdAt));
+    parJour.set(jour, (parJour.get(jour) ?? 0) + 1);
+  }
   return {
     comptes: compter('SELECT COUNT(*) AS n FROM "user"'),
     agents: compter("SELECT COUNT(*) AS n FROM agent"),

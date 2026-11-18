@@ -3,7 +3,7 @@ import type { Acces } from "./acces";
 import type { Catalogue } from "./atelier";
 import { estObjet } from "./champs";
 import { TA } from "./textes";
-import { numeroVersion, retenirBase } from "./versions";
+import { numeroVersion } from "./versions";
 
 // Le brouillon d'un externe : seulement les réglages simples d'un client (les champs_client du catalogue de l'atelier).
 // L'atelier, appelé avec le jeton de MEGGA, accepterait tout : la console tient donc elle-même la règle qu'atelier/regles.py
@@ -57,16 +57,21 @@ const SANS_CATALOGUE: CatalogueSimple = { metiers: {}, champs_client: [] };
  * l'aperçu, jamais « la dernière » de l'atelier au moment de l'écriture. Un interne nomme la sienne, sinon la dernière version.
  * Un externe ne la choisit pas : la version en service, sinon la dernière ; en nommer une autre est refusé (403), rien ne part.
  * Un corps que corpsVersion refuse d'emblée (pas un objet ; un externe qui demande un modèle par métier) : rien n'est lu.
- * La base qui part est retenue pour le journal (retenirBase, detailVersion).
+ * Rend le corps et la base qu'il porte, que la route précise au journal (detailVersion).
  */
-export async function corpsPourAtelier(a: Acces, id: string, corps: unknown, l: Lecteur): Promise<Record<string, unknown>> {
+export async function corpsPourAtelier(a: Acces, id: string, corps: unknown, l: Lecteur): Promise<{ corps: Record<string, unknown>; base: number }> {
+  const pret = await corpsAvecBase(a, id, corps, l);
+  return { corps: pret, base: pret.base as number };
+}
+
+/** Le corps prêt, qui porte toujours base: n (chaque chemin qui ne lève pas la pose). */
+async function corpsAvecBase(a: Acces, id: string, corps: unknown, l: Lecteur): Promise<Record<string, unknown>> {
   if (!estObjet(corps) || (a.externe && Object.hasOwn(corps, "gabarit"))) return corpsVersion(a, corps, {}, SANS_CATALOGUE);
   const nommee = typeof corps.base === "number" ? numeroVersion(corps.base) : null;
   if (!a.externe) {
     if (corps.base != null && nommee === null) throw new Refus(400, TA.baseInvalide);
     const n = nommee ?? (await l.client(id)).derniere_version;
     if (n === null) throw new Refus(404, TA.introuvable); // aucune version : l'atelier n'aurait pas de base non plus
-    retenirBase(corps, n);
     return { ...corps, base: n };
   }
   const c = await l.client(id);
@@ -74,7 +79,5 @@ export async function corpsPourAtelier(a: Acces, id: string, corps: unknown, l: 
   if (n === null) throw new Refus(404, TA.introuvable);
   if (corps.base != null && nommee !== n) throw new Refus(403, TA.baseImposee);
   const [v, catalogue] = await Promise.all([l.version(id, n), l.catalogue()]);
-  const pret = { ...corpsVersion(a, corps, v.config ?? {}, catalogue), base: n };
-  retenirBase(corps, n); // après le filtre : un brouillon refusé n'est jamais envoyé
-  return pret;
+  return { ...corpsVersion(a, corps, v.config ?? {}, catalogue), base: n };
 }

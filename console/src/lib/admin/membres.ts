@@ -186,6 +186,12 @@ function exigerAutreSuperadmin(db: DatabaseSync, cible: Membre, maintenant: Date
   if (cible.role === SUPERADMIN && autresSuperadmins(db, cible.utilisateur, maintenant) < 1) throw new Refus(409, TA.dernierSuperadmin);
 }
 
+/** Un compte suspendu (comptes.ts) ne devient pas superadmin : il faudrait d'abord le réactiver. */
+function exigerCompteActif(db: DatabaseSync, utilisateur: string): void {
+  const u = db.prepare('SELECT banned FROM "user" WHERE id = ?').get(utilisateur) as { banned: number | null } | undefined;
+  if (u?.banned) throw new Refus(409, TA.superadminSuspendu);
+}
+
 /** Corps : { role?, perimetre?, finAcces? } ; externe ne change pas (l'invitation le fixe). */
 export function modifierMembre(db: DatabaseSync, a: Acces, utilisateur: string, corps: unknown, maintenant = new Date()): Membre {
   const cible = membreAToucher(db, a, utilisateur);
@@ -196,6 +202,7 @@ export function modifierMembre(db: DatabaseSync, a: Acces, utilisateur: string, 
   const finAcces = c.finAcces === undefined ? cible.finAcces : lireFinAcces(c.finAcces);
   const nouveauRole = role?.id ?? cible.role;
   const r = regleMembre(nouveauRole, cible.externe, perimetre, finAcces);
+  if (role?.id === SUPERADMIN) exigerCompteActif(db, utilisateur);
   if (nouveauRole !== SUPERADMIN) exigerAutreSuperadmin(db, cible, maintenant);
   db.prepare("UPDATE admin_membre SET role = ?, perimetre = ?, fin_acces = ? WHERE utilisateur = ?")
     .run(nouveauRole, perimetreEcrit(r.perimetre), r.finAcces, utilisateur);

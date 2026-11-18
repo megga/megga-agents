@@ -255,6 +255,7 @@ export const TA = {
   roleInconnu: "Rôle inconnu.",
   membreInconnu: "Membre inconnu.",
   dernierSuperadmin: "Il faut garder au moins un superadmin.",
+  superadminSuspendu: "Ce compte est suspendu : réactivez-le avant de le nommer superadmin.",
   externePerimetre: "Un externe suit au moins un client, nommé un par un.",
   externeSuperadmin: "Un externe ne peut pas être superadmin.",
   perimetreInvalide: "Périmètre invalide : tous les clients, ou une liste d'identifiants de clients.",
@@ -592,6 +593,10 @@ export const TA = {
   suspendu: "Suspendu",
   motifSuspension: (motif: string) => `Motif : ${motif}`,
   videComptes: "Aucun compte.",
+  rechercherCompte: "Entreprise ou courriel",
+  rechercher: "Rechercher",
+  effacerRecherche: "Effacer la recherche",
+  aucunCompteTrouve: "Aucun compte ne correspond.",
   sesAgents: "Ses agents",
   prenom: "Prénom",
   metier: "Métier",
@@ -608,6 +613,7 @@ export const TA = {
   suspendreTitre: (nom: string) => `Suspendre le compte ${nom} ?`,
   effetSuspendre: "Il ne se connecte plus et perd ses sessions tout de suite. Ses agents restent.",
   compteSuspenduFait: "Compte suspendu.",
+  sessionsRestent: "Le compte est suspendu, mais ses sessions ouvertes n'ont pas pu être fermées : retirez-les par « Déconnecter partout ».",
   reactiver: "Réactiver",
   reactiverTitre: (nom: string) => `Réactiver le compte ${nom} ?`,
   effetReactiver: "Il peut de nouveau se connecter. Ses sessions fermées ne reviennent pas.",
@@ -617,7 +623,11 @@ export const TA = {
   effetDeconnecter: "Toutes ses sessions se ferment tout de suite. Il peut se reconnecter.",
   sessionsFermees: "Sessions fermées.",
   inscriptions: "Inscriptions",
-  parJourUtc: "Jour par jour, en temps universel.",
+  /** Ce que le bloc Console compte pour la période choisie (?jours=1, 7 ou 30), en jours de Zurich. */
+  periodeConsole: (jours: number) =>
+    jours === 1
+      ? "Messages et inscriptions d'aujourd'hui, jour de Zurich. Comptes et agents : en tout."
+      : `Messages et inscriptions d'aujourd'hui et des ${jours - 1} jours d'avant, jours de Zurich. Comptes et agents : en tout.`,
   barre: (jour: string, n: number) => `${jour} : ${NOMBRE.format(n)}`,
   compteInconnu: "Compte inconnu.",
   motifManquant: "Donnez un motif, en 200 caractères au plus.",

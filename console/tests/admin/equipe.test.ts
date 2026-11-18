@@ -192,4 +192,15 @@ describe("les membres", () => {
     expect(a).toMatchObject({ superadmin: true, perimetre: "tous", role: { id: "superadmin", nom: TA.roleSuperadmin } });
     expect(a.droits.size).toBe(13);
   });
+
+  it("un compte suspendu ne devient pas superadmin : 409, rien ne change ; réactivé, il le peut", () => {
+    const s = membre(db, { utilisateur: "s", role: "superadmin" });
+    membre(db, { utilisateur: "n", role: "lecture" });
+    db.prepare("UPDATE \"user\" SET banned = 1 WHERE id = 'n'").run();
+    expect(refus(() => modifierMembre(db, s, "n", { role: "superadmin" }, T0))).toMatchObject({ statut: 409, message: TA.superadminSuspendu });
+    expect(listerMembres(db).find((m) => m.utilisateur === "n")?.role).toBe("lecture");
+    expect(modifierMembre(db, s, "n", { role: "finance" }, T0)).toMatchObject({ role: "finance" }); // un autre rôle reste permis
+    db.prepare("UPDATE \"user\" SET banned = 0 WHERE id = 'n'").run();
+    expect(modifierMembre(db, s, "n", { role: "superadmin" }, T0)).toMatchObject({ role: "superadmin" });
+  });
 });

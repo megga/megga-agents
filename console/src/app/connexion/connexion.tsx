@@ -9,24 +9,28 @@ import { Label } from "@/components/ui/label";
 import { authClient } from "@/lib/auth-client";
 import { T } from "@/lib/textes";
 
+import { messageErreur } from "./erreurs";
+
+export { messageErreur } from "./erreurs";
 export { retourSur } from "./retour";
 
-export function messageErreur(code: string | undefined): string {
-  if (!code) return T.erreurGenerale;
-  if (code === "INVALID_EMAIL_OR_PASSWORD" || code === "INVALID_EMAIL" || code === "INVALID_PASSWORD") return T.erreurIdentifiants;
-  if (code.startsWith("USER_ALREADY_EXISTS")) return T.erreurDejaInscrit;
-  if (code === "PASSWORD_TOO_SHORT") return T.erreurMotDePasse;
-  if (code === "BANNED_USER") return T.compteSuspendu;
-  return T.erreurGenerale;
-}
+/** L'adresse où Google ou Microsoft renvoient une erreur (?error=<code>, dite par messageErreur dans page.tsx). */
+const RETOUR_ERREUR = "/connexion";
 
-/** retour : déjà passé par retourSur (page.tsx) ; on y va après la connexion. */
-export function Connexion({ fournisseurs, retour }: { fournisseurs: ("google" | "microsoft")[]; retour: string }) {
+/**
+ * retour : déjà passé par retourSur (page.tsx) ; on y va après la connexion. erreur : la phrase d'une erreur au retour de
+ * Google ou Microsoft (page.tsx), montrée dès l'ouverture.
+ */
+export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null }: {
+  fournisseurs: ("google" | "microsoft")[];
+  retour: string;
+  erreur?: string | null;
+}) {
   const [mode, setMode] = useState<"connexion" | "inscription">("connexion");
   const [entreprise, setEntreprise] = useState("");
   const [courriel, setCourriel] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
-  const [erreur, setErreur] = useState<string | null>(null);
+  const [erreur, setErreur] = useState<string | null>(erreurInitiale);
   const [envoi, setEnvoi] = useState(false);
   const inscription = mode === "inscription";
   const router = useRouter();
@@ -60,12 +64,12 @@ export function Connexion({ fournisseurs, retour }: { fournisseurs: ("google" | 
           <>
             <div className="flex flex-col gap-2">
               {fournisseurs.includes("google") && (
-                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "google", callbackURL: retour })}>
+                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "google", callbackURL: retour, errorCallbackURL: RETOUR_ERREUR })}>
                   {T.avecGoogle}
                 </Button>
               )}
               {fournisseurs.includes("microsoft") && (
-                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "microsoft", callbackURL: retour })}>
+                <Button type="button" variant="outline" className="h-11 rounded-full text-[14.5px] font-semibold" onClick={() => authClient.signIn.social({ provider: "microsoft", callbackURL: retour, errorCallbackURL: RETOUR_ERREUR })}>
                   {T.avecMicrosoft}
                 </Button>
               )}

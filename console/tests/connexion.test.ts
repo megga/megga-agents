@@ -1,9 +1,23 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { messageErreur, retourSur } from "@/app/connexion/connexion";
+import type { ReactElement } from "react";
+import { describe, expect, it, vi } from "vitest";
+import { Connexion, messageErreur, retourSur } from "@/app/connexion/connexion";
+import PageConnexion from "@/app/connexion/page";
 import { fournisseurs } from "@/lib/auth";
 import { T } from "@/lib/textes";
+
+// La page de connexion appelée comme Next.js la rend, sans session.
+vi.mock("@/lib/auth", async (original) => ({ ...(await original<typeof import("@/lib/auth")>()), session: async () => null }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => {
+    throw new Error(`redirect:${url}`);
+  },
+  useRouter: () => ({ replace: () => {}, refresh: () => {} }),
+}));
+
+const page = async (p: Record<string, string | string[]>) =>
+  (await PageConnexion({ searchParams: Promise.resolve(p) } as never)) as ReactElement<{ erreur?: string | null }>;
 
 describe("Google et Microsoft", () => {
   it("restent éteints sans leurs clés", () => {
@@ -30,6 +44,22 @@ describe("les erreurs de connexion", () => {
 
   it("un compte suspendu lit une phrase claire", () => {
     expect(messageErreur("BANNED_USER")).toBe(T.compteSuspendu);
+  });
+
+  it("au retour de Google ou Microsoft (?error=), la page dit la phrase du code, jamais le texte reçu", async () => {
+    const suspendu = await page({ error: "BANNED_USER", error_description: "You have been banned" });
+    expect(suspendu.type).toBe(Connexion);
+    expect(suspendu.props.erreur).toBe(T.compteSuspendu);
+    for (const error of ["<b>pirate</b>", "account_not_linked", ["BANNED_USER", "x"]]) {
+      expect((await page({ error })).props.erreur, JSON.stringify(error)).toBe(T.erreurGenerale);
+    }
+    expect((await page({})).props.erreur).toBeNull();
+  });
+
+  it("Google et Microsoft renvoient leurs erreurs à la page de connexion (errorCallbackURL)", () => {
+    const code = readFileSync(join(__dirname, "../src/app/connexion/connexion.tsx"), "utf8");
+    expect(code.match(/signIn\.social\(\{[^}]*errorCallbackURL: RETOUR_ERREUR[^}]*\}\)/g)).toHaveLength(2);
+    expect(code).toContain('const RETOUR_ERREUR = "/connexion";');
   });
 });
 

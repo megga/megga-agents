@@ -20,10 +20,14 @@ export function GestesCompte({ id, nom, suspendu, sessions }: { id: string; nom:
   const [motif, setMotif] = useState("");
   const [fait, setFait] = useState<string | null>(null);
 
+  /** Le geste, puis la fiche relue, réussi ou non (un compte suspendu dont les sessions restent l'est quand même). */
   async function agir(url: string, methode: "POST" | "DELETE", corps: unknown, texte: string) {
-    await envoyer(url, methode, corps);
-    setFait(texte);
-    router.refresh();
+    try {
+      await envoyer(url, methode, corps);
+      setFait(texte);
+    } finally {
+      router.refresh();
+    }
   }
 
   return (
@@ -51,6 +55,7 @@ export function GestesCompte({ id, nom, suspendu, sessions }: { id: string; nom:
             titre={TA.suspendreTitre(nom)}
             effet={TA.effetSuspendre}
             bouton={TA.suspendre}
+            desactive={!motif.trim()}
             onConfirmer={async () => {
               await agir(`${adresse(id)}/suspension`, "POST", { motif: motif.trim() }, TA.compteSuspenduFait);
               setMotif("");
