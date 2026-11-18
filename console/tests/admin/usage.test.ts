@@ -1,0 +1,217 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { betterAuth } from "better-auth";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentDuTour, compterSansBloquer, compterTour, messagesDepuis, messagesParJour, noterConnexion } from "@/lib/admin/usage";
+import { creer } from "@/lib/agents";
+import { optionsAuth } from "@/lib/auth";
+import { baseEssai, compte, T0 } from "./aides";
+
+// Le compteur de messages (usage_agent) et la dernière connexion (compte_connexion). Le compteur s'écrit après la réponse de
+// l'agent (after de Next.js), sans texte, et une panne du compteur ne fait jamais échouer ni attendre une conversation.
+
+const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null, apres: [] as (() => unknown)[] }));
+vi.mock("next/server", async (original) => ({
+  ...(await original<typeof import("next/server")>()),
+  after: (f: () => unknown) => {
+    etat.apres.push(f);
+  },
+}));
+vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
+vi.mock("@/lib/auth", async (original) => ({
+  ...(await original<typeof import("@/lib/auth")>()),
+  sessionDe: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
+}));
+// CopilotKit répond tout de suite, comme le flux d'un agent qui commence.
+vi.mock("@copilotkit/runtime/v2", () => ({
+  CopilotRuntime: class {},
+  createCopilotRuntimeHandler: () => async () => new Response("flux de l'agent", { status: 200 }),
+}));
+
+let db: DatabaseSync;
+beforeEach(async () => {
+  db = await baseEssai();
+  etat.db = db;
+  etat.qui = null;
+  etat.apres = [];
+});
+afterEach(() => vi.restoreAllMocks());
+
+const lignes = () => db.prepare("SELECT agent, jour, messages FROM usage_agent ORDER BY agent, jour").all();
+
+describe("le tour d'un agent dans une requête de CopilotKit", () => {
+  it("est un POST sur /api/copilotkit/agent/<id>/run", () => {
+    expect(agentDuTour("POST", "/api/copilotkit/agent/ag_123/run")).toBe("ag_123");
+  });
+
+  it("n'est ni un GET, ni une autre route de CopilotKit, ni une adresse hors de /api/copilotkit", () => {
+    expect(agentDuTour("GET", "/api/copilotkit/agent/ag_123/run")).toBeNull();
+    expect(agentDuTour("POST", "/api/copilotkit/info")).toBeNull();
+    expect(agentDuTour("POST", "/api/copilotkit/agent/ag_1/connect")).toBeNull();
+    expect(agentDuTour("POST", "/api/copilotkit/agent/ag_1/stop/fil")).toBeNull();
+    expect(agentDuTour("POST", "/api/copilotkitx/agent/ag_1/run")).toBeNull();
+    expect(agentDuTour("POST", "/autre/agent/ag_1/run")).toBeNull();
+    expect(agentDuTour("POST", "/api/copilotkit/agent//run")).toBeNull();
+  });
+
+  it("décode un identifiant encodé ; un encodage illisible n'est pas un tour", () => {
+    expect(agentDuTour("POST", "/api/copilotkit/agent/ag%5F1/run")).toBe("ag_1");
+    expect(agentDuTour("POST", "/api/copilotkit/agent/%E0%A4%A/run")).toBeNull();
+  });
+
+  it("suit la règle de CopilotKit : les trois derniers segments, une barre finale permise", () => {
+    expect(agentDuTour("POST", "/api/copilotkit/agent/ag_1/run/")).toBe("ag_1");
+    expect(agentDuTour("POST", "/api/copilotkit/x/agent/ag_1/run")).toBe("ag_1");
+  });
+});
+
+describe("le compteur de messages", () => {
+  it("compte par agent et par jour UTC : deux tours le même jour, puis un le lendemain", () => {
+    compterTour(db, "ag_1", T0);
+    compterTour(db, "ag_1", new Date("2026-11-18T23:59:00Z"));
+    compterTour(db, "ag_1", new Date("2026-11-19T00:01:00Z"));
+    compterTour(db, "ag_2", T0);
+    expect(lignes()).toEqual([
+      { agent: "ag_1", jour: "2026-11-18", messages: 2 },
+      { agent: "ag_1", jour: "2026-11-19", messages: 1 },
+      { agent: "ag_2", jour: "2026-11-18", messages: 1 },
+    ]);
+  });
+
+  it("ne garde aucun texte : seulement l'agent, le jour et un nombre", () => {
+    const colonnes = (db.prepare("PRAGMA table_info(usage_agent)").all() as { name: string }[]).map((c) => c.name);
+    expect(colonnes).toEqual(["agent", "jour", "messages"]);
+  });
+
+  it("sans bloquer : une base sans la table, ou une base qui ne s'ouvre pas, ne lève rien et part à console.error", () => {
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    const sansTable = new DatabaseSync(":memory:");
+    expect(() => compterSansBloquer(() => sansTable, "ag_1")).not.toThrow();
+    expect(() =>
+      compterSansBloquer(() => {
+        throw new Error("base fermée");
+      }, "ag_1"),
+    ).not.toThrow();
+    expect(erreur).toHaveBeenCalledTimes(2);
+  });
+
+  it("sans bloquer, sur une bonne base : compte", () => {
+    compterSansBloquer(() => db, "ag_1");
+    expect(lignes()).toEqual([{ agent: "ag_1", jour: new Date().toISOString().slice(0, 10), messages: 1 }]);
+  });
+
+  it("messagesDepuis : la somme de chaque agent demandé depuis un jour inclus, zéro sans message", () => {
+    compterTour(db, "ag_1", new Date("2026-10-01T10:00:00Z"));
+    compterTour(db, "ag_1", new Date("2026-11-01T10:00:00Z"));
+    compterTour(db, "ag_1", T0);
+    compterTour(db, "ag_2", T0);
+    compterTour(db, "ag_3", T0);
+    expect(messagesDepuis(db, ["ag_1", "ag_2", "ag_4"], "2026-11-01")).toEqual({ ag_1: 2, ag_2: 1, ag_4: 0 });
+    expect(messagesDepuis(db, [], "2026-11-01")).toEqual({});
+  });
+
+  it("messagesParJour : les derniers jours UTC, zéros compris, le plus ancien d'abord, tous agents ensemble", () => {
+    compterTour(db, "ag_1", new Date("2026-11-11T23:59:00Z")); // hors des 7 jours
+    compterTour(db, "ag_1", new Date("2026-11-13T10:00:00Z"));
+    compterTour(db, "ag_1", T0);
+    compterTour(db, "ag_2", T0);
+    expect(messagesParJour(db, 7, T0)).toEqual([
+      { jour: "2026-11-12", messages: 0 },
+      { jour: "2026-11-13", messages: 1 },
+      { jour: "2026-11-14", messages: 0 },
+      { jour: "2026-11-15", messages: 0 },
+      { jour: "2026-11-16", messages: 0 },
+      { jour: "2026-11-17", messages: 0 },
+      { jour: "2026-11-18", messages: 2 },
+    ]);
+    expect(messagesParJour(db, 1, T0)).toEqual([{ jour: "2026-11-18", messages: 2 }]);
+    expect(messagesParJour(db, 30, T0)).toHaveLength(30);
+    expect(messagesParJour(db, 30, T0)[0].jour).toBe("2026-10-20");
+  });
+});
+
+describe("la dernière connexion", () => {
+  it("noterConnexion garde la plus récente", () => {
+    noterConnexion(db, "u1", T0);
+    noterConnexion(db, "u1", new Date("2026-11-18T12:00:00Z"));
+    noterConnexion(db, "u1", new Date("2026-11-01T12:00:00Z")); // une date plus ancienne n'efface pas la dernière
+    noterConnexion(db, "u2", T0);
+    expect(db.prepare("SELECT * FROM compte_connexion ORDER BY utilisateur").all()).toEqual([
+      { utilisateur: "u1", derniere: "2026-11-18T12:00:00.000Z" },
+      { utilisateur: "u2", derniere: T0.toISOString() },
+    ]);
+  });
+
+  it("est notée à chaque session créée par Better Auth (inscription, connexion)", async () => {
+    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    const { user } = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
+    const premiere = db.prepare("SELECT derniere FROM compte_connexion WHERE utilisateur = ?").get(user.id) as { derniere: string };
+    expect(Date.parse(premiere.derniere)).toBeGreaterThan(Date.now() - 60_000);
+    await auth.api.signInEmail({ body: { email: "garage@exemple.test", password: "motdepasse" } });
+    const seconde = db.prepare("SELECT derniere FROM compte_connexion WHERE utilisateur = ?").get(user.id) as { derniere: string };
+    expect(seconde.derniere >= premiere.derniere).toBe(true);
+  });
+
+  it("une panne de la dernière connexion ne refuse pas la connexion", async () => {
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    db.exec("DROP TABLE compte_connexion");
+    const r = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
+    expect(r.token).toBeTruthy();
+    expect(erreur).toHaveBeenCalled();
+  });
+});
+
+describe("la route de CopilotKit", () => {
+  const ROUTE = join(__dirname, "../../src/app/api/copilotkit/[[...chemin]]/route.ts");
+
+  async function envoyer(chemin: string, methode = "POST") {
+    const { POST, GET } = await import("@/app/api/copilotkit/[[...chemin]]/route");
+    const requete = new Request(`http://localhost${chemin}`, { method: methode, body: methode === "GET" ? undefined : "{}" });
+    return (methode === "GET" ? GET : POST)(requete);
+  }
+
+  it("compte un tour après la réponse, jamais avant : la réponse part, le compteur attend after", async () => {
+    compte(db, { id: "u1", courriel: "u1@exemple.test" });
+    const agent = creer(db, "u1", { prenom: "Lou", metier: "garage" }, T0);
+    etat.qui = "u1";
+    const r = await envoyer(`/api/copilotkit/agent/${agent.id}/run`);
+    expect([r.status, await r.text()]).toEqual([200, "flux de l'agent"]);
+    expect(lignes()).toEqual([]); // rien d'écrit tant que la réponse n'est pas finie
+    expect(etat.apres).toHaveLength(1);
+    await etat.apres[0]();
+    expect(lignes()).toEqual([{ agent: agent.id, jour: new Date().toISOString().slice(0, 10), messages: 1 }]);
+  });
+
+  it("ne compte ni une autre route, ni l'agent d'un autre compte", async () => {
+    compte(db, { id: "u1", courriel: "u1@exemple.test" });
+    compte(db, { id: "u2", courriel: "u2@exemple.test" });
+    const sien = creer(db, "u1", { prenom: "Lou", metier: "garage" }, T0);
+    const autre = creer(db, "u2", { prenom: "Max", metier: "sante" }, T0);
+    etat.qui = "u1";
+    await envoyer("/api/copilotkit/info", "GET");
+    await envoyer(`/api/copilotkit/agent/${sien.id}/connect`);
+    await envoyer(`/api/copilotkit/agent/${autre.id}/run`);
+    expect(etat.apres).toEqual([]);
+  });
+
+  it("une panne du compteur ne change pas la réponse de l'agent", async () => {
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    compte(db, { id: "u1", courriel: "u1@exemple.test" });
+    const agent = creer(db, "u1", { prenom: "Lou", metier: "garage" }, T0);
+    etat.qui = "u1";
+    const r = await envoyer(`/api/copilotkit/agent/${agent.id}/run`);
+    db.exec("DROP TABLE usage_agent");
+    expect(() => etat.apres[0]()).not.toThrow();
+    expect(r.status).toBe(200);
+    expect(erreur).toHaveBeenCalled();
+  });
+
+  it("appelle after( et n'attend jamais le compteur", () => {
+    const code = readFileSync(ROUTE, "utf8");
+    expect(code).toMatch(/\bafter\(/);
+    expect(code).not.toMatch(/await\s+compter/);
+    expect(code).not.toMatch(/compterTour\(/);
+  });
+});

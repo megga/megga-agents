@@ -1,6 +1,8 @@
 import { T } from "@/lib/textes";
 import { HttpAgent } from "@ag-ui/client";
 import { CopilotRuntime, createCopilotRuntimeHandler } from "@copilotkit/runtime/v2";
+import { after } from "next/server";
+import { agentDuTour, compterSansBloquer } from "@/lib/admin/usage";
 import { lister } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { base } from "@/lib/base";
@@ -48,7 +50,11 @@ const gerer = createCopilotRuntimeHandler({ runtime, basePath: "/api/copilotkit"
 async function traiter(requete: Request) {
   const id = await utilisateur(requete);
   if (!id) return Response.json({ erreur: T.connectezVous }, { status: 401 });
-  if (!lister(base(), id).length) return Response.json({ erreur: "Aucun agent." }, { status: 404 });
+  const agents = lister(base(), id);
+  if (!agents.length) return Response.json({ erreur: "Aucun agent." }, { status: 404 });
+  // Un tour envoyé à un agent du compte se compte une fois la réponse finie (after) : jamais attendu, jamais un texte.
+  const tour = agentDuTour(requete.method, new URL(requete.url).pathname);
+  if (tour && agents.some((a) => a.id === tour)) after(() => compterSansBloquer(base, tour));
   return gerer(requete);
 }
 

@@ -4,6 +4,7 @@ import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { headers } from "next/headers";
+import { noterConnexion } from "./admin/usage";
 import { base } from "./base";
 
 type Fournisseurs = NonNullable<BetterAuthOptions["socialProviders"]>;
@@ -24,6 +25,15 @@ export function fournisseursActifs(): ("google" | "microsoft")[] {
   return Object.keys(fournisseurs()) as ("google" | "microsoft")[];
 }
 
+/** La dernière connexion d'un compte, notée à chaque session créée ; une panne ne refuse jamais la connexion. */
+function noterSansBloquer(db: DatabaseSync, utilisateur: string): void {
+  try {
+    noterConnexion(db, utilisateur);
+  } catch (e) {
+    console.error("dernière connexion :", e);
+  }
+}
+
 /** Les options de Better Auth sur une base donnée (celle de la console par défaut, une base en mémoire dans les essais). */
 export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
   return {
@@ -32,6 +42,7 @@ export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
     emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
     socialProviders: fournisseurs(),
     telemetry: { enabled: false },
+    databaseHooks: { session: { create: { after: async (s) => noterSansBloquer(db, s.userId) } } },
     plugins: [nextCookies()],
   };
 }
