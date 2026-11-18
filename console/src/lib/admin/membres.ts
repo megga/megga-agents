@@ -45,7 +45,8 @@ type Ligne = {
 const CHOIX = `SELECT m.*, COALESCE(u.email, '') AS courriel, COALESCE(u.name, '') AS nom, c.derniere
   FROM admin_membre m LEFT JOIN "user" u ON u.id = m.utilisateur LEFT JOIN compte_connexion c ON c.utilisateur = m.utilisateur`;
 
-function perimetreLu(json: string | null): Perimetre {
+/** Un périmètre lu en base : NULL vaut « tous », une liste illisible ne donne aucun client. */
+export function perimetreLu(json: string | null): Perimetre {
   if (json === null) return "tous";
   try {
     const v: unknown = JSON.parse(json);
@@ -123,20 +124,26 @@ export function listerMembres(db: DatabaseSync): Membre[] {
   return (db.prepare(`${CHOIX} ORDER BY m.ajoute_le, m.rowid`).all() as Ligne[]).map(versMembre);
 }
 
-function roleExistant(db: DatabaseSync, id: unknown): Role {
+/** Le rôle nommé dans un corps, ou 400. */
+export function roleExistant(db: DatabaseSync, id: unknown): Role {
   const role = typeof id === "string" ? lireRole(db, id) : undefined;
   if (!role) throw new Refus(400, TA.roleInconnu);
   return role;
 }
 
-/** Les règles d'une ligne de membre : un externe a un périmètre et n'est jamais superadmin ; un superadmin a tout, sans fin. */
-function regle(role: string, externe: boolean, perimetre: Perimetre, finAcces: string | null): { perimetre: Perimetre; finAcces: string | null } {
+/** Les règles d'une ligne de membre ou d'une invitation : un externe a un périmètre et n'est jamais superadmin ; un superadmin a tout, sans fin. */
+export function regleMembre(
+  role: string,
+  externe: boolean,
+  perimetre: Perimetre,
+  finAcces: string | null,
+): { perimetre: Perimetre; finAcces: string | null } {
   if (externe && role === SUPERADMIN) throw new Refus(400, TA.externeSuperadmin);
   if (externe && (perimetre === "tous" || !perimetre.length)) throw new Refus(400, TA.externePerimetre);
   return role === SUPERADMIN ? { perimetre: "tous", finAcces: null } : { perimetre, finAcces };
 }
 
-const perimetreEcrit = (p: Perimetre) => (p === "tous" ? null : JSON.stringify(p));
+export const perimetreEcrit = (p: Perimetre) => (p === "tous" ? null : JSON.stringify(p));
 
 /** Ajoute (ou remplace) la ligne d'un membre ; les droits de qui l'ajoute sont vérifiés avant (invitation, commande). */
 export function ajouterMembre(
@@ -145,7 +152,7 @@ export function ajouterMembre(
   maintenant = new Date(),
 ): Membre {
   roleExistant(db, m.role);
-  const r = regle(m.role, m.externe, m.perimetre, m.finAcces);
+  const r = regleMembre(m.role, m.externe, m.perimetre, m.finAcces);
   db.prepare(
     `INSERT INTO admin_membre (utilisateur, role, externe, perimetre, fin_acces, ajoute_par, ajoute_le) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (utilisateur) DO UPDATE SET role = excluded.role, externe = excluded.externe, perimetre = excluded.perimetre,
@@ -186,7 +193,7 @@ export function modifierMembre(db: DatabaseSync, a: Acces, utilisateur: string, 
   if (c.perimetre !== undefined && !perimetreInclus(a, perimetre)) throw new Refus(403, TA.escalade);
   const finAcces = c.finAcces === undefined ? cible.finAcces : lireFinAcces(c.finAcces);
   const nouveauRole = role?.id ?? cible.role;
-  const r = regle(nouveauRole, cible.externe, perimetre, finAcces);
+  const r = regleMembre(nouveauRole, cible.externe, perimetre, finAcces);
   if (nouveauRole !== SUPERADMIN) exigerAutreSuperadmin(db, cible, maintenant);
   db.prepare("UPDATE admin_membre SET role = ?, perimetre = ?, fin_acces = ? WHERE utilisateur = ?")
     .run(nouveauRole, perimetreEcrit(r.perimetre), r.finAcces, utilisateur);
