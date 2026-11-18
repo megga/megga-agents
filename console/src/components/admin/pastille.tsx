@@ -18,6 +18,20 @@ export function Pastille({ etat, texte }: { etat: Etat; texte: string }) {
   );
 }
 
+/** L'état d'une installation hors Cloudflare d'après son dernier relevé (la liste des clients, l'écran Installations). */
+export function etatInstallation(i: Record<string, unknown> | null | undefined): { etat: Etat; texte: string } {
+  if (!i) return { etat: "faint", texte: TA.sansInstallation };
+  if (i.revoquee != null) return { etat: "accent", texte: TA.installationRevoquee };
+  if (i.silencieuse) return { etat: "warn", texte: TA.installationSilencieuse };
+  return { etat: "ok", texte: TA.installationRelevee };
+}
+
+/** L'écart d'une installation : elle ne sert pas la version en service ; inconnu sans relevé ou quand son agent n'a pas répondu. */
+export function EcartInstallation({ ecart }: { ecart: unknown }) {
+  if (ecart === true) return <Pastille etat="warn" texte={TA.ecart} />;
+  return <span className={ecart === false ? "" : "text-faint"}>{ecart === false ? TA.aucunEcart : TA.inconnu}</span>;
+}
+
 /** L'état d'un client du moteur en pastilles : le service, l'écart, la main de MEGGA, le conteneur s'il est connu. */
 export function PastillesEtat({ etat }: { etat: EtatClient }) {
   return (

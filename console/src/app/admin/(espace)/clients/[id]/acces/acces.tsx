@@ -119,7 +119,7 @@ export function Cles({ id, cles }: { id: string; cles: CleVue[] }) {
     <section className={section}>
       <h2 className={titre2}>{TA.clesLogiciels}</h2>
       <Tableau
-        colonnes={[TA.logiciel, TA.identifiant, TA.parMinute, TA.creeeLe, TA.etat, ""]}
+        colonnes={[TA.logiciel, TA.identifiant, TA.parMinute, TA.creeeLe, TA.etat]}
         vide={TA.videCles}
         replier={[1, 2, 3, 4]}
         lignes={cles.map((c) => [
@@ -127,20 +127,23 @@ export function Cles({ id, cles }: { id: string; cles: CleVue[] }) {
           <span key="id" className="whitespace-nowrap text-muted-ink">{c.id}</span>,
           <span key="debit" className="tabular-nums">{c.parMinute === null ? TA.inconnu : TA.nombre(c.parMinute)}</span>,
           <span key="cree" className="whitespace-nowrap">{c.creeLe}</span>,
-          c.retireeLe ? <Pastille key="etat" etat="faint" texte={TA.retireeLe(c.retireeLe)} /> : <Pastille key="etat" etat="ok" texte={TA.enService} />,
-          c.retireeLe ? null : (
-            <Confirmation
-              key="retirer"
-              titre={TA.retirerCleTitre(c.logiciel)}
-              effet={TA.retirerCleEffet}
-              bouton={TA.retirer}
-              onConfirmer={async () => {
-                await envoyer(`${adresse(id)}/cles/${encodeURIComponent(c.id)}`, "DELETE");
-                router.refresh();
-              }}
-            >
-              {TA.retirer}
-            </Confirmation>
+          c.retireeLe ? (
+            <Pastille key="etat" etat="faint" texte={TA.retireeLe(c.retireeLe)} />
+          ) : (
+            <span key="etat" className="flex flex-wrap items-center gap-2">
+              <Pastille etat="ok" texte={TA.enService} />
+              <Confirmation
+                titre={TA.retirerCleTitre(c.logiciel)}
+                effet={TA.retirerCleEffet}
+                bouton={TA.retirer}
+                onConfirmer={async () => {
+                  await envoyer(`${adresse(id)}/cles/${encodeURIComponent(c.id)}`, "DELETE");
+                  router.refresh();
+                }}
+              >
+                {TA.retirer}
+              </Confirmation>
+            </span>
           ),
         ])}
       />
