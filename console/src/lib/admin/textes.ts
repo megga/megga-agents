@@ -88,7 +88,6 @@ export const TA = {
   externePerimetre: "Un externe suit au moins un client, nommé un par un.",
   externeSuperadmin: "Un externe ne peut pas être superadmin.",
   perimetreInvalide: "Périmètre invalide : tous les clients, ou une liste d'identifiants de clients.",
-  perimetreHors: "Ce périmètre dépasse le vôtre.",
   finAccesInvalide: "Fin d'accès invalide : une date au format AAAA-MM-JJ.",
   courrielInvalide: "Courriel invalide.",
   invitationInvalide: "Cette invitation n'est plus valable.",
