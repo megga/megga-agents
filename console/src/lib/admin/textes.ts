@@ -14,6 +14,8 @@ const INSTANT = new Intl.DateTimeFormat("fr-CH", {
 });
 
 const NOMBRE = new Intl.NumberFormat("fr-CH");
+/** Un montant : deux décimales au moins, six au plus (un tarif peut être très petit, un coût est arrondi à quatre). */
+const MONTANT = new Intl.NumberFormat("fr-CH", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
 
 /** Un jour AAAA-MM-JJ s'écrit JJ.MM.AAAA, sans fuseau ; autre chose reste tel quel. */
 function jour(v: string): string {
@@ -165,6 +167,7 @@ export const TA = {
     "roles.creer": "Créer un rôle",
     "roles.modifier": "Modifier un rôle",
     "roles.retirer": "Retirer un rôle",
+    "tarifs.regler": "Changer les tarifs",
   } as Record<string, string>,
 
   // Les onglets d'un client
@@ -304,6 +307,30 @@ export const TA = {
   injoignables: (clients: string) => `Ces clients ne répondent pas : ${clients}.`,
   /** Un instant en secondes depuis 1970 (ceux de l'atelier), à l'heure de Zurich ; inconnu (nul, illisible), un tiret court. */
   moment: (secondes: number | null) => (typeof secondes === "number" && Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : "-"),
+
+  // Les coûts et les tarifs (couts.voir ; tarifs.regler pour les changer)
+  couts: "Coûts",
+  poste: "Poste",
+  total: "Total",
+  coutEn: (devise: string) => `Coût en ${devise}`,
+  tarifEn: (devise: string) => `Tarif en ${devise}`,
+  montant: (n: number) => MONTANT.format(n),
+  /** Un poste des coûts : un modèle par son identifiant, la voix et l'écoute dites en clair. */
+  nomPoste: (poste: string) => (poste === "ecoute" ? "écoute" : poste),
+  sansTarif: (postes: string) => `Sans tarif, donc pas compté : ${postes}.`,
+  aucunPoste: "Rien de compté sur la période.",
+  devise: "Devise",
+  parMillion: (devise: string) => `Par million de jetons, en ${devise}.`,
+  voixEtEcoute: "La voix et l'écoute",
+  tarifVoix: "La voix, pour 1000 caractères dits",
+  tarifEcoute: "L'écoute, par vocal entendu",
+  aideTarif: (devise: string) => `En ${devise}. Vide : sans tarif, signalé dans les coûts.`,
+  sansTarifCourt: "Sans tarif",
+  videTarifs: "Aucun modèle n'a encore de tarif.",
+  vusSansTarif: "Vus dans l'activité, sans tarif :",
+  ajouterModele: (modele: string) => `Ajouter ${modele}`,
+  tarifsEnregistres: "Tarifs enregistrés.",
+  tarifsInvalides: "Tarifs invalides : un objet attendu.",
 
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {

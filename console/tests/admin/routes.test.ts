@@ -22,6 +22,7 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "ses
   { fichier: "equipe/roles/route.ts", methodes: ["POST"], droit: "equipe.gerer", params: {}, client: false },
   { fichier: "equipe/roles/[id]/route.ts", methodes: ["PATCH", "DELETE"], droit: "equipe.gerer", params: { id: "lecture" }, client: false },
   { fichier: "invitation/route.ts", methodes: ["POST"], droit: "session", params: {}, client: false },
+  { fichier: "tarifs/route.ts", methodes: ["PUT"], droit: "tarifs.regler", params: {}, client: false },
 ];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */

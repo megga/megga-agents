@@ -111,6 +111,21 @@ export function sansCouts<T extends { couts?: unknown }>(r: T, a: Acces): T {
 
 export type LectureClient = { client: ClientAtelier; suivi?: Suivi; alertes?: Alerte[]; erreur?: string };
 
+/** Les postes de l'atelier qui ne sont pas des modèles (atelier/couts.py) : leurs tarifs se règlent à part. */
+const POSTES_HORS_MODELES: readonly string[] = ["voix", "ecoute"];
+
+/**
+ * Les modèles vus dans l'activité sans tarif (l'écran Tarifs les propose à l'ajout) : l'union triée des sans_tarif des
+ * lectures, sans la voix ni l'écoute. Des coûts illisibles ({ erreur }) ou absents (sans couts.voir) n'en donnent aucun.
+ */
+export function modelesSansTarif(lectures: LectureClient[]): string[] {
+  const vus = lectures.flatMap((l) => {
+    const c = l.suivi?.couts;
+    return c && "sans_tarif" in c ? c.sans_tarif : [];
+  });
+  return [...new Set(vus)].filter((m) => !POSTES_HORS_MODELES.includes(m)).sort();
+}
+
 /** La phrase d'un refus de lecture ; une erreur inattendue part à console.error. */
 function phrase(e: unknown): string {
   if (e instanceof Refus) return e.message;

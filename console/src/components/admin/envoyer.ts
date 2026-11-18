@@ -1,8 +1,20 @@
 import { TA } from "@/lib/admin/textes";
 
+type Champ = { champ: string; message: string };
+
+/** Le refus d'une route : sa phrase, et pour un refus de l'atelier, ses messages champ par champ (ErreursChamps). */
+export class RefusEnvoi extends Error {
+  constructor(message: string, public champs: Champ[] = []) {
+    super(message);
+  }
+}
+
+const estChamp = (d: unknown): d is Champ =>
+  !!d && typeof d === "object" && typeof (d as Champ).champ === "string" && typeof (d as Champ).message === "string";
+
 /**
- * Un geste envoyé à une route de /api/admin : son corps en JSON (null pour un 204), ou une Error qui porte la phrase du
- * refus (celle de la route, sinon une phrase générale), prête pour ErreursChamps ou Confirmation.
+ * Un geste envoyé à une route de /api/admin : son corps en JSON (null pour un 204), ou un RefusEnvoi qui porte la phrase du
+ * refus (celle de la route, sinon une phrase générale) et ses messages champ par champ, prêt pour ErreursChamps ou Confirmation.
  */
 export async function envoyer<T>(url: string, methode: "POST" | "PUT" | "PATCH" | "DELETE", corps?: unknown): Promise<T | null> {
   let r: Response;
@@ -13,10 +25,13 @@ export async function envoyer<T>(url: string, methode: "POST" | "PUT" | "PATCH" 
       body: corps === undefined ? undefined : JSON.stringify(corps),
     });
   } catch {
-    throw new Error(TA.erreurInterne);
+    throw new RefusEnvoi(TA.erreurInterne);
   }
   if (r.status === 204) return null;
-  const c = (await r.json().catch(() => null)) as { erreur?: unknown } | null;
-  if (!r.ok) throw new Error(typeof c?.erreur === "string" && c.erreur ? c.erreur : TA.erreurInterne);
+  const c = (await r.json().catch(() => null)) as { erreur?: unknown; champs?: unknown } | null;
+  if (!r.ok) {
+    const champs = Array.isArray(c?.champs) ? c.champs.filter(estChamp) : [];
+    throw new RefusEnvoi(typeof c?.erreur === "string" && c.erreur ? c.erreur : TA.erreurInterne, champs);
+  }
   return c as T;
 }

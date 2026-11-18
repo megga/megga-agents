@@ -12,7 +12,9 @@ import {
   joursDe,
   lireAlertes,
   lireTout,
+  modelesSansTarif,
   sansCouts,
+  type LectureClient,
   soucis,
   texteGenre,
   trierAlertes,
@@ -170,6 +172,21 @@ describe("les coûts", () => {
     expect(sansCouts(s, sansCout).activite.tours).toBe(10);
     expect(sansCouts(s, tous).couts).toEqual(s.couts);
     expect("couts" in s).toBe(true); // l'original n'est pas touché
+  });
+
+  it("les modèles sans tarif : l'union triée des lectures, sans la voix ni l'écoute, un { erreur } ou un client sans suivi ignoré", () => {
+    const sansSesCouts = suiviDe("e5", 7);
+    delete sansSesCouts.couts;
+    const lectures: LectureClient[] = [
+      { client: client("a1"), suivi: suiviDe("a1", 7, 1, ["voix", "mistral-large", "deepseek-v4-pro", "ecoute"]) },
+      { client: client("b2"), suivi: { ...suiviDe("b2", 7), couts: { erreur: "activité illisible" } } },
+      { client: client("c3"), suivi: suiviDe("c3", 7, 1, ["deepseek-v4-pro"]) },
+      { client: client("d4"), erreur: TA.atelierLent },
+      { client: client("e5"), suivi: sansSesCouts },
+      { client: client("j1", { version_en_service: null }) },
+    ];
+    expect(modelesSansTarif(lectures)).toEqual(["deepseek-v4-pro", "mistral-large"]);
+    expect(modelesSansTarif([])).toEqual([]);
   });
 });
 

@@ -3,16 +3,49 @@ import { Bandeau } from "@/components/admin/erreurs";
 import { ChoixPeriode } from "@/components/admin/periode";
 import { Tableau } from "@/components/admin/tableau";
 import { Tuile } from "@/components/admin/tuile";
-import { atelier, ouRefus, RefusChamps, type Activite } from "@/lib/admin/atelier";
+import { atelier, ouRefus, RefusChamps, type Activite, type Couts } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
 import { joursDe, sansCouts } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 
 // L'onglet Suivi d'un client : l'activité de la période (tours, échecs, secours, personnes, rappels, voix et vocaux), puis
-// les tours et les jetons par modèle. Les coûts sont retirés sans couts.voir avant tout affichage.
+// les tours et les jetons par modèle ; avec couts.voir, les coûts. Ils sont retirés sans ce droit avant tout affichage.
 
 /** Ce que le journal du noyau a compté sur la période (un nombre de fois, ou une quantité). */
 const note = (x: Activite, genre: string, champ: "nombre" | "quantite") => x.journal?.[genre]?.[champ] ?? 0;
+
+/** Les coûts de la période : par poste, le total, la devise ; ce qui n'a pas de tarif est signalé, jamais compté à zéro. */
+function BlocCouts({ couts }: { couts: Couts }) {
+  const titre = <h2 className="m-0 text-[17px] font-extrabold">{TA.couts}</h2>;
+  if ("erreur" in couts) {
+    return (
+      <>
+        {titre}
+        <Bandeau etat="warn">{couts.erreur}</Bandeau>
+      </>
+    );
+  }
+  const postes = Object.entries(couts.postes);
+  const montant = (n: number, gras = false) => <span className={"whitespace-nowrap tabular-nums" + (gras ? " font-extrabold" : "")}>{TA.montant(n)}</span>;
+  return (
+    <>
+      {titre}
+      {couts.sans_tarif.length > 0 && <Bandeau etat="warn">{TA.sansTarif(couts.sans_tarif.map(TA.nomPoste).join(", "))}</Bandeau>}
+      <Tableau
+        colonnes={[TA.poste, TA.coutEn(couts.devise)]}
+        vide={TA.aucunPoste}
+        lignes={
+          postes.length
+            ? [
+                ...postes.map(([poste, n]) => [<b key="poste" className="font-bold break-all">{TA.nomPoste(poste)}</b>, montant(n)]),
+                [<b key="poste" className="font-extrabold">{TA.total}</b>, montant(couts.total, true)],
+              ]
+            : []
+        }
+      />
+    </>
+  );
+}
 
 export default async function PageSuivi({ params, searchParams }: PageProps<"/admin/clients/[id]">) {
   const { id } = await params;
@@ -28,7 +61,7 @@ export default async function PageSuivi({ params, searchParams }: PageProps<"/ad
     }
     return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   }
-  const x = sansCouts(r, a).activite;
+  const { activite: x, couts } = sansCouts(r, a);
   const tuiles = [
     { titre: TA.tours, valeur: x.tours },
     { titre: TA.dontApi, valeur: x.tours_api ?? 0 },
@@ -60,6 +93,7 @@ export default async function PageSuivi({ params, searchParams }: PageProps<"/ad
           )),
         ])}
       />
+      {couts && <BlocCouts couts={couts} />}
     </>
   );
 }
