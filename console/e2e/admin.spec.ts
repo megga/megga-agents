@@ -38,8 +38,8 @@ const BASE_ESSAI = ".donnees/e2e.sqlite";
 const BOULANGERIE = { id: "boulangerie-essai", entreprise: "Boulangerie des Essais" };
 const GARAGE = { id: "garage-essai", entreprise: "Garage des Essais" };
 const CHALET = { id: "chalet-essai", entreprise: "Chalet des Essais" };
-/** Le titre de la page introuvable de Next : la console n'en a pas à elle, l'admin s'efface comme une adresse inconnue. */
-const INTROUVABLE = "404";
+/** Le titre de la page introuvable de la racine (src/app/not-found.tsx) : l'admin s'efface comme une adresse inconnue. */
+const INTROUVABLE = T.pageIntrouvable;
 /** Le modèle d'essai de l'atelier répond ainsi (ModeleEssai, agents/serveur.py). */
 const REPONSE_ESSAI = "Bien reçu";
 
