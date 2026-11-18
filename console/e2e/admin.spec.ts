@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { DROITS_EXTERNE } from "../src/lib/admin/droits";
 import { TA } from "../src/lib/admin/textes";
 import { T } from "../src/lib/textes";
@@ -10,6 +10,27 @@ import { EXTERNE_ESSAI, ORDINAIRE_ESSAI, SUPERADMIN_ESSAI } from "./compte";
 // le compte ordinaire du troisième au quatrième. L'atelier d'essai (agents/atelier_essai.py) fournit les clients.
 
 test.describe.configure({ mode: "serial", timeout: 120_000 });
+
+type Session = Awaited<ReturnType<BrowserContext["storageState"]>>;
+/**
+ * La session du superadmin, gardée à la fin du premier parcours : les suivants la reprennent au lieu de se reconnecter. En
+ * production, Better Auth n'admet que trois connexions en dix secondes d'une même adresse, et le quatrième parcours en fait trois.
+ */
+let sessionChef: Session | undefined;
+
+/** Un navigateur à part (les réglages de playwright.config.ts), avec une session gardée s'il en faut une. */
+const navigateur = (browser: Browser, baseURL: string | undefined, storageState?: Session) =>
+  browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 }, storageState });
+
+/** Le superadmin du premier parcours, déjà connecté, sur la vue d'ensemble. */
+async function superadmin(browser: Browser, baseURL: string | undefined): Promise<{ contexte: BrowserContext; page: Page }> {
+  expect(sessionChef, "la session du premier parcours").toBeDefined();
+  const contexte = await navigateur(browser, baseURL, sessionChef);
+  const page = await contexte.newPage();
+  await page.goto("/admin");
+  await expect(page.getByRole("heading", { name: TA.vueEnsemble, level: 1, exact: true })).toBeVisible();
+  return { contexte, page };
+}
 
 /** La base de la console des essais (playwright.config.ts), où la commande écrit l'invitation du premier superadmin. */
 const BASE_ESSAI = ".donnees/e2e.sqlite";
@@ -32,13 +53,13 @@ function requetesAilleurs(page: Page): string[] {
   return ailleurs;
 }
 
-/** Se connecte par /connexion ; avec retour, on arrive dans l'admin, sinon dans la console. */
-async function connecter(page: Page, compte: { courriel: string; motDePasse: string }, retour?: "/admin") {
-  await page.goto(retour ? `/connexion?retour=${retour}` : "/connexion");
+/** Se connecte par /connexion et arrive dans la console. */
+async function connecter(page: Page, compte: { courriel: string; motDePasse: string }) {
+  await page.goto("/connexion");
   await page.getByLabel(T.courriel).fill(compte.courriel);
   await page.getByLabel(T.motDePasse).fill(compte.motDePasse);
   await page.getByRole("button", { name: T.seConnecter }).click();
-  await expect(page).toHaveURL(retour ? /\/admin$/ : /\/$/);
+  await expect(page).toHaveURL(/\/$/);
 }
 
 /** Ouvre un lien d'invitation, crée le compte (le courriel est celui de l'invitation) et rejoint l'admin. */
@@ -143,11 +164,12 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   await page.getByRole("menuitem", { name: TA.administration }).click();
   await expect(titre(page, TA.vueEnsemble)).toBeVisible();
   expect(ailleurs).toEqual([]);
+  sessionChef = await page.context().storageState();
 });
 
-test("un externe ne voit que son client", async ({ page, browser, baseURL }) => {
+test("un externe ne voit que son client", async ({ browser, baseURL }) => {
+  const { contexte: chef, page } = await superadmin(browser, baseURL);
   const ailleurs = requetesAilleurs(page);
-  await connecter(page, SUPERADMIN_ESSAI, "/admin");
   await rail(page).getByRole("link", { name: TA.equipe, exact: true }).click();
   await expect(titre(page, TA.equipe)).toBeVisible();
   await page.getByRole("link", { name: TA.invitations, exact: true }).click();
@@ -179,8 +201,8 @@ test("un externe ne voit que son client", async ({ page, browser, baseURL }) => 
   await expect(enAttente).toContainText(TA.externe);
   await expect(enAttente).toContainText(GARAGE.id);
 
-  // L'externe, dans son propre navigateur (les réglages de playwright.config.ts) : il rejoint par le lien.
-  const contexte = await browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 } });
+  // L'externe, dans son propre navigateur : il rejoint par le lien.
+  const contexte = await navigateur(browser, baseURL);
   const externe = await contexte.newPage();
   const ailleursExterne = requetesAilleurs(externe);
   await rejoindre(externe, lien, EXTERNE_ESSAI);
@@ -249,6 +271,7 @@ test("un externe ne voit que son client", async ({ page, browser, baseURL }) => 
   expect(ailleursExterne).toEqual([]);
   expect(ailleurs).toEqual([]);
   await contexte.close();
+  await chef.close();
 });
 
 test("un compte ordinaire reçoit la page introuvable sur /admin", async ({ page }) => {
@@ -275,16 +298,17 @@ test("un compte ordinaire reçoit la page introuvable sur /admin", async ({ page
   expect(ailleurs).toEqual([]);
 });
 
-test("un compte suspendu ne se connecte plus", async ({ page, browser, baseURL }) => {
+test("un compte suspendu ne se connecte plus", async ({ browser, baseURL }) => {
   const motif = "Essai de suspension";
-  // Le compte ordinaire, connecté dans son propre navigateur : ses requêtes passent.
-  const contexte = await browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 } });
+  // Le compte ordinaire, connecté dans son propre navigateur : ses requêtes passent. Ses trois connexions sont les seules
+  // de ce fichier (sessionChef).
+  const contexte = await navigateur(browser, baseURL);
   const ordinaire = await contexte.newPage();
   await connecter(ordinaire, ORDINAIRE_ESSAI);
   expect((await ordinaire.request.get("/api/agents")).status()).toBe(200);
 
   // Le superadmin le suspend, avec un motif, derrière une confirmation qui dit l'effet.
-  await connecter(page, SUPERADMIN_ESSAI, "/admin");
+  const { contexte: chef, page } = await superadmin(browser, baseURL);
   await rail(page).getByRole("link", { name: TA.comptes, exact: true }).click();
   await expect(titre(page, TA.comptes)).toBeVisible();
   await page.screenshot({ path: "captures/admin-comptes.png", fullPage: true });
@@ -314,11 +338,12 @@ test("un compte suspendu ne se connecte plus", async ({ page, browser, baseURL }
   await ordinaire.getByRole("button", { name: T.seConnecter }).click();
   await expect(ordinaire).toHaveURL(/\/$/);
   await contexte.close();
+  await chef.close();
 });
 
-test("à 390 px, en clair et en Nuit douce", async ({ page }) => {
+test("à 390 px, en clair et en Nuit douce", async ({ browser, baseURL }) => {
+  const { contexte: chef, page } = await superadmin(browser, baseURL);
   await page.setViewportSize({ width: 390, height: 844 });
-  await connecter(page, SUPERADMIN_ESSAI, "/admin");
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   expect((await rail(page).boundingBox())?.width).toBeCloseTo(76, 0);
   expect(await deborde(page)).toBe(false);
@@ -359,4 +384,5 @@ test("à 390 px, en clair et en Nuit douce", async ({ page }) => {
   expect(await deborde(page)).toBe(false);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: "captures/admin-sombre.png", fullPage: true });
+  await chef.close();
 });
