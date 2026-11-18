@@ -13,7 +13,6 @@ import {
   lireAlertes,
   lireTout,
   modelesSansTarif,
-  personneDe,
   sansCouts,
   type LectureClient,
   soucis,
@@ -152,18 +151,6 @@ describe("la zone d'un client", () => {
       zoneClient(undefined, { zone: 3 })]).toEqual(["client", "suisse", null, null]);
     expect([horsCloudflare("client", porte), horsCloudflare("suisse", porte), horsCloudflare("europe", porte),
       horsCloudflare(null, porte), horsCloudflare("client", null)]).toEqual([true, true, false, false, false]);
-  });
-});
-
-describe("la personne d'une adresse", () => {
-  it("se décode une seule fois : un numéro, ou une personne venue par API, comme l'atelier les accepte", () => {
-    expect(["%2B41790000001", "+41790000001", "41790000001", "api:caisse:client-42", "api%3Acaisse%3Aclient-42"].map(personneDe))
-      .toEqual(["+41790000001", "+41790000001", "41790000001", "api:caisse:client-42", "api:caisse:client-42"]);
-  });
-
-  it("tapée à la main, mal formée ou qui remonterait l'adresse de l'atelier : rien", () => {
-    for (const x of ["..", ".", "%2E%2E", "%2e", "%E0%A4%A", "%", "abc", "", "12345", "+41 79 000 00 01", "api:Caisse:x", "api:caisse:12",
-      "%2B41790000001%2F..", "41790000001/..", "%252B41790000001"]) expect(personneDe(x), x).toBeNull();
   });
 });
 

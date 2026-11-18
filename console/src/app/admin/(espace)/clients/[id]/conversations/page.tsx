@@ -4,11 +4,13 @@ import { Bandeau } from "@/components/admin/erreurs";
 import { Tableau } from "@/components/admin/tableau";
 import { atelier, ouRefus, RefusChamps } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
+import { clePersonne } from "@/lib/admin/personnes";
 import { TA } from "@/lib/admin/textes";
 
 // L'onglet Conversations d'un client (conversations.lire) : les personnes qui ont écrit, la plus récente d'abord (l'ordre de
-// l'atelier), avec leur nombre de messages. Chacune ouvre son fil, en lecture seule. Une installation chez le client : la
-// phrase de l'atelier (les conversations ne la quittent jamais). Jamais mis en service : il n'en a pas.
+// l'atelier), avec leur nombre de messages. Chacune ouvre son fil, en lecture seule, par une adresse qui porte sa clé opaque
+// (personnes.ts), jamais son numéro. Une installation chez le client : la phrase de l'atelier (les conversations ne la
+// quittent jamais). Jamais mis en service : il n'en a pas.
 export default async function PageConversations({ params }: PageProps<"/admin/clients/[id]/conversations">) {
   const { id } = await params;
   await gardePage("conversations.lire", id);
@@ -20,7 +22,7 @@ export default async function PageConversations({ params }: PageProps<"/admin/cl
     if (r.statut === 404) notFound();
     return <Bandeau etat={r.statut === 409 ? "faint" : "accent"}>{r.message}</Bandeau>;
   }
-  const fil = (personne: string) => `/admin/clients/${encodeURIComponent(id)}/conversations/${encodeURIComponent(personne)}`;
+  const fil = (personne: string) => `/admin/clients/${encodeURIComponent(id)}/conversations/${clePersonne(id, personne)}`;
   return (
     <Tableau
       colonnes={[TA.personne, TA.messages, TA.dernierMessage]}
