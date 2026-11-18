@@ -79,9 +79,13 @@ export function peutDonnerRole(a: Acces, role: { id: string; droits: readonly Dr
   return peut(a, "equipe.gerer") && role.id !== SUPERADMIN && droitsTenus(a, role.droits);
 }
 
-/** Créer (roleId null) ou modifier un rôle : avec des droits qu'on a déjà, et jamais le rôle qu'on porte. */
+/**
+ * Créer (roleId null) ou modifier un rôle : avec des droits qu'on a déjà, et jamais le rôle qu'on porte.
+ * Un rôle vaut pour tous ses porteurs, quel que soit leur périmètre : limité à une liste de clients, on n'en écrit aucun.
+ */
 export function peutEcrireRole(a: Acces, droits: readonly Droit[], roleId: string | null): boolean {
   if (a.superadmin) return true;
+  if (a.perimetre !== "tous") return false;
   if (roleId !== null && (roleId === a.role.id || roleId === SUPERADMIN)) return false;
   return peut(a, "equipe.gerer") && droitsTenus(a, droits);
 }

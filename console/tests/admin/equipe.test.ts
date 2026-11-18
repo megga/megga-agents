@@ -88,6 +88,21 @@ describe("les rôles", () => {
   });
 });
 
+describe("un rôle vaut pour tous ses porteurs", () => {
+  it("sans être superadmin, un membre limité à une liste de clients n'écrit aucun rôle", () => {
+    const s = membre(db, { utilisateur: "s", role: "superadmin" });
+    const gestion = creerRole(db, s, { nom: "Gestion", droits: ["clients.voir", "equipe.gerer"] });
+    const petit = creerRole(db, s, { nom: "Petit", droits: ["clients.voir"] });
+    const m = membre(db, { utilisateur: "m", role: gestion.id, perimetre: ["a1"] });
+    expect(refus(() => creerRole(db, m, { nom: "Autre", droits: ["clients.voir"] }))).toMatchObject({ statut: 403, message: TA.escalade });
+    expect(refus(() => modifierRole(db, m, petit.id, { description: "Lire." }))).toMatchObject({ statut: 403, message: TA.escalade });
+    expect(refus(() => retirerRole(db, m, petit.id))).toMatchObject({ statut: 403, message: TA.escalade });
+    const t = membre(db, { utilisateur: "t", role: gestion.id });
+    expect(creerRole(db, t, { nom: "Autre", droits: ["clients.voir"] })).toMatchObject({ nom: "Autre", droits: ["clients.voir"] });
+    expect(modifierRole(db, t, petit.id, { description: "Lire." }).description).toBe("Lire.");
+  });
+});
+
 describe("les membres", () => {
   it("restent en cours jusqu'au dernier instant de leur fin d'accès", () => {
     expect([enCours(null, T0), enCours("2026-11-18", new Date("2026-11-18T23:59:59.999Z")), enCours("2026-11-18", new Date("2026-11-19T00:00:00Z"))])

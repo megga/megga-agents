@@ -60,6 +60,8 @@ describe("la non-escalade", () => {
     expect(peutDonnerRole(m, { id: "superadmin", droits: DROITS })).toBe(false);
     expect(peutEcrireRole(m, ["couts.voir"], null)).toBe(false);
     expect(peutEcrireRole(m, ["clients.voir"], "gestion")).toBe(false); // jamais le rôle qu'on porte
+    expect(peutEcrireRole(m, ["clients.voir"], null)).toBe(false); // un rôle vaut pour tous ses porteurs : limité à une liste, on n'en écrit aucun
+    expect(peutEcrireRole({ ...m, perimetre: "tous" }, ["clients.voir"], null)).toBe(true);
     expect(peutToucherMembre(m, { utilisateur: "m", role: "gestion" })).toBe(false);
     expect(peutToucherMembre(m, { utilisateur: "s", role: "superadmin" })).toBe(false);
     expect(peutToucherMembre(m, { utilisateur: "n", role: "x" })).toBe(true);
