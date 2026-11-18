@@ -116,10 +116,13 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
     const db = base();
     const params = await ctx.params;
     const corps = await lireCorps(requete);
-    let membre = false; // un inconnu (404) ne laisse aucun détail au journal
+    let membre = false; // un non-membre (404) ne laisse rien au journal : l'inscription est ouverte, le journal ne doit pas grossir de ses appels
     let precis: { detail: unknown } | null = null;
-    const detail = () => (!membre ? null : precis ? precis.detail : regle.detail ? regle.detail(corps, params) : corps);
-    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), detail);
+    const detail = () => (precis ? precis.detail : regle.detail ? regle.detail(corps, params) : corps);
+    const noterMembre = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), detail);
+    const noterIssue = (resultat: string) => {
+      if (membre) noterMembre(resultat);
+    };
     return issue(async () => {
       const acces = accesDe(db, s.user);
       if (!acces) throw new Refus(404, TA.introuvable);

@@ -176,18 +176,21 @@ describe("la garde des routes", () => {
     expect(lignes().map((l) => `${l.action} ${l.cible} ${l.resultat}`)).toEqual(["roles.retirer role:r ok"]);
   });
 
-  it("un inconnu ne remplit pas le journal ; un détail est borné à 2048 caractères", async () => {
-    compte(etat.db, { id: "c", courriel: "c@megga.test" });
+  it("un détail est borné à 2048 caractères", async () => {
     membre(etat.db, { utilisateur: "p", role: "exploitation", perimetre: ["garage-essai"] });
     const gros = { texte: "x".repeat(5000) };
-    expect((await appel("garage-essai", { qui: "c", corps: gros })).status).toBe(404);
     expect((await appel("garage-essai", { qui: "p", corps: gros })).status).toBe(200);
-    const [deP, deC] = lignes();
-    expect([deC.qui, deC.resultat, deC.detail]).toEqual(["c", "refuse 404", null]);
+    const [deP] = lignes();
     expect([deP.qui, deP.resultat]).toEqual(["p", "ok"]);
     const longueurs = etat.db.prepare("SELECT qui, length(detail) AS n FROM admin_journal ORDER BY id").all();
-    expect(longueurs).toEqual([{ qui: "c", n: null }, { qui: "p", n: 2048 }]);
+    expect(longueurs).toEqual([{ qui: "p", n: 2048 }]);
     expect(deP.detail).toBe(JSON.stringify(gros).slice(0, 2048));
+  });
+
+  it("un compte qui n'est pas membre reçoit 404 et ne laisse aucune ligne au journal", async () => {
+    compte(etat.db, { id: "c", courriel: "c@megga.test" });
+    for (let i = 0; i < 10; i++) expect((await appel("garage-essai", { qui: "c", corps: { n: i } })).status).toBe(404);
+    expect(etat.db.prepare("SELECT COUNT(*) AS n FROM admin_journal").get()).toEqual({ n: 0 });
   });
 
   it("une panne du journal ne casse pas un geste, réussi ou refusé", async () => {
