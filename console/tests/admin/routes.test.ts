@@ -1,32 +1,49 @@
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Droit } from "@/lib/admin/droits";
+import { DROITS, type Droit } from "@/lib/admin/droits";
 import { GARDE } from "@/lib/admin/garde";
 import { baseEssai, compte, membre, roleVide } from "./aides";
 
 // Toutes les routes de /api/admin passent par garde ou gardeSession : la liste ci-dessous est celle de la carte des fichiers
-// du plan ; une route sur le disque qui n'y est pas, ou une route qui n'est pas gardée, fait échouer l'essai.
+// du plan ; une route sur le disque qui n'y est pas, une route qui n'est pas gardée ou gardée par un autre droit, fait échouer
+// l'essai. Aucune Server Action (« use server ») sous l'admin : elle échapperait à la garde.
+
+const CONSOLE = join(__dirname, "../..");
+const API_ADMIN = join(CONSOLE, "src/app/api/admin");
 
 type Methode = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "session"; params: Record<string, string>; client: boolean }[] = [];
 
-/** Les route.ts d'un dossier, chemins relatifs (séparés par /) triés ; [] si le dossier n'existe pas encore. */
-export function routesSurDisque(dossier: string): string[] {
+/** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
+function fichiersDe(dossier: string, garder: (nom: string, chemin: string) => boolean): string[] {
   const racine = resolve(dossier);
   const parcourir = (d: string): string[] =>
     readdirSync(d).flatMap((n) => {
       const c = join(d, n);
-      return statSync(c).isDirectory() ? parcourir(c) : n === "route.ts" ? [relative(racine, c).split(sep).join("/")] : [];
+      return statSync(c).isDirectory() ? parcourir(c) : garder(n, c) ? [relative(racine, c).split(sep).join("/")] : [];
     });
-  try {
-    return parcourir(racine).sort();
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw e;
-  }
+  return parcourir(racine).sort();
+}
+
+/** Les route.ts, .tsx, .js et .mjs d'un dossier (un dossier absent est une erreur). */
+export function routesSurDisque(dossier: string): string[] {
+  return fichiersDe(dossier, (n) => /^route\.(ts|tsx|js|mjs)$/.test(n));
+}
+
+/** Les fichiers qui portent la directive « use server » (seule sur sa ligne, en tête de module ou de fonction). */
+function fichiersAvecUseServer(dossier: string): string[] {
+  return fichiersDe(dossier, (_, c) => /^\s*["']use server["']/m.test(readFileSync(c, "utf8")));
+}
+
+/** Un rôle qui a les treize droits sauf un ; rend son identifiant. */
+function roleSauf(db: DatabaseSync, droit: Droit): string {
+  const id = `sauf-${droit}`;
+  db.prepare("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, '', ?, 0, '', '')")
+    .run(id, id, JSON.stringify(DROITS.filter((d) => d !== droit)));
+  return id;
 }
 
 const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
@@ -58,26 +75,41 @@ function appeler(f: Gestionnaire, fichier: string, methode: Methode, params: Rec
 
 describe("les routes de /api/admin", () => {
   it("sont toutes dans la liste", () => {
-    expect(routesSurDisque("src/app/api/admin")).toEqual(ROUTES.map((r) => r.fichier).sort());
+    // Avant la première route, le dossier n'existe pas encore : la liste doit alors être vide.
+    const surDisque = existsSync(API_ADMIN) ? routesSurDisque(API_ADMIN) : [];
+    expect(surDisque).toEqual(ROUTES.map((r) => r.fichier).sort());
   });
 
-  it("se trouvent sur le disque, à toute profondeur, sans les pages", () => {
+  it("se trouvent sur le disque, à toute profondeur, en .ts, .tsx, .js ou .mjs, sans les pages ; un dossier absent est une erreur", () => {
     const d = mkdtempSync(join(tmpdir(), "routes-admin-"));
     try {
-      for (const f of ["a/route.ts", "b/c/route.ts", "b/page.tsx"]) {
+      const fichiers = { "a/route.ts": "", "b/c/route.ts": "", "b/page.tsx": "", "d/route.js": "", "e/route.tsx": "", "f/route.mjs": "",
+        "g/route.test.ts": "", "h/routes.ts": "", "i/actions.ts": '"use server";\nexport async function f() {}',
+        "j/page.tsx": "export default function P() {\n  async function agir() {\n    'use server';\n  }\n}", "k/notes.ts": "// ici, pas de 'use server'" };
+      for (const [f, contenu] of Object.entries(fichiers)) {
         mkdirSync(dirname(join(d, f)), { recursive: true });
-        writeFileSync(join(d, f), "");
+        writeFileSync(join(d, f), contenu);
       }
-      expect(routesSurDisque(d)).toEqual(["a/route.ts", "b/c/route.ts"]);
-      expect(routesSurDisque(join(d, "absent"))).toEqual([]);
+      expect(routesSurDisque(d)).toEqual(["a/route.ts", "b/c/route.ts", "d/route.js", "e/route.tsx", "f/route.mjs"]);
+      expect(() => routesSurDisque(join(d, "absent"))).toThrow();
+      expect(fichiersAvecUseServer(d)).toEqual(["i/actions.ts", "j/page.tsx"]);
     } finally {
       rmSync(d, { recursive: true, force: true });
     }
   });
 
+  it("n'ont pas d'écriture hors des routes : aucun « use server » sous l'admin", () => {
+    for (const d of ["src/app/admin", "src/components/admin", "src/app/api/admin"]) {
+      const dossier = join(CONSOLE, d);
+      if (!existsSync(dossier)) continue; // pas encore écrit : rien à craindre
+      expect(fichiersAvecUseServer(dossier), d).toEqual([]);
+    }
+  });
+
   for (const r of ROUTES) {
-    it(`${r.fichier} : gardée, 401 sans session, 404 sans être membre, 403 sans le droit, 404 hors périmètre`, async () => {
-      const route = (await import(/* @vite-ignore */ resolve("src/app/api/admin", r.fichier))) as Record<string, unknown>;
+    it(`${r.fichier} : gardée, 401 sans session, 404 sans être membre, 403 sans son droit, 404 hors périmètre`, async () => {
+      const route = (await import(/* @vite-ignore */ join(API_ADMIN, r.fichier))) as Record<string, unknown>;
+      if (r.droit !== "session") membre(etat.db, { utilisateur: "presque", role: roleSauf(etat.db, r.droit) });
       const exportees = Object.keys(route).filter((k) => ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(k));
       expect(exportees.sort()).toEqual([...r.methodes].sort());
       for (const m of r.methodes) {
@@ -86,7 +118,8 @@ describe("les routes de /api/admin", () => {
         expect((await appeler(f, r.fichier, m, r.params, null)).status, `${m} sans session`).toBe(401);
         if (r.droit === "session") continue;
         expect((await appeler(f, r.fichier, m, r.params, "inconnu")).status, `${m} sans être membre`).toBe(404);
-        expect((await appeler(f, r.fichier, m, r.params, "vide")).status, `${m} sans le droit`).toBe(403);
+        expect((await appeler(f, r.fichier, m, r.params, "vide")).status, `${m} sans aucun droit`).toBe(403);
+        expect((await appeler(f, r.fichier, m, r.params, "presque")).status, `${m} avec tous les droits sauf ${r.droit}`).toBe(403);
         if (r.client) {
           const dehors = { ...r.params, id: "boulangerie-essai" };
           expect((await appeler(f, r.fichier, m, dehors, "limite")).status, `${m} hors périmètre`).toBe(404);
