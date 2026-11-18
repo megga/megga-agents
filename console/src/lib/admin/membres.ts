@@ -81,11 +81,15 @@ export function enCours(finAcces: string | null, maintenant: Date): boolean {
   return maintenant.getTime() <= new Date(`${finAcces}T23:59:59.999Z`).getTime();
 }
 
+/** Une vraie date AAAA-MM-JJ (ni 2026-02-30, ni 31.12.2026). */
+export function estJour(v: unknown): v is string {
+  return typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().startsWith(v);
+}
+
 /** Une fin d'accès lue dans un corps : null, ou une vraie date AAAA-MM-JJ. */
 export function lireFinAcces(v: unknown): string | null {
   if (v === null) return null;
-  const ok = typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) && new Date(v).toISOString().startsWith(v);
-  if (!ok) throw new Refus(400, TA.finAccesInvalide);
+  if (!estJour(v)) throw new Refus(400, TA.finAccesInvalide);
   return v;
 }
 
