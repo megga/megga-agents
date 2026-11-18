@@ -1,10 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Refus } from "@/lib/agents";
 import {
+  aPuDonner,
   droitsEffectifs,
   lirePerimetre,
-  perimetreInclus,
-  peutDonnerRole,
   peutToucherMembre,
   type Acces,
   type Perimetre,
@@ -168,14 +167,12 @@ function superadminsEnCours(db: DatabaseSync, maintenant: Date): number {
 
 /**
  * Le membre que a veut changer. Sans être superadmin : ni sa propre ligne, ni un superadmin (peutToucherMembre),
- * ni un membre dont le rôle ou le périmètre dépasse les siens (il n'aurait pas pu l'inviter).
+ * ni un membre dont le rôle ou le périmètre dépasse les siens (il n'aurait pas pu l'inviter : aPuDonner).
  */
 function membreAToucher(db: DatabaseSync, a: Acces, utilisateur: string): Membre {
   const cible = lireMembre(db, utilisateur);
   if (!cible) throw new Refus(404, TA.membreInconnu);
-  if (!peutToucherMembre(a, cible)) throw new Refus(403, TA.escalade);
-  const role = lireRole(db, cible.role);
-  if (!a.superadmin && (!role || !peutDonnerRole(a, role) || !perimetreInclus(a, cible.perimetre))) throw new Refus(403, TA.escalade);
+  if (!peutToucherMembre(a, cible) || !aPuDonner(a, lireRole(db, cible.role), cible.perimetre)) throw new Refus(403, TA.escalade);
   return cible;
 }
 
@@ -188,9 +185,8 @@ export function modifierMembre(db: DatabaseSync, a: Acces, utilisateur: string, 
   const cible = membreAToucher(db, a, utilisateur);
   const c = (corps && typeof corps === "object" ? corps : {}) as Record<string, unknown>;
   const role = c.role === undefined ? undefined : roleExistant(db, c.role);
-  if (role && !peutDonnerRole(a, role)) throw new Refus(403, TA.escalade);
   const perimetre = c.perimetre === undefined ? cible.perimetre : lirePerimetre(c.perimetre, cible.externe);
-  if (c.perimetre !== undefined && !perimetreInclus(a, perimetre)) throw new Refus(403, TA.escalade);
+  if (!aPuDonner(a, role ?? lireRole(db, cible.role), perimetre)) throw new Refus(403, TA.escalade);
   const finAcces = c.finAcces === undefined ? cible.finAcces : lireFinAcces(c.finAcces);
   const nouveauRole = role?.id ?? cible.role;
   const r = regleMembre(nouveauRole, cible.externe, perimetre, finAcces);

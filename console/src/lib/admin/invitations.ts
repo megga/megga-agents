@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { Refus } from "@/lib/agents";
-import { lirePerimetre, perimetreInclus, peutDonnerRole, type Acces, type Perimetre } from "./acces";
+import { aPuDonner, lirePerimetre, type Acces, type Perimetre } from "./acces";
 import { SUPERADMIN } from "./droits";
 import {
   ajouterMembre,
@@ -83,7 +83,7 @@ export function creerInvitation(db: DatabaseSync, a: Acces | null, corps: unknow
   const role = roleExistant(db, c.role);
   const externe = c.externe === true;
   const regle = regleMembre(role.id, externe, lirePerimetre(c.perimetre ?? "tous", externe), lireFinAcces(c.finAcces ?? null));
-  if (a && (!peutDonnerRole(a, role) || !perimetreInclus(a, regle.perimetre))) throw new Refus(403, TA.escalade);
+  if (a && !aPuDonner(a, role, regle.perimetre)) throw new Refus(403, TA.escalade);
   const jeton = randomBytes(32).toString("base64url");
   const id = "in_" + randomUUID().replace(/-/g, "").slice(0, 20);
   const valable = new Date(maintenant.getTime() + DUREE_INVITATION_JOURS * 24 * 3600 * 1000);
@@ -123,8 +123,7 @@ export function retirerInvitation(db: DatabaseSync, a: Acces, id: string, mainte
   const l = db.prepare(`SELECT * FROM admin_invitation WHERE id = ? AND ${EN_ATTENTE}`).get(id, maintenant.toISOString()) as Ligne | undefined;
   if (!l) throw new Refus(404, TA.invitationInvalide);
   const i = versInvitation(l);
-  const role = lireRole(db, i.role);
-  if (!a.superadmin && (!role || !peutDonnerRole(a, role) || !perimetreInclus(a, i.perimetre))) throw new Refus(403, TA.escalade);
+  if (!aPuDonner(a, lireRole(db, i.role), i.perimetre)) throw new Refus(403, TA.escalade);
   db.prepare("UPDATE admin_invitation SET retiree_le = ? WHERE id = ?").run(maintenant.toISOString(), id);
 }
 

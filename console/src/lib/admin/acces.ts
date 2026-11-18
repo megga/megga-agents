@@ -91,8 +91,8 @@ export function peutDonnerRole(a: Acces, role: { id: string; droits: readonly Dr
 }
 
 /**
- * Ce qu'on aurait pu donner soi-même (un rôle et un périmètre) : la règle de membres.ts et invitations.ts pour toucher à
- * un membre ou retirer une invitation, ici pour que l'écran ne montre que les gestes qui passeront.
+ * Ce qu'on aurait pu donner soi-même (un rôle et un périmètre) : la seule écriture de la règle de non-escalade pour
+ * inviter, toucher à un membre ou retirer une invitation (membres.ts, invitations.ts) ; l'écran la suit aussi.
  */
 export function aPuDonner(a: Acces, role: { id: string; droits: readonly Droit[] } | undefined, p: Perimetre): boolean {
   return a.superadmin || (!!role && peutDonnerRole(a, role) && perimetreInclus(a, p));
