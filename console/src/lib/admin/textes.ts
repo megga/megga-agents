@@ -409,7 +409,6 @@ export const TA = {
   modeleMetier: "Modèle par métier",
   prenomAgent: "Prénom de l'agent",
   prenomAgentAide: "Vide : le prénom ne change pas.",
-  essayer: "Essayer",
   essaiTitre: (n: number) => `Essayer la version ${n}`,
   essaiConsomme: "Un essai consomme des jetons de modèle, comme une vraie conversation. Rien ne part sur WhatsApp.",
   roleEssai: "Rôle",
