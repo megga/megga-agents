@@ -1,12 +1,13 @@
 name: console
 
 # La console MEGGA (console/) : à part de tests.yml, que d'autres lots modifient.
+# L'atelier d'essai de l'admin (console/agents/atelier_essai.py) lance le vrai atelier et lit le noyau : leurs changements la relancent.
 on:
   pull_request:
-    paths: ["console/**", ".github/workflows/console.yml"]
+    paths: ["console/**", "atelier/**", "noyau/**", ".github/workflows/console.yml"]
   push:
     branches: [main]
-    paths: ["console/**", ".github/workflows/console.yml"]
+    paths: ["console/**", "atelier/**", "noyau/**", ".github/workflows/console.yml"]
 
 permissions:
   contents: read
