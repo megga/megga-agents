@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { atelier, atelierBranche, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps, tailleGarde } from "@/lib/admin/atelier";
+import { atelier, atelierBranche, ATTENTE_ACTIVER_MS, ATTENTE_ESSAI_MS, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps, tailleGarde }
+  from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
 import { refusAsync } from "./aides";
 
@@ -117,6 +118,29 @@ describe("les appels", () => {
     expect(fini).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await attente).toMatchObject({ statut: 504, message: TA.atelierLent });
+  });
+
+  it("un essai attend ATTENTE_ESSAI_MS et une mise en service ATTENTE_ACTIVER_MS, puis 504 ; une autre écriture, ATTENTE_MS", async () => {
+    expect([ATTENTE_MS, ATTENTE_ACTIVER_MS, ATTENTE_ESSAI_MS]).toEqual([10_000, 60_000, 120_000]);
+    vi.useFakeTimers();
+    fetchSimule.mockImplementation(
+      (_: string, init: RequestInit) => new Promise((_ok, non) => init.signal?.addEventListener("abort", () => non(init.signal?.reason))),
+    );
+    const finis: string[] = [];
+    const suivre = (nom: string, p: Promise<unknown>) => p.then((e) => (finis.push(nom), e));
+    const valider = suivre("valider", refusAsync(() => atelier.valider("garage-essai", {})));
+    const activer = suivre("activer", refusAsync(() => atelier.activer("garage-essai", 2, {})));
+    const essai = suivre("essai", refusAsync(() => atelier.essai("garage-essai", 2, { message: "x" })));
+    await vi.advanceTimersByTimeAsync(ATTENTE_MS);
+    expect(await valider).toMatchObject({ statut: 504 });
+    await vi.advanceTimersByTimeAsync(ATTENTE_ACTIVER_MS - ATTENTE_MS - 1);
+    expect(finis).toEqual(["valider"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await activer).toMatchObject({ statut: 504, message: TA.atelierLent });
+    await vi.advanceTimersByTimeAsync(ATTENTE_ESSAI_MS - ATTENTE_ACTIVER_MS - 1);
+    expect(finis).toEqual(["valider", "activer"]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await essai).toMatchObject({ statut: 504, message: TA.atelierLent });
   });
 
   it("pour un écran, un refus se rend au lieu de lever, même sans ATELIER_URL", async () => {

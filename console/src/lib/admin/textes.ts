@@ -171,6 +171,9 @@ export const TA = {
     "roles.retirer": "Retirer un rôle",
     "tarifs.regler": "Changer les tarifs",
     "conversations.lire": "Lire une conversation",
+    "versions.preparer": "Préparer une version",
+    "versions.essayer": "Essayer une version",
+    "clients.activer": "Mettre en service",
   } as Record<string, string>,
 
   // Les onglets d'un client
@@ -354,6 +357,8 @@ export const TA = {
   reglagesReserves: (champs: string) => `Réglages réservés à MEGGA : ${champs}.`,
   voixIdentifiant: "La voix se donne par son identifiant, ou null pour aucune.",
   gabaritReserve: "Un modèle par métier ne s'applique que par un membre interne de MEGGA.",
+  numeroInvalide: "Numéro de version invalide : un entier positif.",
+  baseInvalide: "Base invalide : le numéro d'une version.",
 
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {

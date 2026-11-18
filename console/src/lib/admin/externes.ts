@@ -2,6 +2,7 @@ import { Refus } from "@/lib/agents";
 import type { Acces } from "./acces";
 import type { Catalogue } from "./atelier";
 import { TA } from "./textes";
+import { numeroVersion } from "./versions";
 
 // Le brouillon d'un externe : seulement les réglages simples d'un client (les champs_client du catalogue de l'atelier).
 // L'atelier, appelé avec le jeton de MEGGA, accepterait tout : la console tient donc elle-même la règle qu'atelier/regles.py
@@ -40,4 +41,31 @@ export function corpsVersion(a: Acces, corps: unknown, base: Record<string, unkn
   if (!a.externe) return corps;
   if (Object.hasOwn(corps, "gabarit")) throw new Refus(403, TA.gabaritReserve);
   return { ...(Object.hasOwn(corps, "base") ? { base: corps.base } : {}), changements: changementsExterne(corps.changements, base, catalogue) };
+}
+
+/** Ce que corpsPourAtelier lit de l'atelier (atelier.ts) : remplaçable dans les essais. */
+type Lecteur = {
+  client: (id: string) => Promise<{ derniere_version: number | null }>;
+  version: (id: string, n: number) => Promise<{ config?: Record<string, unknown> }>;
+  catalogue: () => Promise<CatalogueSimple>;
+};
+
+const SANS_CATALOGUE: CatalogueSimple = { metiers: {}, champs_client: [] };
+
+/**
+ * Le corps d'une version prêt pour l'atelier (valider, préparer). Un membre interne, ou un corps que corpsVersion refuse
+ * d'emblée (pas un objet ; un externe qui demande un modèle par métier) : rien à lire. Un externe : la base de son filtre est
+ * la version qu'il nomme (corps.base, un numéro), sinon la dernière du client, celle que l'atelier prend par défaut.
+ */
+export async function corpsPourAtelier(a: Acces, id: string, corps: unknown, l: Lecteur): Promise<Record<string, unknown>> {
+  if (!a.externe || !estObjet(corps) || Object.hasOwn(corps, "gabarit")) return corpsVersion(a, corps, {}, SANS_CATALOGUE);
+  let n: number | null;
+  if (corps.base == null) n = (await l.client(id)).derniere_version;
+  else {
+    n = typeof corps.base === "number" ? numeroVersion(corps.base) : null;
+    if (n === null) throw new Refus(400, TA.baseInvalide);
+  }
+  if (n === null) throw new Refus(404, TA.introuvable); // aucune version : l'atelier n'aurait pas de base non plus
+  const [v, catalogue] = await Promise.all([l.version(id, n), l.catalogue()]);
+  return corpsVersion(a, corps, v.config ?? {}, catalogue);
 }

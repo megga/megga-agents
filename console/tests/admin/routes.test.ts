@@ -23,6 +23,12 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "ses
   { fichier: "equipe/roles/[id]/route.ts", methodes: ["PATCH", "DELETE"], droit: "equipe.gerer", params: { id: "lecture" }, client: false },
   { fichier: "invitation/route.ts", methodes: ["POST"], droit: "session", params: {}, client: false },
   { fichier: "tarifs/route.ts", methodes: ["PUT"], droit: "tarifs.regler", params: {}, client: false },
+  { fichier: "clients/[id]/valider/route.ts", methodes: ["POST"], droit: "versions.preparer", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/versions/route.ts", methodes: ["POST"], droit: "versions.preparer", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/versions/[numero]/essai/route.ts", methodes: ["POST"], droit: "versions.preparer", params: { id: "garage-essai", numero: "1" },
+    client: true },
+  { fichier: "clients/[id]/versions/[numero]/activer/route.ts", methodes: ["POST"], droit: "clients.piloter", params: { id: "garage-essai", numero: "1" },
+    client: true },
 ];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
