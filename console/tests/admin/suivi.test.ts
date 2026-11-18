@@ -11,6 +11,7 @@ import {
   horsCloudflare,
   joursDe,
   lireAlertes,
+  lireSuivis,
   lireTout,
   modelesSansTarif,
   sansCouts,
@@ -271,6 +272,32 @@ describe("la lecture de tous les clients", () => {
     expect(avec.activite.map((x) => x.cout)).toEqual([1.5, 1.5]);
     // Même si une lecture avait gardé ses coûts, agreger ne les montre pas sans le droit.
     expect("cout" in agreger(lues, sansCout).tuiles).toBe(false);
+  });
+
+  it("les coûts illisibles ({ erreur }) : les clients nommés, avec couts.voir seulement", () => {
+    const lues: LectureClient[] = [
+      { client: client("a1"), suivi: suiviDe("a1", 7, 1.5) },
+      { client: client("b2"), suivi: { ...suiviDe("b2", 7), couts: { erreur: "activité illisible" } } },
+      { client: client("c3"), erreur: TA.atelierLent },
+    ];
+    expect(agreger(lues, tous).coutsIllisibles).toEqual(["b2"]);
+    expect(agreger(lues, tous).tuiles.cout?.total).toBe(1.5);
+    expect(agreger(lues, sansCout).coutsIllisibles).toEqual([]);
+    expect(agreger([lues[1]], tous)).toMatchObject({ coutsIllisibles: ["b2"] });
+    expect("cout" in agreger([lues[1]], tous).tuiles).toBe(false);
+  });
+
+  it("la lecture des seuls suivis (l'écran Tarifs) : aucune alerte lue, le périmètre et les clients jamais mis en service tenus", async () => {
+    const { l, appels, max } = lecteur(["a1", "b2", "j1", "c3", "d4", "e5"], { echec: "b2", jamais: ["j1"] });
+    const { lectures, porte } = await lireSuivis(tous, 30, { clients: l.clients, suivi: l.suivi });
+    expect(appels.sort()).toEqual(["suivi a1", "suivi b2", "suivi c3", "suivi d4", "suivi e5"]);
+    expect(max()).toBeLessThanOrEqual(4);
+    expect([porte, lectures.map((x) => [x.client.id, !!x.suivi, x.alertes ?? null, x.erreur ?? null])]).toEqual([true, [
+      ["a1", true, null, null], ["b2", false, null, TA.atelierLent], ["j1", false, null, null], ["c3", true, null, null],
+      ["d4", true, null, null], ["e5", true, null, null]]]);
+    const seul = lecteur(["a1", "b2"]);
+    await lireSuivis(acces({ droits: ["clients.voir", "couts.voir"], perimetre: ["a1"] }), 7, seul.l);
+    expect(seul.appels).toEqual(["suivi a1"]);
   });
 
   it("la vue d'ensemble : les soucis en cours comptés, à surveiller le plus grave d'abord", async () => {

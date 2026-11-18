@@ -4,13 +4,14 @@ import { Tuile } from "@/components/admin/tuile";
 import { peut } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type Tarifs } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
-import { lireTout, modelesSansTarif } from "@/lib/admin/suivi";
+import { lireSuivis, modelesSansTarif } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 import { FormTarifs } from "./tarifs";
 
 // Les tarifs (couts.voir pour lire, tarifs.regler pour les changer) : la devise ; par modèle, l'entrée, la sortie, le cache
 // lu et écrit, par million de jetons ; la voix pour 1000 caractères ; l'écoute par vocal. Les modèles vus sans tarif dans
-// l'activité des 30 derniers jours (des seuls clients du périmètre) sont signalés, et proposés à l'ajout à qui peut régler.
+// l'activité des 30 derniers jours (les seuls suivis des clients du périmètre, sans leurs alertes) sont signalés, et proposés
+// à l'ajout à qui peut régler.
 
 const prix = (n: number | null) =>
   n === null ? <span className="text-faint">{TA.sansTarifCourt}</span> : <span className="whitespace-nowrap tabular-nums">{TA.montant(n)}</span>;
@@ -52,7 +53,7 @@ function LectureTarifs({ tarifs: t, sansTarif }: { tarifs: Tarifs; sansTarif: st
 export default async function PageTarifs() {
   const a = await gardePage("couts.voir");
   const titre = <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.tarifs}</h1>;
-  const [t, lu] = await Promise.all([ouRefus(atelier.tarifs()), ouRefus(lireTout(a, 30, atelier))]);
+  const [t, lu] = await Promise.all([ouRefus(atelier.tarifs()), ouRefus(lireSuivis(a, 30, atelier))]);
   if (t instanceof RefusChamps) {
     return (
       <>

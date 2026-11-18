@@ -7,12 +7,13 @@ import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, etiquette } from "@/components/admin/formulaire";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { ChampErreur, Tarifs } from "@/lib/admin/atelier";
+import type { Tarifs } from "@/lib/admin/atelier";
+import type { ChampErreur } from "@/lib/admin/champs";
 import { TA } from "@/lib/admin/textes";
 
 // Changer les tarifs (tarifs.regler) : la devise, chaque modèle (entrée, sortie, cache lu et écrit, par million de jetons),
-// la voix et l'écoute. Les modèles vus dans l'activité sans tarif s'ajoutent d'un clic. L'atelier valide le tout et dit ce
-// qui ne va pas, champ par champ ; la console n'en juge pas avant lui.
+// la voix et l'écoute. Les modèles vus dans l'activité sans tarif s'ajoutent d'un clic, un modèle se retire (l'envoi remplace
+// toute la grille). L'atelier valide le tout et dit ce qui ne va pas, champ par champ ; la console n'en juge pas avant lui.
 
 type Ligne = { modele: string; entree: string; sortie: string; cache_lecture: string; cache_ecriture: string };
 type CleTarif = Exclude<keyof Ligne, "modele">;
@@ -85,6 +86,11 @@ export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: str
     setFait(false);
   }
 
+  function retirer(i: number) {
+    setLignes((l) => l.filter((_, j) => j !== i));
+    setFait(false);
+  }
+
   function ajouter(modele: string) {
     setLignes((l) => [...l, { modele, entree: "", sortie: "", cache_lecture: "", cache_ecriture: "" }]);
     setFait(false);
@@ -108,6 +114,7 @@ export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: str
   }
 
   const aAjouter = proposes.filter((m) => !lignes.some((l) => l.modele === m));
+  const enDevise = devise.trim() || tarifs.devise; // la devise que l'on tape ; vide, celle enregistrée
 
   return (
     <form noValidate onSubmit={enregistrer} className="flex flex-col gap-5">
@@ -119,12 +126,18 @@ export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: str
 
       <div className="flex flex-col gap-1">
         <h2 className={titre2}>{TA.parModele}</h2>
-        <p className={sousTitre}>{TA.parMillion(tarifs.devise)}</p>
+        <p className={sousTitre}>{TA.parMillion(enDevise)}</p>
       </div>
       {!lignes.length && <p className="trait m-0 rounded-2xl bg-bg px-4 py-6 text-center text-[14px] text-faint">{TA.videTarifs}</p>}
       {lignes.map((l, i) => (
         <fieldset key={l.modele} className="trait m-0 flex min-w-0 flex-col gap-3 rounded-2xl bg-bg px-4 pt-3 pb-4">
-          <legend className="float-left w-full text-[15px] font-bold break-all">{l.modele}</legend>
+          <legend className="float-left flex w-full items-center gap-2">
+            <span className="mr-auto min-w-0 text-[15px] font-bold break-all">{l.modele}</span>
+            <button type="button" onClick={() => retirer(i)} aria-label={TA.retirerModele(l.modele)}
+              className="trait flex-none rounded-full bg-bg px-3 py-1 text-[13px] font-semibold text-ink hover:bg-hover">
+              {TA.retirer}
+            </button>
+          </legend>
           <div className="grid grid-cols-2 gap-3 min-[900px]:grid-cols-4">
             {COLONNES.map((c) => (
               <ChampTarif key={c.cle} id={`tarif-${i}-${c.cle}`} titre={c.texte} valeur={l[c.cle]} onChange={(v) => changer(i, c.cle, v)} />
@@ -145,8 +158,8 @@ export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: str
 
       <h2 className={titre2}>{TA.voixEtEcoute}</h2>
       <div className="grid gap-3 min-[700px]:grid-cols-2">
-        <ChampTarif id="tarif-voix" titre={TA.tarifVoix} valeur={voix} aide={TA.aideTarif(tarifs.devise)} onChange={(v) => { setVoix(v); setFait(false); }} />
-        <ChampTarif id="tarif-ecoute" titre={TA.tarifEcoute} valeur={ecoute} aide={TA.aideTarif(tarifs.devise)} onChange={(v) => { setEcoute(v); setFait(false); }} />
+        <ChampTarif id="tarif-voix" titre={TA.tarifVoix} valeur={voix} aide={TA.aideTarif(enDevise)} onChange={(v) => { setVoix(v); setFait(false); }} />
+        <ChampTarif id="tarif-ecoute" titre={TA.tarifEcoute} valeur={ecoute} aide={TA.aideTarif(enDevise)} onChange={(v) => { setEcoute(v); setFait(false); }} />
       </div>
 
       <ErreursChamps erreur={refus?.erreur ?? null} champs={refus?.champs} />

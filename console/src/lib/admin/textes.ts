@@ -16,6 +16,8 @@ const INSTANT = new Intl.DateTimeFormat("fr-CH", {
 const NOMBRE = new Intl.NumberFormat("fr-CH");
 /** Un montant : deux décimales au moins, six au plus (un tarif peut être très petit, un coût est arrondi à quatre). */
 const MONTANT = new Intl.NumberFormat("fr-CH", { minimumFractionDigits: 2, maximumFractionDigits: 6 });
+/** Une valeur inconnue ou illisible (un instant, un coût) : un tiret court. */
+const INCONNU = "-";
 
 /** Un jour AAAA-MM-JJ s'écrit JJ.MM.AAAA, sans fuseau ; autre chose reste tel quel. */
 function jour(v: string): string {
@@ -307,7 +309,8 @@ export const TA = {
   videActivite: "Aucune activité lue sur la période.",
   injoignables: (clients: string) => `Ces clients ne répondent pas : ${clients}.`,
   /** Un instant en secondes depuis 1970 (ceux de l'atelier), à l'heure de Zurich ; inconnu (nul, illisible), un tiret court. */
-  moment: (secondes: number | null) => (typeof secondes === "number" && Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : "-"),
+  moment: (secondes: number | null) => (typeof secondes === "number" && Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : INCONNU),
+  inconnu: INCONNU,
 
   // Les coûts et les tarifs (couts.voir ; tarifs.regler pour les changer)
   couts: "Coûts",
@@ -316,10 +319,12 @@ export const TA = {
   coutEn: (devise: string) => `Coût en ${devise}`,
   tarifEn: (devise: string) => `Tarif en ${devise}`,
   montant: (n: number) => MONTANT.format(n),
+  montantEn: (n: number, devise: string) => `${MONTANT.format(n)} ${devise}`,
   /** Un poste des coûts : un modèle par son identifiant, la voix et l'écoute dites en clair. */
   nomPoste: (poste: string) => (poste === "ecoute" ? "écoute" : poste),
   sansTarif: (postes: string) => `Sans tarif, donc pas compté : ${postes}.`,
   aucunPoste: "Rien de compté sur la période.",
+  coutsIllisibles: (clients: string) => `Coûts illisibles, absents du total : ${clients}.`,
   devise: "Devise",
   parMillion: (devise: string) => `Par million de jetons, en ${devise}.`,
   voixEtEcoute: "La voix et l'écoute",
@@ -330,6 +335,7 @@ export const TA = {
   videTarifs: "Aucun modèle n'a encore de tarif.",
   vusSansTarif: "Vus dans l'activité, sans tarif :",
   ajouterModele: (modele: string) => `Ajouter ${modele}`,
+  retirerModele: (modele: string) => `Retirer ${modele}`,
   tarifsEnregistres: "Tarifs enregistrés.",
   tarifsInvalides: "Tarifs invalides : un objet attendu.",
 

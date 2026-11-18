@@ -12,7 +12,8 @@ import { TA } from "@/lib/admin/textes";
 
 // La vue d'ensemble. Le bloc du moteur (clients.voir) : la période, les tuiles, « À surveiller », « Activité par client »,
 // tout borné au périmètre du membre (lireTout ne lit que ses clients). Un client injoignable est dit, les autres restent.
-// Avec couts.voir, la tuile et la colonne du coût, et ce qui n'a pas de tarif. Sans clients.voir, la page n'a que son titre.
+// Avec couts.voir, la tuile et la colonne du coût, ce qui n'a pas de tarif et les clients dont le coût est illisible (absents
+// du total). Sans clients.voir, la page n'a que son titre.
 
 /** Les soucis d'un client, un par genre : ceux en cours d'abord, puis les plus nombreux. */
 function parGenre(soucis: Souci[]): { genre: string; enCours: boolean; nombre: number }[] {
@@ -30,7 +31,8 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
   const r = await ouRefus(lireTout(a, jours, atelier));
   if (r instanceof RefusChamps) return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   const v = agreger(r.lectures, a);
-  const cout = v.tuiles.cout; // seulement avec couts.voir (agreger)
+  const voitCouts = peut(a, "couts.voir");
+  const cout = v.tuiles.cout; // seulement avec couts.voir et au moins un coût lisible (agreger)
   const noms = new Map(r.lectures.map((l) => [l.client.id, l.client.entreprise || l.client.id]));
   const lien = (id: string, onglet = "") => (
     <Link href={`/admin/clients/${encodeURIComponent(id)}${onglet}?jours=${jours}`} className="font-bold text-ink hover:underline">
@@ -41,12 +43,13 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
     <>
       <ChoixPeriode jours={jours} chemin="/admin" />
       {v.injoignables.length > 0 && <Bandeau etat="warn">{TA.injoignables(v.injoignables.map((id) => noms.get(id)).join(", "))}</Bandeau>}
+      {v.coutsIllisibles.length > 0 && <Bandeau etat="warn">{TA.coutsIllisibles(v.coutsIllisibles.map((id) => noms.get(id)).join(", "))}</Bandeau>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
         <Tuile titre={TA.clientsEnService} valeur={TA.nombre(v.tuiles.enService)} />
         <Tuile titre={TA.soucisEnCours} valeur={TA.nombre(v.tuiles.soucisEnCours)} etat={v.tuiles.soucisEnCours > 0 ? "accent" : "ok"} />
         <Tuile titre={TA.tours} valeur={TA.nombre(v.tuiles.tours)} />
         <Tuile titre={TA.personnes} valeur={TA.nombre(v.tuiles.personnes)} />
-        {cout && <Tuile titre={TA.coutEn(cout.devise)} valeur={TA.montant(cout.total)} />}
+        {voitCouts && <Tuile titre={TA.cout} valeur={cout ? TA.montantEn(cout.total, cout.devise) : TA.inconnu} />}
       </div>
       {!!cout?.sansTarif.length && <Bandeau etat="warn">{TA.sansTarif(cout.sansTarif.map(TA.nomPoste).join(", "))}</Bandeau>}
       <h2 className="m-0 text-[17px] font-extrabold">{TA.aSurveiller}</h2>
@@ -65,15 +68,15 @@ async function BlocMoteur({ jours, a }: { jours: Jours; a: Acces }) {
       />
       <h2 className="m-0 text-[17px] font-extrabold">{TA.activiteParClient}</h2>
       <Tableau
-        colonnes={[TA.client, TA.tours, TA.personnes, TA.echecs, TA.secours, ...(cout ? [TA.coutEn(cout.devise)] : [])]}
+        colonnes={[TA.client, TA.tours, TA.personnes, TA.echecs, TA.secours, ...(voitCouts ? [cout ? TA.coutEn(cout.devise) : TA.cout] : [])]}
         vide={TA.videActivite}
-        replier={cout ? [1, 2, 3, 4, 5] : [1, 2, 3, 4]}
+        replier={voitCouts ? [1, 2, 3, 4, 5] : [1, 2, 3, 4]}
         lignes={v.activite.map((x) => [
           <span key="client">{lien(x.client)}</span>,
           ...[x.tours, x.personnes, x.echecs, x.secours].map((n, i) => (
             <span key={i} className={"tabular-nums " + (i === 2 && n > 0 ? "font-semibold text-warn" : "")}>{TA.nombre(n)}</span>
           )),
-          ...(cout ? [<span key="cout" className="whitespace-nowrap tabular-nums">{x.cout === undefined ? "-" : TA.montant(x.cout)}</span>] : []),
+          ...(voitCouts ? [<span key="cout" className="whitespace-nowrap tabular-nums">{x.cout === undefined ? TA.inconnu : TA.montant(x.cout)}</span>] : []),
         ])}
       />
     </>

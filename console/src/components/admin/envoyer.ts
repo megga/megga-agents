@@ -1,16 +1,12 @@
+import { estChamp, type ChampErreur } from "@/lib/admin/champs";
 import { TA } from "@/lib/admin/textes";
-
-type Champ = { champ: string; message: string };
 
 /** Le refus d'une route : sa phrase, et pour un refus de l'atelier, ses messages champ par champ (ErreursChamps). */
 export class RefusEnvoi extends Error {
-  constructor(message: string, public champs: Champ[] = []) {
+  constructor(message: string, public champs: ChampErreur[] = []) {
     super(message);
   }
 }
-
-const estChamp = (d: unknown): d is Champ =>
-  !!d && typeof d === "object" && typeof (d as Champ).champ === "string" && typeof (d as Champ).message === "string";
 
 /**
  * Un geste envoyé à une route de /api/admin : son corps en JSON (null pour un 204), ou un RefusEnvoi qui porte la phrase du

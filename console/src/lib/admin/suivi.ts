@@ -133,12 +133,12 @@ function phrase(e: unknown): string {
   return TA.erreurInterne;
 }
 
-/** Ce qu'une lecture demande à l'atelier : sans suivi, les seules alertes (l'écran Alertes). */
-type Lire = Pick<Lecteur, "clients" | "alertes"> & { suivi?: Lecteur["suivi"] };
+/** Ce qu'une lecture demande à l'atelier : le suivi et les alertes, les seules alertes (l'écran Alertes) ou les seuls suivis (Tarifs). */
+type Lire = Pick<Lecteur, "clients"> & { suivi?: Lecteur["suivi"]; alertes?: Lecteur["alertes"] };
 
 /**
- * Un client, une lecture à la fois : son suivi (si on le lit), puis ses alertes, lues même si le suivi n'a pas répondu (l'atelier
- * y dit alors la panne : conteneur ou porte injoignable). Une lecture qui échoue rend le client injoignable (sa phrase).
+ * Un client, une lecture à la fois : son suivi (si on le lit), puis ses alertes (si on les lit), lues même si le suivi n'a pas
+ * répondu (l'atelier y dit alors la panne : conteneur ou porte injoignable). Une lecture qui échoue rend le client injoignable.
  * Jamais mis en service : rien à lire (ni conteneur ni activité ; l'atelier y verrait une fausse panne).
  */
 async function lireUn(a: Acces, jours: Jours, l: Lire, client: ClientAtelier): Promise<LectureClient> {
@@ -151,10 +151,12 @@ async function lireUn(a: Acces, jours: Jours, l: Lire, client: ClientAtelier): P
       lecture.erreur = phrase(e);
     }
   }
-  try {
-    lecture.alertes = (await l.alertes(client.id, jours)).alertes;
-  } catch (e) {
-    lecture.erreur ??= phrase(e);
+  if (l.alertes) {
+    try {
+      lecture.alertes = (await l.alertes(client.id, jours)).alertes;
+    } catch (e) {
+      lecture.erreur ??= phrase(e);
+    }
   }
   return lecture;
 }
@@ -180,6 +182,11 @@ export function lireTout(a: Acces, jours: Jours, l: Lecteur, parallele = 4): Pro
   return lireClients(a, jours, l, parallele);
 }
 
+/** Les seuls suivis des clients du périmètre (l'écran Tarifs, pour les modèles vus sans tarif) : aucune alerte lue. */
+export function lireSuivis(a: Acces, jours: Jours, l: Pick<Lecteur, "clients" | "suivi">, parallele = 4): Promise<{ lectures: LectureClient[]; porte: boolean }> {
+  return lireClients(a, jours, { clients: l.clients, suivi: l.suivi }, parallele);
+}
+
 /** Les seules alertes des clients du périmètre (l'écran Alertes). */
 export function lireAlertes(a: Acces, jours: Jours, l: Pick<Lecteur, "clients" | "alertes">, parallele = 4): Promise<{ lectures: LectureClient[]; porte: boolean }> {
   return lireClients(a, jours, { clients: l.clients, alertes: l.alertes }, parallele);
@@ -195,6 +202,8 @@ export type VueEnsemble = {
   };
   aSurveiller: { client: string; soucis: Souci[] }[];
   injoignables: string[];
+  /** Les clients dont les coûts sont illisibles ({ erreur }) : absents du total. Vide sans couts.voir. */
+  coutsIllisibles: string[];
   activite: { client: string; entreprise: string | null; tours: number; personnes: number; echecs: number; secours: number; cout?: number }[];
 };
 
@@ -232,6 +241,7 @@ export function agreger(lectures: LectureClient[], a: Acces): VueEnsemble {
     tuiles,
     aSurveiller: classerASurveiller(parClient),
     injoignables: lectures.filter((l) => l.erreur).map((l) => l.client.id),
+    coutsIllisibles: peut(a, "couts.voir") ? lues.filter((l) => l.suivi.couts && "erreur" in l.suivi.couts).map((l) => l.client.id) : [],
     activite: lues.map((l) => {
       const c = coutsDe(l, a);
       const x = l.suivi.activite;

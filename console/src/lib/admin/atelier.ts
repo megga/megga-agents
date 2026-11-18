@@ -1,5 +1,6 @@
 import "server-only";
 import { Refus } from "@/lib/agents";
+import { estChamp, type ChampErreur } from "./champs";
 import { TA } from "./textes";
 
 // Le client de l'atelier, côté serveur seulement : il détient le jeton de MEGGA, que le navigateur ne voit jamais.
@@ -7,7 +8,6 @@ import { TA } from "./textes";
 // gardées GARDE_MS en mémoire, avant tout filtre de droits (suivi.ts filtre après) ; toute écriture oublie ce qui était gardé.
 
 export type Jours = 1 | 7 | 30;
-export type ChampErreur = { champ: string; message: string };
 
 /** Un refus de l'atelier : sa phrase, et ses messages champ par champ quand il en donne. */
 export class RefusChamps extends Refus {
@@ -70,9 +70,6 @@ export type Corps = Record<string, unknown>;
 export function atelierBranche(): boolean {
   return !!process.env.ATELIER_URL;
 }
-
-const estChamp = (d: unknown): d is ChampErreur =>
-  !!d && typeof d === "object" && typeof (d as ChampErreur).champ === "string" && typeof (d as ChampErreur).message === "string";
 
 /**
  * Un refus de l'atelier : sa phrase (erreur) ; details, seulement s'il est une liste de { champ, message }. Une réponse d'une
