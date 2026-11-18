@@ -71,12 +71,31 @@ export function perimetreInclus(a: Acces, p: Perimetre): boolean {
   return p !== "tous" && p.every((c) => sien.includes(c));
 }
 
+/**
+ * Le périmètre d'un autre (membre ou invitation) tel qu'un membre le voit à l'écran : limité à une liste, il n'en voit
+ * que les clients qu'il partage, les autres seulement comptés ; « tous » ne nomme aucun client.
+ */
+export function perimetreVu(a: Acces, p: Perimetre): "tous" | { clients: string[]; autres: number } {
+  if (p === "tous") return "tous";
+  const sien = a.perimetre;
+  const clients = sien === "tous" ? [...p] : p.filter((c) => sien.includes(c));
+  return { clients, autres: p.length - clients.length };
+}
+
 const droitsTenus = (a: Acces, droits: readonly Droit[]) => droits.every((d) => a.droits.has(d));
 
 /** Sans être superadmin, on ne donne qu'un rôle dont tous les droits sont déjà les siens, et jamais le rôle superadmin. */
 export function peutDonnerRole(a: Acces, role: { id: string; droits: readonly Droit[] }): boolean {
   if (a.superadmin) return true;
   return peut(a, "equipe.gerer") && role.id !== SUPERADMIN && droitsTenus(a, role.droits);
+}
+
+/**
+ * Ce qu'on aurait pu donner soi-même (un rôle et un périmètre) : la règle de membres.ts et invitations.ts pour toucher à
+ * un membre ou retirer une invitation, ici pour que l'écran ne montre que les gestes qui passeront.
+ */
+export function aPuDonner(a: Acces, role: { id: string; droits: readonly Droit[] } | undefined, p: Perimetre): boolean {
+  return a.superadmin || (!!role && peutDonnerRole(a, role) && perimetreInclus(a, p));
 }
 
 /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  aPuDonner,
   droitsEffectifs,
   entreesRail,
   exiger,
@@ -13,6 +14,7 @@ import {
   peutEcrireRole,
   peutSuspendre,
   peutToucherMembre,
+  perimetreVu,
   voitClient,
 } from "@/lib/admin/acces";
 import { DROITS } from "@/lib/admin/droits";
@@ -49,6 +51,18 @@ describe("le périmètre", () => {
     expect(refus(() => lirePerimetre(undefined, false)).message).toBe(TA.perimetreInvalide);
     expect(lirePerimetre("tous", false)).toBe("tous");
     expect(lirePerimetre(["a1", "a1", "b2"], false)).toEqual(["a1", "b2"]);
+  });
+
+  it("celui d'un autre ne montre à un membre limité que les clients qu'il partage, les autres comptés", () => {
+    const limite = acces({ perimetre: ["a1", "b2"] });
+    expect(perimetreVu(limite, ["a1", "c3", "d4", "b2", "e5"])).toEqual({ clients: ["a1", "b2"], autres: 3 });
+    expect(perimetreVu(limite, ["c3"])).toEqual({ clients: [], autres: 1 });
+    expect(perimetreVu(limite, [])).toEqual({ clients: [], autres: 0 });
+    expect(perimetreVu(limite, "tous")).toBe("tous");
+    const tous = acces({ perimetre: "tous" });
+    expect(perimetreVu(tous, ["a1", "c3"])).toEqual({ clients: ["a1", "c3"], autres: 0 });
+    expect(perimetreVu(acces({ superadmin: true }), ["c3"])).toEqual({ clients: ["c3"], autres: 0 });
+    expect(perimetreVu(acces({ perimetre: [] }), ["a1"])).toEqual({ clients: [], autres: 1 });
   });
 });
 
@@ -91,6 +105,20 @@ describe("la non-escalade", () => {
     expect(peutSuspendre(s, { id: "t", membre: { role: "superadmin" } })).toBe(false);
     expect(peutSuspendre(g, { id: "g", membre: null })).toBe(false);
     expect(peutSuspendre(acces({ utilisateur: "v", droits: ["comptes.voir"] }), { id: "c", membre: null })).toBe(false);
+  });
+});
+
+describe("ce qu'on aurait pu donner soi-même", () => {
+  it("un rôle qu'on peut donner, sur un périmètre inclus dans le sien ; tout, pour un superadmin", () => {
+    const m = acces({ utilisateur: "m", droits: ["clients.voir", "equipe.gerer"], perimetre: ["a1"] });
+    const petit = { id: "petit", droits: ["clients.voir"] as const };
+    expect(aPuDonner(m, petit, ["a1"])).toBe(true);
+    expect(aPuDonner(m, petit, ["a1", "b2"])).toBe(false);
+    expect(aPuDonner(m, petit, "tous")).toBe(false);
+    expect(aPuDonner(m, { id: "lecture", droits: ["clients.voir", "comptes.voir"] }, ["a1"])).toBe(false);
+    expect(aPuDonner(m, undefined, ["a1"])).toBe(false);
+    expect(aPuDonner(acces({ superadmin: true }), undefined, "tous")).toBe(true);
+    expect(aPuDonner(acces({ droits: ["clients.voir"] }), petit, "tous")).toBe(false);
   });
 });
 

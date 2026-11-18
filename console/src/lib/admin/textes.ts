@@ -2,6 +2,28 @@
 // Ceux que la conception fixe sont repris tels quels ; les autres sont des propositions.
 // Règles de textes.ts : français, courts, ni point médian, ni tiret long ou demi-cadratin,
 // espace insécable avant « ? : ! ; » et après « « » (test : textes.test.ts).
+import type { Droit } from "./droits";
+
+const INSTANT = new Intl.DateTimeFormat("fr-CH", {
+  timeZone: "Europe/Zurich",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+});
+
+/** Un jour AAAA-MM-JJ s'écrit JJ.MM.AAAA, sans fuseau ; autre chose reste tel quel. */
+function jour(v: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : v;
+}
+
+/** Un instant ISO s'écrit JJ.MM.AAAA HH:MM, à l'heure de Zurich ; autre chose reste tel quel. */
+function instant(v: string): string {
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? v : INSTANT.format(d);
+}
 
 export const TA = {
   // L'entrée dans l'admin (menu du compte) et la sortie
@@ -42,6 +64,106 @@ export const TA = {
   copie: "Copié",
   secretTitre: "À copier maintenant",
   secretUneFois: "Il ne sera plus jamais montré. Copiez-le avant de fermer.",
+
+  // Les dates
+  jour,
+  instant,
+
+  // L'équipe
+  nom: "Nom",
+  role: "Rôle",
+  statut: "Statut",
+  interne: "Interne",
+  externe: "Externe",
+  perimetre: "Périmètre",
+  tousLesClients: "Tous les clients",
+  uneListe: "Une liste de clients",
+  aucunClient: "Aucun client",
+  nClients: (n: number) => (n === 1 ? "1 client" : `${n} clients`),
+  etAutres: (n: number) => (n === 1 ? "et 1 autre" : `et ${n} autres`),
+  perimetreAide: "Les identifiants des clients, séparés par des virgules.",
+  finAcces: "Fin d'accès",
+  sansFin: "Sans fin",
+  finAccesAide: "Vide : un accès sans fin.",
+  derniereConnexion: "Dernière connexion",
+  pasEncoreNotee: "Pas encore notée",
+  modifier: "Modifier",
+  enregistrer: "Enregistrer",
+  retirer: "Retirer",
+  creer: "Créer",
+  videMembres: "Aucun membre.",
+  titreModifier: (nom: string) => `Modifier ${nom}`,
+  retirerMembreTitre: "Retirer ce membre ?",
+  retirerMembreEffet: (nom: string) => `${nom} perd l'accès à l'admin dès sa prochaine requête. Son compte de la console reste.`,
+  externeCase: "Externe, limité à des clients nommés",
+  externeGarde: "Un externe ne garde que ces droits, quel que soit son rôle :",
+  nouvelleInvitation: "Nouvelle invitation",
+  inviter: "Inviter",
+  enAttente: "En attente",
+  valableJusqua: "Valable jusqu'au",
+  videInvitations: "Aucune invitation en attente.",
+  retirerInvitationTitre: "Retirer cette invitation ?",
+  retirerInvitationEffet: (courriel: string) => `Le lien envoyé à ${courriel} ne vaudra plus rien.`,
+  nouveauRole: "Nouveau rôle",
+  nomDuRole: "Nom du rôle",
+  description: "Description",
+  droits: "Droits",
+  aucunDroit: "Aucun droit",
+  nombreMembres: (n: number) => (n === 1 ? "1 membre" : `${n} membres`),
+  roleFixeMarque: "Fixe",
+  retirerRoleTitre: "Retirer ce rôle ?",
+  retirerRoleEffet: (nom: string) => `Le rôle ${nom} disparaît. Aucun membre ne le porte, aucune invitation ne le nomme.`,
+  nomsDroits: {
+    "clients.voir": "Voir les clients",
+    "couts.voir": "Voir les coûts et les tarifs",
+    "conversations.lire": "Lire les conversations",
+    "clients.creer": "Créer un client",
+    "versions.preparer": "Préparer une version",
+    "clients.piloter": "Mettre en service, reprendre la main",
+    "acces.gerer": "Les jetons et les clés d'un client",
+    "installations.gerer": "Piloter une installation",
+    "tarifs.regler": "Changer les tarifs",
+    "comptes.voir": "Voir les comptes de la console",
+    "comptes.gerer": "Suspendre un compte",
+    "equipe.gerer": "Gérer l'équipe",
+    "journal.voir": "Lire le journal",
+  } satisfies Record<Droit, string>,
+
+  // Le journal
+  quand: "Quand",
+  qui: "Qui",
+  quoi: "Quoi",
+  surQuoi: "Sur quoi",
+  resultat: "Résultat",
+  detail: "Détail",
+  reussi: "Réussi",
+  refuse: (statut: string) => `Refusé (${statut})`,
+  erreur: "Erreur",
+  leServeur: "Le serveur",
+  videJournal: "Aucun geste noté.",
+  depuis: "Depuis le",
+  jusqua: "Jusqu'au",
+  filtrer: "Filtrer",
+  effacerFiltres: "Effacer les filtres",
+  filtrerSur: "Ne montrer que ces gestes",
+  filtreMembre: "Membre",
+  filtreAction: "Action",
+  filtreClient: "Client",
+  filtreSur: (quoi: string, valeur: string) => `${quoi} : ${valeur}`,
+  pageSur: (page: number, pages: number) => `Page ${page} sur ${pages}`,
+  pagePrecedente: "Page précédente",
+  pageSuivante: "Page suivante",
+  actionsJournal: {
+    "membres.modifier": "Modifier un membre",
+    "membres.retirer": "Retirer un membre",
+    "invitations.creer": "Inviter",
+    "invitations.retirer": "Retirer une invitation",
+    "invitations.accepter": "Rejoindre par une invitation",
+    "invitations.commande": "Inviter un superadmin, par la commande",
+    "roles.creer": "Créer un rôle",
+    "roles.modifier": "Modifier un rôle",
+    "roles.retirer": "Retirer un rôle",
+  } as Record<string, string>,
 
   // Les onglets d'un client
   suivi: "Suivi",

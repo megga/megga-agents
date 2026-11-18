@@ -1,4 +1,6 @@
-// Un refus : la phrase de la console (ou de l'atelier), et ses messages champ par champ quand il y en a.
+import { TA } from "@/lib/admin/textes";
+
+// Un refus, tel que l'écran le montre : la phrase de la console (ou de l'atelier), et ses messages champ par champ.
 
 export function ErreursChamps({ erreur, champs }: { erreur: string | null; champs?: { champ: string; message: string }[] }) {
   if (!erreur && !champs?.length) return null;
@@ -16,4 +18,25 @@ export function ErreursChamps({ erreur, champs }: { erreur: string | null; champ
       )}
     </div>
   );
+}
+
+/**
+ * Un geste envoyé à une route de /api/admin : son corps en JSON (null pour un 204), ou une Error qui porte la phrase du
+ * refus (celle de la route, sinon une phrase générale), prête pour ErreursChamps ou Confirmation.
+ */
+export async function envoyer<T>(url: string, methode: "POST" | "PUT" | "PATCH" | "DELETE", corps?: unknown): Promise<T | null> {
+  let r: Response;
+  try {
+    r = await fetch(url, {
+      method: methode,
+      headers: corps === undefined ? undefined : { "Content-Type": "application/json" },
+      body: corps === undefined ? undefined : JSON.stringify(corps),
+    });
+  } catch {
+    throw new Error(TA.erreurInterne);
+  }
+  if (r.status === 204) return null;
+  const c = (await r.json().catch(() => null)) as { erreur?: unknown } | null;
+  if (!r.ok) throw new Error(typeof c?.erreur === "string" && c.erreur ? c.erreur : TA.erreurInterne);
+  return c as T;
 }
