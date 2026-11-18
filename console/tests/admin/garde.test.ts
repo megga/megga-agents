@@ -104,6 +104,48 @@ describe("la garde des routes", () => {
     expect(lignes().map((l) => `${l.cible} ${l.resultat}`)).toEqual(["role:r erreur", "role:r refuse 409", "role:r ok"]);
   });
 
+  it("un geste qui ne rend rien répond 204 et note ok", async () => {
+    membre(etat.db, { utilisateur: "s", role: "superadmin" });
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    let fait = 0;
+    const retirer = garde({ droit: "equipe.gerer", action: "roles.retirer", cible: () => "role:r" }, async () => {
+      fait++;
+    });
+    const r = await retirer(
+      new Request("http://localhost/api/admin/x", { method: "DELETE", headers: { "x-essai-qui": "s", origin: "http://localhost" } }),
+      { params: Promise.resolve({}) },
+    );
+    expect([r.status, await r.text(), fait]).toEqual([204, "", 1]);
+    expect(erreur).not.toHaveBeenCalled();
+    expect(lignes().map((l) => `${l.action} ${l.cible} ${l.resultat}`)).toEqual(["roles.retirer role:r ok"]);
+  });
+
+  it("un inconnu ne remplit pas le journal ; un détail est borné à 2048 caractères", async () => {
+    compte(etat.db, { id: "c", courriel: "c@megga.test" });
+    membre(etat.db, { utilisateur: "p", role: "exploitation", perimetre: ["garage-essai"] });
+    const gros = { texte: "x".repeat(5000) };
+    expect((await appel("garage-essai", { qui: "c", corps: gros })).status).toBe(404);
+    expect((await appel("garage-essai", { qui: "p", corps: gros })).status).toBe(200);
+    const [deP, deC] = lignes();
+    expect([deC.qui, deC.resultat, deC.detail]).toEqual(["c", "refuse 404", null]);
+    expect([deP.qui, deP.resultat]).toEqual(["p", "ok"]);
+    const longueurs = etat.db.prepare("SELECT qui, length(detail) AS n FROM admin_journal ORDER BY id").all();
+    expect(longueurs).toEqual([{ qui: "c", n: null }, { qui: "p", n: 2048 }]);
+    expect(deP.detail).toBe(JSON.stringify(gros).slice(0, 2048));
+  });
+
+  it("une panne du journal ne casse pas un geste, réussi ou refusé", async () => {
+    membre(etat.db, { utilisateur: "p", role: "exploitation", perimetre: ["garage-essai"] });
+    membre(etat.db, { utilisateur: "l", role: "lecture" });
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    etat.db.exec("DROP TABLE admin_journal");
+    const ok = await appel("garage-essai", { qui: "p" });
+    expect([ok.status, await ok.json()]).toEqual([200, { id: "garage-essai" }]);
+    expect(erreur).toHaveBeenCalledOnce();
+    expect((await appel("garage-essai", { qui: "l" })).status).toBe(403);
+    expect(erreur).toHaveBeenCalledTimes(2);
+  });
+
   it("marque chaque route qu'elle garde ; gardeSession ne demande qu'une session", async () => {
     expect(route[GARDE]).toBe(true);
     const rejoindre = gardeSession({ action: "essai.session" }, async ({ compte, corps }) => ({ qui: compte.id, corps }));

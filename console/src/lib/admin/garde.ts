@@ -41,11 +41,14 @@ async function lireCorps(requete: Request): Promise<unknown> {
   return lecture(requete) ? null : requete.json().catch(() => null);
 }
 
-/** traiter rend une Response (rendue telle quelle) ou une valeur (en JSON) ; un Refus, son statut ; le reste, 500 sans détail. */
+/**
+ * traiter rend une Response (rendue telle quelle), une valeur (en JSON) ou rien (204, comme un retrait) ;
+ * un Refus, son statut ; le reste, 500 sans détail.
+ */
 async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: string) => void): Promise<Response> {
   try {
     const r = await faire();
-    const reponse = r instanceof Response ? r : Response.json(r);
+    const reponse = r instanceof Response ? r : r === undefined ? new Response(null, { status: 204 }) : Response.json(r);
     noterIssue(reponse.ok ? "ok" : `refuse ${reponse.status}`);
     return reponse;
   } catch (e) {
@@ -59,9 +62,15 @@ async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: strin
   }
 }
 
-function journaliste(db: DatabaseSync, compte: Compte, action: string | undefined, cible: string | null, corps: unknown) {
+/** Note une issue ; une panne du journal part à console.error et ne change jamais la réponse du geste. */
+function journaliste(db: DatabaseSync, compte: Compte, action: string | undefined, cible: string | null, detail: () => unknown) {
   return (resultat: string) => {
-    if (action) noter(db, { qui: compte.id, courriel: compte.email, action, cible, resultat, detail: corps });
+    if (!action) return;
+    try {
+      noter(db, { qui: compte.id, courriel: compte.email, action, cible, resultat, detail: detail() });
+    } catch (e) {
+      console.error("journal de l'admin :", e);
+    }
   };
 }
 
@@ -85,10 +94,12 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
     const db = base();
     const params = await ctx.params;
     const corps = await lireCorps(requete);
-    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), corps);
+    let membre = false; // un inconnu (404) ne laisse aucun détail au journal
+    const noterIssue = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), () => (membre ? corps : null));
     return issue(async () => {
       const acces = accesDe(db, s.user);
       if (!acces) throw new Refus(404, TA.introuvable);
+      membre = true;
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
       exiger(acces, regle.droit);
       if (regle.client) exigerClient(acces, regle.client(params));
@@ -112,7 +123,7 @@ export function gardeSession<P extends Record<string, string>>(
     return issue(async () => {
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
       return traiter({ compte, params, corps, db });
-    }, journaliste(db, compte, regle.action, null, corps));
+    }, journaliste(db, compte, regle.action, null, () => corps));
   });
 }
 
