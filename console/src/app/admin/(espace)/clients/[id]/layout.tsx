@@ -1,10 +1,17 @@
 import { notFound } from "next/navigation";
+import { PastillesEtat } from "@/components/admin/pastille";
 import { ongletsClient } from "@/lib/admin/acces";
-import { atelier, ouRefus, RefusChamps } from "@/lib/admin/atelier";
+import { atelier, ouRefus, RefusChamps, type ClientAtelier } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
-import { etatClient } from "@/lib/admin/suivi";
-import { PastillesEtat } from "../clients";
+import { etatClient, horsCloudflare, zoneClient } from "@/lib/admin/suivi";
 import { OngletsClient } from "./onglets";
+
+/** La configuration de la dernière version, quand aucune n'est en service (pour sa zone) ; sinon rien à lire. */
+async function derniereConfig(id: string, c: (ClientAtelier & { config: Record<string, unknown> | null }) | null) {
+  if (!c || c.config || c.derniere_version == null) return null;
+  const v = await ouRefus(atelier.version(id, c.derniere_version));
+  return v instanceof RefusChamps ? null : (v.config ?? null);
+}
 
 // La fiche d'un client : son en-tête (entreprise, agent, identifiant, état) et ses onglets. Hors périmètre ou inconnu de
 // l'atelier : 404. L'atelier injoignable : l'en-tête se contente de l'identifiant, la page dit pourquoi.
@@ -14,9 +21,9 @@ export default async function FicheClient({ children, params }: LayoutProps<"/ad
   const [c, catalogue] = await Promise.all([ouRefus(atelier.client(id)), ouRefus(atelier.catalogue())]);
   if (c instanceof RefusChamps && c.statut === 404) notFound();
   const lu = c instanceof RefusChamps ? null : c;
-  const zone = typeof lu?.config?.zone === "string" ? lu.config.zone : null;
-  // Hors Cloudflare : une zone que la porte ne sert pas ; sans configuration en service, une installation enregistrée.
-  const horsCloudflare = zone !== null && !(catalogue instanceof RefusChamps) ? !catalogue.zones_porte.includes(zone) : !!lu?.installation;
+  // Hors Cloudflare : la zone de la version en service, sinon de la dernière, que la porte ne sert pas.
+  const zone = zoneClient(lu?.config, await derniereConfig(id, lu));
+  const estHorsCloudflare = horsCloudflare(zone, catalogue instanceof RefusChamps ? null : catalogue.zones_porte);
   return (
     <>
       <header className="flex min-w-0 flex-col gap-1.5">
@@ -27,7 +34,7 @@ export default async function FicheClient({ children, params }: LayoutProps<"/ad
         </p>
         {lu && <PastillesEtat etat={etatClient(lu)} />}
       </header>
-      <OngletsClient onglets={ongletsClient(a, id, horsCloudflare)} />
+      <OngletsClient onglets={ongletsClient(a, id, estHorsCloudflare)} />
       {children}
     </>
   );

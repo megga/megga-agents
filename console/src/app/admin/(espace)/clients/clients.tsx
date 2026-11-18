@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { champ } from "@/components/admin/formulaire";
-import { Pastille, type Etat } from "@/components/admin/pastille";
+import { Pastille, PastillesEtat, type Etat } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
 import { Input } from "@/components/ui/input";
 import type { EtatClient } from "@/lib/admin/suivi";
@@ -20,19 +20,6 @@ export type LigneClient = {
   etat: EtatClient;
   installation: { etat: Etat; texte: string };
 };
-
-/** L'état d'un client en pastilles : le service, l'écart, la main de MEGGA, le conteneur s'il est connu. */
-export function PastillesEtat({ etat }: { etat: EtatClient }) {
-  return (
-    <span className="flex flex-wrap gap-1">
-      {etat.service === "en_service" ? <Pastille etat="ok" texte={TA.enService} /> : <Pastille etat="faint" texte={TA.jamaisEnService} />}
-      {etat.ecart && <Pastille etat="warn" texte={TA.ecart} />}
-      {etat.tenuParMegga && <Pastille etat="faint" texte={TA.tenuParMegga} />}
-      {etat.conteneur === "demarre" && <Pastille etat="ok" texte={TA.conteneurDemarre} />}
-      {etat.conteneur === "arrete" && <Pastille etat="accent" texte={TA.conteneurArrete} />}
-    </span>
-  );
-}
 
 const trouve = (l: LigneClient, q: string) => [l.entreprise, l.agent, l.id].some((v) => v?.toLocaleLowerCase("fr").includes(q));
 

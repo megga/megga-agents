@@ -19,6 +19,7 @@ import {
   roleLePlusEtroit,
   voitClient,
 } from "@/lib/admin/acces";
+import { avecPeriode } from "@/components/admin/onglets";
 import { DROITS, ROLES_DE_DEPART, SUPERADMIN } from "@/lib/admin/droits";
 import { TA } from "@/lib/admin/textes";
 import { acces, refus } from "./aides";
@@ -164,5 +165,16 @@ describe("les onglets d'un client", () => {
       "/admin/clients/garage-essai", "/admin/clients/garage-essai/alertes", "/admin/clients/garage-essai/conversations",
       "/admin/clients/garage-essai/versions", "/admin/clients/garage-essai/acces", "/admin/clients/garage-essai/installation",
     ]);
+  });
+
+  it("Suivi et Alertes gardent la période de l'adresse ; les autres onglets n'en ont pas", () => {
+    const o = ongletsClient(acces({ superadmin: true }), "garage-essai", true);
+    expect(o.filter((x) => x.periode).map((x) => x.texte)).toEqual([TA.suivi, TA.alertes]);
+    expect(avecPeriode(o, "30").map((x) => x.href)).toEqual([
+      "/admin/clients/garage-essai?jours=30", "/admin/clients/garage-essai/alertes?jours=30", "/admin/clients/garage-essai/conversations",
+      "/admin/clients/garage-essai/versions", "/admin/clients/garage-essai/acces", "/admin/clients/garage-essai/installation",
+    ]);
+    for (const j of [null, "abc", "999"]) expect(avecPeriode(o, j).map((x) => x.href), String(j)).toEqual(o.map((x) => x.href));
+    expect(avecPeriode(o, "1")[0]).toEqual({ href: "/admin/clients/garage-essai?jours=1", texte: TA.suivi });
   });
 });

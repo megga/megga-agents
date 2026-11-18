@@ -21,7 +21,11 @@ export default async function PageSuivi({ params, searchParams }: PageProps<"/ad
   const r = await ouRefus(atelier.suivi(id, jours));
   const periode = <ChoixPeriode jours={jours} chemin={`/admin/clients/${encodeURIComponent(id)}`} />;
   if (r instanceof RefusChamps) {
-    if (r.statut === 404) notFound();
+    // Un 404 du suivi pour un client que l'atelier connaît : jamais mis en service (la porte ne le connaît pas), pas une panne.
+    if (r.statut === 404) {
+      if ((await ouRefus(atelier.client(id))) instanceof RefusChamps) notFound();
+      return <Bandeau etat="faint">{TA.jamaisSansActivite}</Bandeau>;
+    }
     return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
   }
   const x = sansCouts(r, a).activite;
@@ -34,7 +38,7 @@ export default async function PageSuivi({ params, searchParams }: PageProps<"/ad
     { titre: TA.rappelsEnAttente, valeur: x.rappels_en_attente ?? 0 },
     { titre: TA.voixCaracteres, valeur: note(x, "voix_caracteres", "quantite") },
     { titre: TA.vocauxEntendus, valeur: note(x, "vocal_entendu", "nombre") },
-    { titre: TA.vocauxDits, valeur: note(x, "vocal_dit", "nombre") },
+    { titre: TA.vocauxDits, valeur: note(x, "voix_caracteres", "nombre") }, // un par vocal dit (noyau/autour.py)
   ];
   return (
     <>

@@ -21,8 +21,8 @@ export function ErreursChamps({ erreur, champs }: { erreur: string | null; champ
   );
 }
 
-/** Un bandeau en tête d'un écran : un refus (accent) ou un avertissement (warn) qui vaut pour tout ce qu'il montre. */
-export function Bandeau({ children, etat = "accent" }: { children: React.ReactNode; etat?: "accent" | "warn" }) {
+/** Un bandeau en tête d'un écran : un refus (accent), un avertissement (warn) ou une simple information (faint). */
+export function Bandeau({ children, etat = "accent" }: { children: React.ReactNode; etat?: "accent" | "warn" | "faint" }) {
   return (
     <p role={etat === "accent" ? "alert" : "status"} className={"trait m-0 rounded-2xl bg-bg px-4 py-3 text-[14px] font-semibold " + TEXTE_ETAT[etat]}>
       {children}

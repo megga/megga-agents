@@ -152,17 +152,17 @@ export function entreesRail(a: Acces): { href: string; texte: string }[] {
 
 /**
  * Les onglets de la fiche d'un client que les droits du membre ouvrent. Installation : seulement hors Cloudflare (la zone
- * de sa configuration n'est pas servie par la porte).
+ * de sa configuration n'est pas servie par la porte). periode : l'onglet garde la période de l'adresse (avecPeriode).
  */
-export function ongletsClient(a: Acces, id: string, horsCloudflare: boolean): { href: string; texte: string }[] {
+export function ongletsClient(a: Acces, id: string, horsCloudflare: boolean): { href: string; texte: string; periode: boolean }[] {
   const fiche = `/admin/clients/${encodeURIComponent(id)}`;
   const onglets = [
-    { href: fiche, texte: TA.suivi, ouvert: peut(a, "clients.voir") },
-    { href: `${fiche}/alertes`, texte: TA.alertes, ouvert: peut(a, "clients.voir") },
-    { href: `${fiche}/conversations`, texte: TA.conversations, ouvert: peut(a, "conversations.lire") },
-    { href: `${fiche}/versions`, texte: TA.versions, ouvert: peut(a, "clients.voir") },
-    { href: `${fiche}/acces`, texte: TA.acces, ouvert: peut(a, "acces.gerer") || peut(a, "clients.piloter") },
-    { href: `${fiche}/installation`, texte: TA.installation, ouvert: horsCloudflare && peut(a, "clients.voir") },
+    { href: fiche, texte: TA.suivi, periode: true, ouvert: peut(a, "clients.voir") },
+    { href: `${fiche}/alertes`, texte: TA.alertes, periode: true, ouvert: peut(a, "clients.voir") },
+    { href: `${fiche}/conversations`, texte: TA.conversations, periode: false, ouvert: peut(a, "conversations.lire") },
+    { href: `${fiche}/versions`, texte: TA.versions, periode: false, ouvert: peut(a, "clients.voir") },
+    { href: `${fiche}/acces`, texte: TA.acces, periode: false, ouvert: peut(a, "acces.gerer") || peut(a, "clients.piloter") },
+    { href: `${fiche}/installation`, texte: TA.installation, periode: false, ouvert: horsCloudflare && peut(a, "clients.voir") },
   ];
-  return onglets.filter((o) => o.ouvert).map(({ href, texte }) => ({ href, texte }));
+  return onglets.filter((o) => o.ouvert).map(({ href, texte, periode }) => ({ href, texte, periode }));
 }

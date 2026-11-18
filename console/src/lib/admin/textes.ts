@@ -284,6 +284,8 @@ export const TA = {
   cacheLecture: "Cache lu",
   cacheEcriture: "Cache écrit",
   aucunModele: "Aucun tour sur la période.",
+  jamaisSansActivite: "Aucune activité : ce client n'a pas encore été mis en service.",
+  jamaisSansAlerte: "Aucune alerte : ce client n'a pas encore été mis en service.",
   nombre: (n: number) => NOMBRE.format(n),
 
   // Les alertes et la vue d'ensemble
@@ -300,8 +302,8 @@ export const TA = {
   videASurveiller: "Rien à surveiller sur la période.",
   videActivite: "Aucune activité lue sur la période.",
   injoignables: (clients: string) => `Ces clients ne répondent pas : ${clients}.`,
-  /** Un instant en secondes depuis 1970 (ceux de l'atelier), à l'heure de Zurich ; autre chose reste tel quel. */
-  moment: (secondes: number) => (Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : String(secondes)),
+  /** Un instant en secondes depuis 1970 (ceux de l'atelier), à l'heure de Zurich ; inconnu (nul, illisible), un tiret court. */
+  moment: (secondes: number | null) => (typeof secondes === "number" && Number.isFinite(secondes) ? INSTANT.format(new Date(secondes * 1000)) : "-"),
 
   // Les alertes du moteur, dites en clair (suivi.ts, GENRES_CONNUS)
   genres: {

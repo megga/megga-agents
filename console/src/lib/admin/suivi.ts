@@ -57,7 +57,7 @@ export function texteGenre(genre: string): string {
   return Object.hasOwn(TA.genres, genre) ? TA.genres[genre] : TA.genreInconnu(genre);
 }
 
-export type Souci = { client: string; genre: string; enCours: boolean; quand: number };
+export type Souci = { client: string; genre: string; enCours: boolean; quand: number | null };
 
 export function soucis(client: string, alertes: Alerte[]): Souci[] {
   return alertes.map((a) => ({ client, genre: a.genre, enCours: estEnCours(a), quand: a.quand }));
@@ -76,6 +76,17 @@ export function classerASurveiller(l: { client: string; soucis: Souci[] }[]): { 
   return l
     .filter((x) => x.soucis.length > 0)
     .sort((a, b) => pire(b) - pire(a) || b.soucis.length - a.soucis.length || a.client.localeCompare(b.client));
+}
+
+/** La zone d'un client : celle de sa version en service, sinon de sa dernière version (comme zone_de, atelier/app.py). */
+export function zoneClient(enService: Record<string, unknown> | null | undefined, derniere: Record<string, unknown> | null | undefined): string | null {
+  for (const config of [enService, derniere]) if (typeof config?.zone === "string") return config.zone;
+  return null;
+}
+
+/** Hors Cloudflare : une zone que la porte ne sert pas (le catalogue, zones_porte). Zone ou catalogue inconnus : non. */
+export function horsCloudflare(zone: string | null, zonesPorte: readonly string[] | null): boolean {
+  return zone !== null && zonesPorte !== null && !zonesPorte.includes(zone);
 }
 
 export type EtatClient = { service: "en_service" | "jamais"; ecart: boolean; tenuParMegga: boolean; conteneur: "demarre" | "arrete" | "inconnu" };
@@ -100,23 +111,41 @@ export function sansCouts<T extends { couts?: unknown }>(r: T, a: Acces): T {
 
 export type LectureClient = { client: ClientAtelier; suivi?: Suivi; alertes?: Alerte[]; erreur?: string };
 
-/** Un client : son suivi, puis ses alertes ; s'il ne répond pas, il est injoignable (sa phrase), sans rien d'autre. */
-async function lireUn(a: Acces, jours: Jours, l: Lecteur, client: ClientAtelier): Promise<LectureClient> {
-  try {
-    const suivi = sansCouts(await l.suivi(client.id, jours), a);
-    const { alertes } = await l.alertes(client.id, jours);
-    return { client, suivi, alertes };
-  } catch (e) {
-    if (!(e instanceof Refus)) console.error("suivi de l'admin :", e);
-    return { client, erreur: e instanceof Refus ? e.message : TA.erreurInterne };
-  }
+/** La phrase d'un refus de lecture ; une erreur inattendue part à console.error. */
+function phrase(e: unknown): string {
+  if (e instanceof Refus) return e.message;
+  console.error("suivi de l'admin :", e);
+  return TA.erreurInterne;
 }
 
+/** Ce qu'une lecture demande à l'atelier : sans suivi, les seules alertes (l'écran Alertes). */
+type Lire = Pick<Lecteur, "clients" | "alertes"> & { suivi?: Lecteur["suivi"] };
+
 /**
- * Les clients du périmètre, chacun lu (suivi et alertes) par au plus `parallele` lectures en même temps ; un client hors
- * périmètre n'est jamais lu. porte : la porte a répondu pour la liste.
+ * Un client, une lecture à la fois : son suivi (si on le lit), puis ses alertes, lues même si le suivi n'a pas répondu (l'atelier
+ * y dit alors la panne : conteneur ou porte injoignable). Une lecture qui échoue rend le client injoignable (sa phrase).
+ * Jamais mis en service : rien à lire (ni conteneur ni activité ; l'atelier y verrait une fausse panne).
  */
-export async function lireTout(a: Acces, jours: Jours, l: Lecteur, parallele = 4): Promise<{ lectures: LectureClient[]; porte: boolean }> {
+async function lireUn(a: Acces, jours: Jours, l: Lire, client: ClientAtelier): Promise<LectureClient> {
+  const lecture: LectureClient = { client };
+  if (client.version_en_service == null) return lecture;
+  if (l.suivi) {
+    try {
+      lecture.suivi = sansCouts(await l.suivi(client.id, jours), a);
+    } catch (e) {
+      lecture.erreur = phrase(e);
+    }
+  }
+  try {
+    lecture.alertes = (await l.alertes(client.id, jours)).alertes;
+  } catch (e) {
+    lecture.erreur ??= phrase(e);
+  }
+  return lecture;
+}
+
+/** Les clients du périmètre (un client hors périmètre n'est jamais lu), au plus `parallele` en même temps. */
+async function lireClients(a: Acces, jours: Jours, l: Lire, parallele: number) {
   const { clients, porte } = await l.clients();
   const visibles = filtrerClients(a, clients);
   const lectures: LectureClient[] = new Array(visibles.length);
@@ -129,6 +158,16 @@ export async function lireTout(a: Acces, jours: Jours, l: Lecteur, parallele = 4
   }
   await Promise.all(Array.from({ length: Math.min(parallele, visibles.length) }, lecteur));
   return { lectures, porte };
+}
+
+/** Le suivi et les alertes des clients du périmètre (la vue d'ensemble). porte : la porte a répondu pour la liste. */
+export function lireTout(a: Acces, jours: Jours, l: Lecteur, parallele = 4): Promise<{ lectures: LectureClient[]; porte: boolean }> {
+  return lireClients(a, jours, l, parallele);
+}
+
+/** Les seules alertes des clients du périmètre (l'écran Alertes). */
+export function lireAlertes(a: Acces, jours: Jours, l: Pick<Lecteur, "clients" | "alertes">, parallele = 4): Promise<{ lectures: LectureClient[]; porte: boolean }> {
+  return lireClients(a, jours, { clients: l.clients, alertes: l.alertes }, parallele);
 }
 
 export type VueEnsemble = {
@@ -152,11 +191,14 @@ function coutsDe(l: LectureClient, a: Acces): CoutsLus | undefined {
   return peut(a, "couts.voir") && c && "total" in c ? c : undefined;
 }
 
-/** La vue d'ensemble des lectures (déjà bornées au périmètre) ; les coûts seulement avec couts.voir. */
+/**
+ * La vue d'ensemble des lectures (déjà bornées au périmètre) : l'activité des clients dont le suivi a répondu, les soucis de
+ * tous ceux dont les alertes ont répondu (un client injoignable compris) ; les coûts seulement avec couts.voir.
+ */
 export function agreger(lectures: LectureClient[], a: Acces): VueEnsemble {
-  const lues = lectures.filter((l): l is LectureClient & { suivi: Suivi } => !!l.suivi && !l.erreur);
+  const lues = lectures.filter((l): l is LectureClient & { suivi: Suivi } => !!l.suivi);
   const somme = (f: (l: LectureClient & { suivi: Suivi }) => number) => lues.reduce((n, l) => n + f(l), 0);
-  const parClient = lues.map((l) => ({ client: l.client.id, soucis: soucis(l.client.id, l.alertes ?? []) }));
+  const parClient = lectures.filter((l) => l.alertes).map((l) => ({ client: l.client.id, soucis: soucis(l.client.id, l.alertes ?? []) }));
   const couts = lues.map((l) => coutsDe(l, a)).filter((c): c is CoutsLus => !!c);
   const tuiles: VueEnsemble["tuiles"] = {
     enService: lectures.filter((l) => l.client.version_en_service != null).length,
@@ -184,9 +226,14 @@ export function agreger(lectures: LectureClient[], a: Acces): VueEnsemble {
   };
 }
 
-/** Les alertes, les soucis en cours d'abord ; puis la plus récente d'abord, ou par client, ou par genre (dit en clair). */
-export function trierAlertes<T extends Alerte & { client: string }>(l: T[], tri: "quand" | "client" | "genre"): T[] {
+/**
+ * Les alertes, les soucis en cours d'abord ; puis la plus récente d'abord (un instant inconnu en dernier), ou par client (dans
+ * l'ordre du nom montré, nom, sinon l'identifiant), ou par genre (dit en clair).
+ */
+export function trierAlertes<T extends Alerte & { client: string; nom?: string }>(l: T[], tri: "quand" | "client" | "genre"): T[] {
+  const nom = (x: T) => x.nom ?? x.client;
   const ordre = (a: T, b: T) =>
-    tri === "client" ? a.client.localeCompare(b.client) : tri === "genre" ? texteGenre(a.genre).localeCompare(texteGenre(b.genre), "fr") : 0;
-  return [...l].sort((a, b) => Number(estEnCours(b)) - Number(estEnCours(a)) || ordre(a, b) || b.quand - a.quand);
+    tri === "client" ? nom(a).localeCompare(nom(b), "fr") || a.client.localeCompare(b.client)
+    : tri === "genre" ? texteGenre(a.genre).localeCompare(texteGenre(b.genre), "fr") : 0;
+  return [...l].sort((a, b) => Number(estEnCours(b)) - Number(estEnCours(a)) || ordre(a, b) || (b.quand ?? -Infinity) - (a.quand ?? -Infinity) || 0);
 }

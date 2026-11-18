@@ -33,7 +33,7 @@ export type ClientAtelier = {
   annuaire?: { version?: number; conteneur?: { demarre: boolean } } | null;
   installation?: Record<string, unknown>;
 };
-export type Alerte = { quand: number; genre: string; detail: string; resolue?: number | null };
+export type Alerte = { quand: number | null; genre: string; detail: string; resolue?: number | null }; // quand : inconnu d'une installation sans relevé
 export type Activite = {
   tours: number;
   tours_api: number;
@@ -94,7 +94,19 @@ function adresse(): string {
 
 type Methode = "GET" | "POST" | "PUT" | "DELETE";
 
-/** Un appel, borné : la minuterie couvre la réponse et son corps ; un atelier muet donne 504, injoignable 502. */
+/** La trace d'une panne, côté serveur : le nom de l'erreur et sa cause (un code), jamais le jeton ni l'en-tête. */
+function noterPanne(e: unknown, delai: boolean): void {
+  const cause = e instanceof Error ? (e.cause as { code?: unknown; name?: unknown } | undefined) : undefined;
+  const nom = e instanceof Error ? e.name : typeof e;
+  const texte = cause ? `${nom} (${String(cause.code ?? cause.name ?? "?")})` : nom;
+  const jeton = process.env.ATELIER_JETON;
+  console.error(`atelier : ${delai ? "pas de réponse à temps" : "injoignable"},`, jeton ? texte.replaceAll(jeton, "[masqué]") : texte);
+}
+
+/**
+ * Un appel, borné : la minuterie couvre la réponse et son corps ; un atelier muet donne 504, injoignable 502. Une réponse
+ * réussie mais illisible (une page HTML, autre chose qu'un objet JSON) est un refus 502, jamais un succès vide.
+ */
 async function appel<T>(url: string, methode: Methode, corps?: unknown, attente = ATTENTE_MS): Promise<T> {
   const arret = new AbortController();
   const minuterie = setTimeout(() => arret.abort(), attente);
@@ -106,11 +118,16 @@ async function appel<T>(url: string, methode: Methode, corps?: unknown, attente 
       signal: arret.signal,
       cache: "no-store",
     });
-    const lu: unknown = await r.json().catch(() => null);
-    if (!r.ok) throw lireErreur(r.status, lu);
+    if (!r.ok) throw lireErreur(r.status, await r.json().catch(() => null));
+    const lu: unknown = await r.json().catch((e: unknown) => {
+      if (arret.signal.aborted) throw e;
+      throw new RefusChamps(502, TA.atelierRefus);
+    });
+    if (!lu || typeof lu !== "object") throw new RefusChamps(502, TA.atelierRefus);
     return lu as T;
   } catch (e) {
     if (e instanceof RefusChamps) throw e;
+    noterPanne(e, arret.signal.aborted);
     throw new RefusChamps(arret.signal.aborted ? 504 : 502, arret.signal.aborted ? TA.atelierLent : TA.atelierInjoignable);
   } finally {
     clearTimeout(minuterie);
@@ -124,13 +141,20 @@ export function oublier(): void {
   gardees.clear();
 }
 
+/** Combien de lectures sont gardées (pour les essais). */
+export function tailleGarde(): number {
+  return gardees.size;
+}
+
 /** Une lecture, gardée GARDE_MS : deux lectures rapprochées n'en font qu'une ; un refus n'est pas gardé. */
 async function lire<T>(chemin: string): Promise<T> {
   const url = adresse() + chemin;
+  const maintenant = Date.now();
+  for (const [cle, g] of gardees) if (maintenant - g.quand >= GARDE_MS) gardees.delete(cle); // les périmées s'en vont
   const g = gardees.get(url);
-  if (g && Date.now() - g.quand < GARDE_MS) return g.valeur as Promise<T>;
+  if (g) return g.valeur as Promise<T>;
   const valeur = appel<T>(url, "GET");
-  gardees.set(url, { quand: Date.now(), valeur });
+  gardees.set(url, { quand: maintenant, valeur });
   valeur.catch(() => {
     if (gardees.get(url)?.valeur === valeur) gardees.delete(url);
   });

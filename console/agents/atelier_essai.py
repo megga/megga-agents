@@ -1,8 +1,8 @@
 """L'atelier d'essai local de l'admin MEGGA : le vrai atelier (`atelier.app.creer`) sur SQLite, devant une porte simulée.
 
-La porte invente l'activité, les alertes, les conversations et les clés de quatre clients fictifs, sur les modèles
+La porte invente l'activité, les alertes, les conversations et les clés de six clients fictifs, sur les modèles
 de FaussePorte (tests/test_lot5.py), PorteSuivie (tests/test_suivi.py) et PorteAuxCles (tests/test_lot6_api.py).
-Le quatrième client tourne hors Cloudflare : son pilote inventé envoie des relevés signés par `noyau.pilotage.entetes`,
+L'un d'eux tourne hors Cloudflare : son pilote inventé envoie des relevés signés par `noyau.pilotage.entetes`,
 comme `releve_signe` (tests/test_lot6_pilote.py). Il ne sert qu'au développement et aux essais de bout en bout ;
 aucun nom de vrai client n'y figure. Le moteur n'est pas modifié.
 
@@ -39,7 +39,7 @@ DOSSIER = Path(__file__).resolve().parent.parent / ".donnees" / "atelier-essai"
 JOUR = 86400
 RELEVE_CHAQUE = 60  # le pilote d'une installation relève chaque minute ; au-delà de 5 minutes, elle serait silencieuse
 
-# Les quatre clients fictifs, créés par l'atelier lui-même d'après un modèle par métier, comme MEGGA le ferait.
+# Les six clients fictifs, créés par l'atelier lui-même d'après un modèle par métier, comme MEGGA le ferait.
 CLIENTS = (
     {"gabarit": "generaliste", "nom_agent": "Lou",
      "client": {"id": "boulangerie-essai", "entreprise": "Boulangerie des Essais", "zone": "europe", "numero_id": "100000000000011"}},
@@ -48,12 +48,19 @@ CLIENTS = (
     {"gabarit": "immobilier", "nom_agent": "Léa",
      "client": {"id": "agence-essai", "entreprise": "Agence des Essais", "zone": "europe", "numero_id": "100000000000013"}},
     {"gabarit": "generaliste", "nom_agent": "Noé", "client": {"id": "chalet-essai", "entreprise": "Chalet des Essais", "zone": "client"}},
+    {"gabarit": "generaliste", "nom_agent": "Zoé",
+     "client": {"id": "fleuriste-essai", "entreprise": "Fleuriste des Essais", "zone": "europe", "numero_id": "100000000000014"}},
+    {"gabarit": "generaliste", "nom_agent": "Tom",
+     "client": {"id": "librairie-essai", "entreprise": "Librairie des Essais", "zone": "europe", "numero_id": "100000000000015"}},
 )
 CHALET = "chalet-essai"
+INJOIGNABLES = {"fleuriste-essai"}  # en service, mais son conteneur ne répond plus : la porte rend 503 à tout suivi
+BROUILLONS = {"librairie-essai"}  # jamais mis en service : un brouillon, inconnu de la porte
 # Un seul modèle a son tarif : le secours (deepseek-v4-pro), la voix et l'écoute sortent « sans tarif ».
 TARIFS = {"devise": "USD", "modeles": {"claude-sonnet-5-5": {"entree": 3, "sortie": 15, "cache_lecture": 0.3, "cache_ecriture": 3.75}}}
 
 # Ce que fait chaque agent en un jour ; le suivi d'une période en est le multiple. personnes et rappels : sur toute période.
+# dits : les vocaux dits, chacun un voix_caracteres au journal du noyau (noyau/autour.py) ; voix : leurs caractères.
 PAR_JOUR = {
     "boulangerie-essai": {"tours": 14, "tours_api": 2, "secours": 0, "personnes": 2, "rappels": 1, "voix": 1800, "entendus": 2, "dits": 1},
     "garage-essai": {"tours": 9, "tours_api": 0, "secours": 1, "personnes": 4, "rappels": 0, "voix": 0, "entendus": 1, "dits": 0},
@@ -70,6 +77,7 @@ ECHECS = {
 # Les pannes du conteneur, gardées par la porte : (quoi, il y a combien de minutes, message, résolue il y a combien de minutes).
 PANNES = {
     "garage-essai": (("demarrage", 180, "secret manquant", 150), ("transmission", 40, "conteneur arrêté", None)),
+    "fleuriste-essai": (("transmission", 25, "conteneur injoignable", None),),
 }
 
 # Les conversations : (il y a combien de minutes, sens, texte). Des numéros fictifs.
@@ -136,11 +144,10 @@ def activite(ident: str, depuis: float, maintenant: float) -> dict:
             n = notes.setdefault(a["genre"], {"nombre": 0, "quantite": 0.0})
             n["nombre"] += 1
             n["quantite"] += 1
-    if j["voix"]:
+    if j["dits"]:  # le moteur ne note pas vocal_dit : un voix_caracteres par vocal dit, quantité ses caractères
         notes["voix_caracteres"] = {"nombre": j["dits"] * jours, "quantite": float(j["voix"] * jours)}
-    for genre, n in (("vocal_entendu", j["entendus"]), ("vocal_dit", j["dits"])):
-        if n:
-            notes[genre] = {"nombre": n * jours, "quantite": float(n * jours)}
+    if j["entendus"]:
+        notes["vocal_entendu"] = {"nombre": j["entendus"] * jours, "quantite": float(j["entendus"] * jours)}
     return {"depuis": depuis, "tours": tours, "tours_en_echec": notes.get("tour_echec", {}).get("nombre", 0), "secours": secours,
             "personnes": j["personnes"], "tours_api": j["tours_api"] * jours, "derniere_activite": maintenant - 600,
             "modeles": modeles, "journal": notes, "rappels_en_attente": j["rappels"]}
@@ -179,6 +186,11 @@ class PorteEssai:
                 for c, v in self.annuaire.items() if ident in (None, c)}
 
     async def suivi(self, ident, chemin="", **params):
+        """Comme la vraie porte : un client absent de l'annuaire, 404 ; un conteneur qui ne répond pas, 503."""
+        if ident not in self.annuaire:
+            raise PorteErreur(404, "client inconnu")
+        if ident in INJOIGNABLES:
+            raise PorteErreur(503, json.dumps({"erreur": "conteneur injoignable"}))
         maintenant = time.time()
         limite = params.get("limite") or 50
         if chemin == "":
@@ -288,11 +300,12 @@ def attendu(r) -> dict:
 
 
 def peupler(t: TestClient, porte: PorteEssai) -> None:
-    """Les tarifs et les quatre clients, créés et mis en service par l'atelier lui-même."""
+    """Les tarifs et les six clients, créés (et, sauf un brouillon, mis en service) par l'atelier lui-même."""
     attendu(t.put("/atelier/tarifs", json=TARIFS))
     for c in CLIENTS:
         attendu(t.post("/atelier/clients", json=c))
-        attendu(t.post(f"/atelier/clients/{c['client']['id']}/versions/1/activer", json={"forcer": True}))
+        if c["client"]["id"] not in BROUILLONS:
+            attendu(t.post(f"/atelier/clients/{c['client']['id']}/versions/1/activer", json={"forcer": True}))
     attendu(t.post("/atelier/clients/agence-essai/versions", json={"changements": {"ton": "chaleureux et précis, vouvoie en français"}}))
     attendu(t.post("/atelier/clients/agence-essai/versions/2/activer", json={"forcer": True}))
     # Une mise en service interrompue après la porte : l'annuaire sert encore la version 1, d'où l'écart.

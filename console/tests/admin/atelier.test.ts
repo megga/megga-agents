@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { atelier, atelierBranche, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps } from "@/lib/admin/atelier";
+import { atelier, atelierBranche, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps, tailleGarde } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
 import { refusAsync } from "./aides";
 
@@ -19,9 +19,14 @@ function fichiers(dossier: string): string[] {
 const reponse = (corps: unknown, statut = 200) => new Response(JSON.stringify(corps), { status: statut, headers: { "content-type": "application/json" } });
 
 let fetchSimule: ReturnType<typeof vi.fn>;
+let erreurs: ReturnType<typeof vi.spyOn>;
+
+/** Les imports de valeurs (pas « import type ») du client de l'atelier, même écrits sur plusieurs lignes. */
+const IMPORT_VALEUR = /^import\s+(?!type\b)[^;]*?\sfrom\s+["']@\/lib\/admin\/atelier["']/gm;
 
 beforeEach(() => {
   oublier();
+  erreurs = vi.spyOn(console, "error").mockImplementation(() => {});
   process.env.ATELIER_URL = "http://atelier.test";
   process.env.ATELIER_JETON = "jeton-essai";
   fetchSimule = vi.fn(async () => reponse({ clients: [], porte: true }));
@@ -29,6 +34,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   delete process.env.ATELIER_URL;
@@ -122,6 +128,38 @@ describe("les appels", () => {
     expect(await ouRefus(atelier.clients())).toEqual({ clients: [], porte: true });
   });
 
+  it("une panne réseau laisse une trace côté serveur : le nom et la cause, jamais le jeton", async () => {
+    const cause = Object.assign(new Error("connect ECONNREFUSED jeton-essai"), { code: "ECONNREFUSED" });
+    fetchSimule.mockRejectedValue(new TypeError("fetch failed jeton-essai", { cause }));
+    expect((await refusAsync(() => atelier.clients())).statut).toBe(502);
+    const ecrit = erreurs.mock.calls.flat().map(String).join(" ");
+    expect(ecrit).toContain("TypeError");
+    expect(ecrit).toContain("ECONNREFUSED");
+    expect(ecrit).not.toContain("jeton-essai");
+  });
+
+  it("une réponse 200 illisible (une page HTML, un corps vide de sens) : 502, et rien n'est gardé", async () => {
+    fetchSimule.mockResolvedValueOnce(new Response("<html>bienvenue</html>", { status: 200, headers: { "content-type": "text/html" } }));
+    expect(await refusAsync(() => atelier.clients())).toMatchObject({ statut: 502, message: TA.atelierRefus });
+    expect(await atelier.clients()).toEqual({ clients: [], porte: true });
+    expect(fetchSimule).toHaveBeenCalledTimes(2);
+    oublier();
+    fetchSimule.mockResolvedValueOnce(reponse(null));
+    expect(await refusAsync(() => atelier.clients())).toMatchObject({ statut: 502, message: TA.atelierRefus });
+  });
+
+  it("un corps qui n'arrive jamais : 504 au bout de ATTENTE_MS", async () => {
+    vi.useFakeTimers();
+    fetchSimule.mockImplementation(async (_: string, init: RequestInit) => {
+      const corps = new ReadableStream({ start: (c) => init.signal?.addEventListener("abort", () => c.error(init.signal?.reason)) });
+      return new Response(corps, { status: 200 });
+    });
+    const attente = refusAsync(() => atelier.clients());
+    await vi.advanceTimersByTimeAsync(ATTENTE_MS);
+    expect(await attente).toMatchObject({ statut: 504, message: TA.atelierLent });
+    expect(tailleGarde()).toBe(0);
+  });
+
   it("un refus de l'atelier devient un RefusChamps", async () => {
     fetchSimule.mockResolvedValue(reponse({ erreur: "client inconnu" }, 404));
     expect(await refusAsync(() => atelier.client("garage-essai"))).toMatchObject({ statut: 404, message: "client inconnu", champs: [] });
@@ -141,6 +179,16 @@ describe("la garde en mémoire", () => {
     await vi.advanceTimersByTimeAsync(GARDE_MS);
     await atelier.clients();
     expect(fetchSimule).toHaveBeenCalledTimes(4);
+  });
+
+  it("se vide de ses lectures périmées à chaque lecture", async () => {
+    vi.useFakeTimers();
+    await atelier.clients();
+    await atelier.catalogue();
+    expect(tailleGarde()).toBe(2);
+    await vi.advanceTimersByTimeAsync(GARDE_MS);
+    await atelier.tarifs();
+    expect(tailleGarde()).toBe(1);
   });
 
   it("ne garde pas un refus", async () => {
@@ -167,8 +215,15 @@ describe("le jeton de MEGGA reste sur le serveur", () => {
     for (const f of src) {
       const texte = readFileSync(f, "utf8");
       if (!/^\s*["']use client["']/m.test(texte)) continue;
-      const imports = texte.match(/^import\s+(?!type\b).*from\s+["']@\/lib\/admin\/atelier["']/gm) ?? [];
-      expect(imports, f).toEqual([]);
+      expect(texte.match(IMPORT_VALEUR) ?? [], f).toEqual([]);
     }
+  });
+
+  it("repère un import de valeur, même sur plusieurs lignes, et laisse passer les types", () => {
+    const trouve = (t: string) => (t.match(IMPORT_VALEUR) ?? []).length;
+    expect(trouve('import {\n  atelier,\n  ouRefus,\n} from "@/lib/admin/atelier";')).toBe(1);
+    expect(trouve('import { atelier } from "@/lib/admin/atelier";')).toBe(1);
+    expect(trouve('import type {\n  Alerte,\n  Jours,\n} from "@/lib/admin/atelier";')).toBe(0);
+    expect(trouve('import { Pastille } from "./pastille";\nimport type { Jours } from "@/lib/admin/atelier";')).toBe(0);
   });
 });

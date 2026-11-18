@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { Pastille } from "@/components/admin/pastille";
-import { Tableau } from "@/components/admin/tableau";
+import { Pastille } from "./pastille";
+import { Tableau } from "./tableau";
 import type { Alerte, Jours } from "@/lib/admin/atelier";
 import { estEnCours, texteGenre } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 
 // Le tableau des alertes, partagé par l'écran Alertes (tous les clients du périmètre) et l'onglet Alertes d'un client :
 // quoi (dit en clair, en cours ou résolue), quand, le client (sur l'écran de tous), le détail. Déjà triées par l'appelant.
+// Côté serveur seulement (il lit suivi.ts).
 
 /** En cours : un souci qui dure ; résolue : une panne de conteneur, avec son heure ; un fait passé n'a pas d'état. */
 function EtatAlerte({ alerte }: { alerte: Alerte }) {
@@ -15,13 +16,13 @@ function EtatAlerte({ alerte }: { alerte: Alerte }) {
   return null;
 }
 
-export function TableauAlertes({ alertes, jours, clients }: {
-  alertes: (Alerte & { client: string })[];
+export function TableauAlertes({ alertes, jours, avecClient = false }: {
+  alertes: (Alerte & { client: string; nom?: string })[];
   jours: Jours;
-  /** Les clients (identifiant, nom montré) : leur colonne n'apparaît que sur l'écran de tous. */
-  clients?: Map<string, string>;
+  /** La colonne du client (son nom montré, sinon son identifiant) : sur l'écran de tous seulement. */
+  avecClient?: boolean;
 }) {
-  const colonnes = [TA.quoi, TA.quand, ...(clients ? [TA.client] : []), TA.detail];
+  const colonnes = [TA.quoi, TA.quand, ...(avecClient ? [TA.client] : []), TA.detail];
   return (
     <Tableau
       colonnes={colonnes}
@@ -33,10 +34,10 @@ export function TableauAlertes({ alertes, jours, clients }: {
           <EtatAlerte alerte={a} />
         </span>,
         <span key="quand" className="whitespace-nowrap">{TA.moment(a.quand)}</span>,
-        ...(clients
+        ...(avecClient
           ? [
               <Link key="client" href={`/admin/clients/${encodeURIComponent(a.client)}/alertes?jours=${jours}`} className="font-semibold text-ink hover:underline">
-                {clients.get(a.client) ?? a.client}
+                {a.nom ?? a.client}
               </Link>,
             ]
           : []),

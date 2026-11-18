@@ -33,7 +33,7 @@ cd console && npm run dev
 
 ### L'admin et l'atelier d'essai
 
-L'admin (`/admin`) lit l'atelier. En local, jamais la production : l'atelier d'essai (`agents/atelier_essai.py`), le vrai atelier sur une porte simulée, avec quatre clients fictifs (une boulangerie qui va bien, un garage en panne, une agence en écart, un chalet installé hors Cloudflare). Sa base est dans `.donnees/atelier-essai` ; l'effacer le repeuple. Depuis `console/` :
+L'admin (`/admin`) lit l'atelier. En local, jamais la production : l'atelier d'essai (`agents/atelier_essai.py`), le vrai atelier sur une porte simulée, avec six clients fictifs (une boulangerie qui va bien, un garage en panne, une agence en écart, un chalet installé hors Cloudflare, un fleuriste dont le conteneur ne répond plus, une librairie jamais mise en service). Sa base est dans `.donnees/atelier-essai` ; l'effacer le repeuple. Depuis `console/` :
 
 ```bash
 ATELIER_JETON=<un jeton> ../.venv/bin/python -m uvicorn atelier_essai:app --app-dir agents --host 127.0.0.1 --port 8198
