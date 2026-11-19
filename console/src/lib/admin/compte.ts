@@ -34,7 +34,9 @@ export function lirePhotoEnvoyee(corps: unknown): { donnees: string; type: strin
 export function detailPhoto(corps: unknown): { type: string | null; octets: number | null } {
   const type = estObjet(corps) && typeof corps.type === "string" ? corps.type.slice(0, 40) : null;
   const donnees = estObjet(corps) && typeof corps.donnees === "string" ? corps.donnees : null;
-  const octets = donnees === null ? null : Math.max(0, Math.floor((donnees.length * 3) / 4) - (donnees.match(/=*$/)?.[0].length ?? 0));
+  // En temps constant, sur un corps de n'importe quelle taille (même refusé 413) : jamais d'expression régulière ici.
+  const remplissage = donnees === null ? 0 : donnees.endsWith("==") ? 2 : donnees.endsWith("=") ? 1 : 0;
+  const octets = donnees === null ? null : Math.max(0, Math.floor((donnees.length * 3) / 4) - remplissage);
   return { type, octets };
 }
 

@@ -116,7 +116,7 @@ export function PhotoCompte({ nom, image }: { nom: string; image: string | null 
     <section className={cadre}>
       <h2 className={titreBloc}>{TA.photo}</h2>
       <div className="flex flex-wrap items-center gap-4">
-        <Avatar nom={nom} image={apercu?.url ?? image} taille={96} />
+        <Avatar nom={nom} image={image} apercu={apercu?.url} taille={96} />
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <input
             ref={choix}

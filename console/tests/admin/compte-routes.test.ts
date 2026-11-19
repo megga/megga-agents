@@ -8,6 +8,7 @@ import { lireJournal } from "@/lib/admin/journal";
 import { lirePhoto } from "@/lib/admin/photo";
 import { TA } from "@/lib/admin/textes";
 import { optionsAuth } from "@/lib/auth";
+import { T } from "@/lib/textes";
 import type { Base } from "@/lib/donnees/base";
 import { acces, baseEssai, membre } from "./aides";
 
@@ -31,7 +32,7 @@ vi.mock("@/lib/auth", async (original) => ({
 
 beforeEach(async () => {
   etat.db = await baseEssai();
-  etat.auth = betterAuth({ ...optionsAuth(etat.db, { CONSOLE_INSCRIPTION: "ouverte" }), secret: SECRET }) as Auth;
+  etat.auth = betterAuth({ ...optionsAuth(etat.db, { CONSOLE_INSCRIPTION: "ouverte" }), secret: SECRET, baseURL: "http://localhost:3000" }) as Auth;
 });
 
 /** Le cookie que le navigateur renverrait, d'après les Set-Cookie d'une réponse de Better Auth. */
@@ -114,6 +115,76 @@ describe("la photo de son compte", () => {
     const [ligne] = await journal();
     expect(ligne).toMatchObject({ action: "compte.photo", resultat: "refuse 400" });
     expect(JSON.stringify(ligne)).not.toContain(svg);
+  });
+});
+
+describe("le champ image, hors de l'envoi vérifié", () => {
+  /** POST /api/auth/update-user, comme un navigateur l'enverrait à Better Auth, avec la session de ce cookie. */
+  const majParBetterAuth = (cookie: string, corps: unknown) =>
+    etat.auth.handler(new Request("http://localhost:3000/api/auth/update-user", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie },
+      body: JSON.stringify(corps),
+    }));
+
+  it("/api/auth/update-user refuse une adresse d'ailleurs, une data: URI ou la photo d'un autre compte ; l'image ne change pas", async () => {
+    const c = await membreInscrit();
+    const autre = await inscrire("autre@megga.test");
+    const { image: adresse } = await (await appel(poserPhoto, "PUT", c.cookie, photo)).json();
+    const refusees = [
+      "https://exemple.test/x.png",
+      `data:image/png;base64,${photo.donnees}`,
+      `/api/compte/photo/${autre.id}?v=0123456789ab`,
+      `/api/compte/photo/${c.id}?v=pas-hexa-123`,
+      `/api/compte/photo/${c.id}?v=0123456789ab&x=1`,
+      "//exemple.test/api/compte/photo/x?v=0123456789ab",
+    ];
+    for (const valeur of refusees) {
+      const r = await majParBetterAuth(c.cookie, { image: valeur });
+      expect(r.status, valeur).toBe(400);
+      expect(await r.json(), valeur).toMatchObject({ code: "IMAGE_REFUSEE", message: T.imageRefusee });
+      expect(await image(c.id), valeur).toBe(adresse);
+    }
+    // Un compte qui n'est pas membre non plus, même pour la sienne d'avant.
+    expect((await majParBetterAuth(autre.cookie, { image: "https://exemple.test/x.png" })).status).toBe(400);
+    expect(await image(autre.id)).toBeNull();
+    // null (retirer) passe, et le nom seul aussi.
+    expect((await majParBetterAuth(c.cookie, { image: null })).status).toBe(200);
+    expect(await image(c.id)).toBeNull();
+    expect((await majParBetterAuth(c.cookie, { name: "Chef" })).status).toBe(200);
+  });
+
+  it("l'envoi vérifié pose toujours l'image ; une inscription ne garde aucune image", async () => {
+    const c = await membreInscrit();
+    const r = await appel(poserPhoto, "PUT", c.cookie, photo);
+    expect(r.status).toBe(200);
+    expect(await image(c.id)).toMatch(new RegExp(`^/api/compte/photo/${c.id}\\?v=[0-9a-f]{12}$`));
+    const { response } = await etat.auth.api.signUpEmail({
+      body: { name: "Neuf", email: "neuf@megga.test", password: "mot-de-passe-neuf", image: "https://exemple.test/x.png" },
+      returnHeaders: true,
+    });
+    expect(await image(response.user.id)).toBeNull();
+  });
+});
+
+describe("un corps de photo démesuré", () => {
+  it("est refusé 413 vite, sans travail en proportion de sa taille", async () => {
+    const c = await membreInscrit();
+    for (const donnees of ["=".repeat(300_000), "A".repeat(300_000), "=".repeat(300_000) + "x"]) {
+      const debut = performance.now();
+      const r = await appel(poserPhoto, "PUT", c.cookie, { donnees, type: "image/png" });
+      expect(r.status).toBe(413);
+      expect(performance.now() - debut, donnees.slice(-3)).toBeLessThan(1000);
+    }
+    // Juste sous la limite, un base64 mal formé est refusé 400, vite aussi.
+    const debut = performance.now();
+    const r = await appel(poserPhoto, "PUT", c.cookie, { donnees: "=".repeat(273_000) + "x", type: "image/png" });
+    expect(r.status).toBe(400);
+    expect(performance.now() - debut).toBeLessThan(1000);
+    expect(await lirePhoto(etat.db, c.id)).toBeUndefined();
+    const lignes = await journal();
+    expect(lignes.map((l) => l.resultat)).toEqual(["refuse 400", "refuse 413", "refuse 413", "refuse 413"]);
+    expect(lignes[1].detail).toEqual({ type: "image/png", octets: 225_000 });
   });
 });
 

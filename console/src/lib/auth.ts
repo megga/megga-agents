@@ -9,6 +9,7 @@ import { invitationPour } from "./admin/invitations";
 import { noterConnexion } from "./admin/usage";
 import { donnees, pret } from "./base";
 import type { Base } from "./donnees/base";
+import { estAdressePhoto } from "./photo-adresse";
 import { T } from "./textes";
 
 type Fournisseurs = NonNullable<BetterAuthOptions["socialProviders"]>;
@@ -68,6 +69,19 @@ async function verifierInvitation(b: Base, courriel: string, ctx: { path?: strin
 }
 
 /**
+ * Le champ image d'un compte n'est jamais que null ou l'adresse de sa propre photo (photo-adresse.ts), posée par la route
+ * vérifiée de Mon compte : /update-user de Better Auth, ouvert à toute session, ne peut y mettre une adresse d'ailleurs, une
+ * data: URI ou la photo d'un autre compte. Le compte visé est celui de la session de la requête : sans session, rien d'autre
+ * que null ne s'écrit.
+ */
+function verifierImageEcrite(u: Record<string, unknown>, ctx: { context?: { session?: { user?: { id?: string } } | null } } | null): void {
+  if (!("image" in u) || u.image === null || u.image === undefined) return;
+  const id = ctx?.context?.session?.user?.id;
+  if (id && estAdressePhoto(u.image, id)) return;
+  throw new APIError("BAD_REQUEST", { code: "IMAGE_REFUSEE", message: T.imageRefusee });
+}
+
+/**
  * Les quinze routes HTTP de l'extension admin de Better Auth (ban-user, impersonate-user, set-role…), toutes fermées : ses
  * rôles ne servent pas. L'extension ne sert qu'au bannissement, écrit côté serveur par les routes gardées de l'admin (comptes.ts).
  */
@@ -89,7 +103,17 @@ export function optionsAuth(b: Base = donnees(), env: Env = process.env): Better
     ...(ouverte ? {} : { account: { accountLinking: { enabled: false } } }),
     telemetry: { enabled: false },
     databaseHooks: {
-      user: { create: { before: async (u, ctx) => (ouverte ? undefined : verifierInvitation(b, u.email, ctx)) } },
+      user: {
+        // À la création, aucune image : celle d'un fournisseur (Google, Microsoft) ou d'un corps d'inscription n'est pas gardée,
+        // sans refuser l'inscription ; la photo se pose ensuite depuis Mon compte.
+        create: {
+          before: async (u, ctx) => {
+            if (!ouverte) await verifierInvitation(b, u.email, ctx);
+            return u.image ? { data: { ...u, image: null } } : undefined;
+          },
+        },
+        update: { before: async (u, ctx) => verifierImageEcrite(u, ctx as Parameters<typeof verifierImageEcrite>[1]) },
+      },
       session: { create: { after: async (s) => noterSansBloquer(b, s.userId) } },
     },
     disabledPaths: CHEMINS_ADMIN_FERMES,

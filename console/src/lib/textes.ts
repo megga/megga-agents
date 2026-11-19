@@ -21,6 +21,7 @@ export const T = {
   erreurMotDePasse: "Le mot de passe fait 8 caractères au moins.",
   erreurGenerale: "Un souci est survenu. Réessayez.",
   inscriptionSurInvitation: "Un compte se crée depuis un lien d'invitation.", // nouveau
+  imageRefusee: "La photo d'un compte se change depuis Mon compte, dans l'admin.", // nouveau
   compteSuspendu: "Ce compte est suspendu : il ne peut plus se connecter. Contactez MEGGA pour en savoir plus.", // nouveau
   pageIntrouvable: "Page introuvable", // nouveau
   retourAccueil: "Retour à l'accueil", // nouveau

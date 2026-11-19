@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { Refus } from "@/lib/agents";
 import type { Base } from "@/lib/donnees/base";
+import { adressePhoto } from "@/lib/photo-adresse";
 import { TA } from "./textes";
 
 // La photo de profil d'un compte, rangée dans la base de la console (compte_photo) et servie par
@@ -40,9 +41,6 @@ function decoder(donnees: unknown): Uint8Array {
   if (donnees.length % 4 !== 0 || !BASE64.test(donnees)) throw new Refus(400, TA.photoInvalide);
   return new Uint8Array(Buffer.from(donnees, "base64"));
 }
-
-/** L'adresse de la photo d'un compte, à mettre dans le champ image de Better Auth ; la version change avec la photo. */
-export const adressePhoto = (utilisateur: string, version: string) => `/api/compte/photo/${encodeURIComponent(utilisateur)}?v=${version}`;
 
 /** Décode, vérifie, range (remplace la précédente) ; rend l'adresse de la photo. */
 export async function poserPhoto(b: Base, utilisateur: string, donneesBase64: string, typeAnnonce: string, maintenant = new Date()): Promise<string> {
