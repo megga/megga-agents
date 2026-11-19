@@ -73,6 +73,8 @@ class Conversations(Envois, Autour):
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
         self.agents = agents or {}
+        # async f() appelée pendant l'attente d'un tour (packs/immobilier/reglages.py) ; aucune par défaut.
+        self.avant_le_tour = None
         # Les médias reçus, numérotés par personne (stockage.Medias) ; sans eux, numérotés dans le tour seulement.
         self.medias = medias
         self.exp = expediteur
@@ -190,7 +192,11 @@ class Conversations(Envois, Autour):
             b.tache = self._lancer(self._attendre(m.de))
 
     async def _attendre(self, personne: str) -> None:
-        await asyncio.sleep(self.attente)
+        # Ce qui doit être à jour avant de répondre (les réglages que le client change lui-même, packs) : pendant l'attente.
+        if self.avant_le_tour is not None:
+            await asyncio.gather(asyncio.sleep(self.attente), self._sans_echec(self.avant_le_tour()))
+        else:
+            await asyncio.sleep(self.attente)
         b = self._boites.pop(personne)
         await self._tour(personne, b.messages, b.role)
 

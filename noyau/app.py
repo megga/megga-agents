@@ -327,6 +327,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                       if conf.whatsapp else SansWhatsApp())
     # La gestion du site du client, pour les outils qui agissent au nom d'un gestionnaire (packs).
     gestion = None
+    services = None
+    fabriquer = None
     if conf.gestion is not None and env.get("GESTION_CLE"):
         from packs.immobilier.gestion import Gestion
 
@@ -379,21 +381,28 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             juger = _juge(conf, cles)
         if decrire is None and conf.photos.decrire:
             decrire = _descripteur(conf, cles)
-        agent = construire(conf, base, cles, outils=outils_du_client(conf, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
         # Les collègues de l'agent (Config.collegues) et le relais qui leur porte ses questions (noyau/echanges.py).
         relais = relais_des_collegues(conf, base, cles, env["DATABASE_URL"], journal)
 
         async def des_collegues(personne: str) -> str:
             return relais.consigne(PRINCIPAL)
 
-        # Un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous, et le Contexte de
-        # chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs).
-        agents = agents or {nom: construire(conf, base, cles,
-                                            outils=outils_du_client(conf, rappels, role.outils, services, relations, memoire, relais),
-                                            role=role, nom_role=nom,
-                                            contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None,
-                                                              des_collegues if "collegues" in role.outils else None))
-                            for nom, role in conf.les_roles().items()}
+        def fabriquer(c: configuration.Config):
+            """L'agent de tous, et un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous,
+            et le Contexte de chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs ; ses
+            collègues, pour un rôle qui a le groupe « collegues »).
+            Refait quand les réglages du client changent ses modèles (packs/immobilier/reglages.py)."""
+            un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
+            par_role = {nom: construire(c, base, cles,
+                                        outils=outils_du_client(c, rappels, role.outils, services, relations, memoire, relais),
+                                        role=role, nom_role=nom,
+                                        contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None,
+                                                          des_collegues if "collegues" in role.outils else None))
+                        for nom, role in c.les_roles().items()}
+            return un, par_role
+
+        agent, par_role = fabriquer(conf)
+        agents = agents or par_role
     if conf.les_roles() and agents is None:
         raise RuntimeError("des rôles sans agents")
     if voie is None and env.get("ELEVENLABS_API_KEY"):
@@ -407,6 +416,23 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     tenues["conversations"] = conversations
     if relais is not None:  # une question à un collègue compte dans le plafond du jour de la personne qui l'a provoquée
         relais.permis = conversations.echange_permis
+    # Les paramètres que le courtier règle lui-même dans sa gestion (packs/immobilier/reglages.py) : relus pendant l'attente
+    # de chaque tour, posés par-dessus la version en service, sans redémarrer.
+    if gestion is not None and personnes.gestionnaires:
+        from packs.immobilier.reglages import ReglagesDeLaGestion
+
+        def servir(nouvelle: configuration.Config) -> None:
+            avant = conversations.conf
+            conversations.conf = nouvelle
+            app.state.config = nouvelle
+            if conversations.voie is not None:
+                conversations.voie.reglages = nouvelle.voix
+            if services is not None:
+                services.bonjour = nouvelle.bonjour
+            if fabriquer is not None and nouvelle.modeles != avant.modeles:
+                conversations.agent, conversations.agents = fabriquer(nouvelle)
+
+        conversations.avant_le_tour = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir).rafraichir
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
@@ -433,7 +459,12 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel ni pour le relancer
         # sur une nouvelle configuration : il veille lui-même.
         veille = asyncio.create_task(veiller(arret)) if (chez_le_client and rappels is not None) or ordres is not None else None
+        # Les réglages que le client change lui-même (packs/immobilier/reglages.py), lus dès le démarrage : un rappel ou le mot
+        # du matin qui partent avant tout message les suivent déjà.
+        relus = asyncio.create_task(conversations._sans_echec(conversations.avant_le_tour())) if conversations.avant_le_tour else None
         yield
+        if relus is not None and not relus.done():
+            relus.cancel()
         # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
         # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
         arret.set()

@@ -270,6 +270,9 @@ class Envois:
     async def envoyer_rappels_echus(self, maintenant: float) -> dict:
         """Appelé par la porte à l'heure d'un rappel : envoie ce qui est échu, rend le prochain."""
         bilan = {"libre": 0, "modele": 0, "attente": 0, "echec": 0}
+        # Les réglages que le client change lui-même (le mot du matin, la voix…) avant ce qui part à l'heure dite.
+        if self.avant_le_tour is not None:
+            await self._sans_echec(self.avant_le_tour())
         if self.journal is not None and maintenant >= self._purge_le:  # le journal ne grossit pas sans fin
             self._purge_le = maintenant + 86400
             await self._sans_echec(asyncio.to_thread(self.journal.purger, maintenant - GARDE_JOURNAL))
