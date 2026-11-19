@@ -11,6 +11,12 @@ import { EXTERNE_ESSAI, ORDINAIRE_ESSAI, SUPERADMIN_ESSAI } from "./compte";
 
 test.describe.configure({ mode: "serial", timeout: 120_000 });
 
+// Une adresse de client à ces parcours, comme la transmettrait un relais. Sans elle, en production, Better Auth compte les
+// connexions de tout le monde ensemble (trois en dix secondes par chemin) : ces parcours épuisaient le compte de ceux de la
+// console, joués juste après sur le même serveur.
+const ADRESSE = { "x-forwarded-for": "198.51.100.65" };
+test.use({ extraHTTPHeaders: ADRESSE });
+
 type Session = Awaited<ReturnType<BrowserContext["storageState"]>>;
 /**
  * La session du superadmin, gardée à la fin du premier parcours : les suivants la reprennent au lieu de se reconnecter. En
@@ -20,7 +26,7 @@ let sessionChef: Session | undefined;
 
 /** Un navigateur à part (les réglages de playwright.config.ts), avec une session gardée s'il en faut une. */
 const navigateur = (browser: Browser, baseURL: string | undefined, storageState?: Session) =>
-  browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 }, storageState });
+  browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 }, storageState, extraHTTPHeaders: ADRESSE });
 
 /** Le superadmin du premier parcours, déjà connecté, sur la vue d'ensemble. */
 async function superadmin(browser: Browser, baseURL: string | undefined): Promise<{ contexte: BrowserContext; page: Page }> {
