@@ -1786,17 +1786,18 @@ class Echanges:
             Column("profondeur", Integer, nullable=False, default=0),
             Column("etat", String(12), nullable=False, default="remis"),
             Column("limite", Float, nullable=True),
+            Column("conclure", Integer, nullable=False, default=0),  # la dernière question permise de la chaîne
         )
 
     def deposer(self, ident: str, de: str, a: str, texte: str, origine: str | None = None, profondeur: int = 0,
                 reponse_a: str | None = None, limite: float | None = None, etat: str = "remis",
-                quand: float | None = None) -> bool:
+                quand: float | None = None, conclure: bool = False) -> bool:
         """Range un message. Faux si ce message (même identifiant) est déjà rangé : il ne compte qu'une fois."""
         try:
             with self._e.begin() as c:
                 c.execute(insert(self._t).values(id=ident, quand=quand or time.time(), de=de[:63], a=a[:63], texte=texte or "",
                                                  reponse_a=reponse_a, origine=origine or ident, profondeur=profondeur,
-                                                 etat=etat, limite=limite))
+                                                 etat=etat, limite=limite, conclure=int(conclure)))
             return True
         except IntegrityError:
             return False

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from noyau import stockage
-from noyau.echanges import PASSE, Collegue, Relais, collegue_agno
+from noyau.echanges import CONCLURE, PASSE, Collegue, Relais, collegue_agno
 
 
 def run(coro):
@@ -18,7 +18,7 @@ def depot(tmp_path):
 
 
 def collegue(nom, metier, reponse):
-    async def repondre(question, de, origine):
+    async def repondre(question, de, origine, conclure=False):
         return reponse(question, de, origine) if callable(reponse) else reponse
 
     return Collegue(nom, metier, repondre)
@@ -51,7 +51,7 @@ def test_le_collegue_passe(depot):
 
 
 def test_hors_delai(depot):
-    async def lent(question, de, origine):
+    async def lent(question, de, origine, conclure=False):
         await asyncio.sleep(5)
         return "trop tard"
 
@@ -61,7 +61,7 @@ def test_hors_delai(depot):
 
 
 def test_echec_sans_fuite(depot):
-    async def casse(question, de, origine):
+    async def casse(question, de, origine, conclure=False):
         raise RuntimeError("clé sk-secret refusée")
 
     relais = Relais(depot, {"lea": Collegue("Léa", "comptabilité", casse)})
@@ -81,10 +81,10 @@ def test_refus(depot, de, a, texte, motif):
 def test_la_chaine_et_ses_relais(depot):
     relais = Relais(depot, relais=2)
 
-    async def lea(question, de, origine):
+    async def lea(question, de, origine, conclure=False):
         return "Sam dit : " + (await relais.demander("lea", "sam", "Le virement est-il parti ?")).texte
 
-    async def sam(question, de, origine):
+    async def sam(question, de, origine, conclure=False):
         encore = await relais.demander("sam", "alix", "Et toi ?")  # un relais de trop
         return f"Parti hier ({encore.etat})."
 
@@ -94,14 +94,14 @@ def test_la_chaine_et_ses_relais(depot):
     r = run(relais.demander("alix", "lea", "La facture 12 est-elle payée ?"))
     assert r.texte == "Sam dit : Parti hier (refuse)."
     chaine = depot.chaine(r.id)
-    assert [(l["de"], l["a"], l["profondeur"], l["etat"]) for l in chaine if l["reponse_a"] is None] == [
-        ("alix", "lea", 0, "repondu"), ("lea", "sam", 1, "repondu"), ("sam", "alix", 2, "refuse")]
+    assert [(l["de"], l["a"], l["profondeur"], l["etat"], l["conclure"]) for l in chaine if l["reponse_a"] is None] == [
+        ("alix", "lea", 0, "repondu", 0), ("lea", "sam", 1, "repondu", 1), ("sam", "alix", 2, "refuse", 0)]
 
 
 def test_un_agent_repond_a_une_demande_a_la_fois(depot):
     en_cours, maximum = [0], [0]
 
-    async def lea(question, de, origine):
+    async def lea(question, de, origine, conclure=False):
         en_cours[0] += 1
         maximum[0] = max(maximum[0], en_cours[0])
         await asyncio.sleep(0.02)
@@ -131,13 +131,54 @@ def test_un_agent_agno_comme_collegue(depot):
 
     class Agent:
         async def arun(self, message, user_id=None, session_id=None):
+            vus.setdefault("messages", []).append(message)
             vus.update(message=message, user_id=user_id, session_id=session_id)
             return type("Sortie", (), {"content": "Payée."})()
 
     relais = Relais(depot, {"lea": collegue_agno(Agent(), "Léa", "comptabilité")})
     r = run(relais.demander("alix", "lea", "La facture 12 ?"))
     assert r.texte == "Payée." and vus["user_id"] == "collegue:alix" and vus["session_id"] == f"echange:{r.id}"
-    assert "La facture 12 ?" in vus["message"]
+    assert "La facture 12 ?" in vus["message"] and CONCLURE not in vus["message"]
+    relais = Relais(depot, {"lea": collegue_agno(Agent(), "Léa", "comptabilité")}, relais=1)
+    run(relais.demander("alix", "lea", "Et la 13 ?"))
+    assert vus["message"].endswith(CONCLURE)  # un seul relais permis : cette question est la dernière
+
+
+def test_deux_agents_qui_se_relancent_s_arretent(depot):
+    relais = Relais(depot, relais=50, allers=4)
+    vus = []
+
+    def renvoie(moi, autre):
+        async def repondre(question, de, origine, conclure=False):
+            vus.append((moi, conclure))
+            suite = await relais.demander(moi, autre, "Et toi, qu'en penses-tu ?")
+            return f"{moi} ({suite.etat})"
+
+        return repondre
+
+    relais.inscrire("alix", Collegue("Alix", "accueil", renvoie("alix", "lea")))
+    relais.inscrire("lea", Collegue("Léa", "comptabilité", renvoie("lea", "alix")))
+    r = run(relais.demander("alix", "lea", "La facture 12 est-elle payée ?"))
+    assert r.etat == "repondu"
+    demandes = [l for l in depot.chaine(r.id) if l["reponse_a"] is None]
+    assert [l["etat"] for l in demandes] == ["repondu"] * 4 + ["refuse"]  # quatre questions, la cinquième ne part pas
+    assert [l["conclure"] for l in demandes] == [0, 0, 0, 1, 0]
+    assert vus == [("lea", False), ("alix", False), ("lea", False), ("alix", True)]
+    (outil,) = relais.outils("alix")
+    assert "N'insiste pas" not in run(outil("lea", "Autre sujet ?"))  # une nouvelle chaîne repart de zéro
+
+
+def test_une_base_d_avant_recoit_la_colonne(tmp_path):
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path}/vieille.db"
+    with stockage.moteur(url).begin() as c:
+        c.execute(text("CREATE TABLE megga_echanges (ordre INTEGER PRIMARY KEY AUTOINCREMENT, id VARCHAR(32) NOT NULL UNIQUE, "
+                       "quand FLOAT NOT NULL, de VARCHAR(63) NOT NULL, a VARCHAR(63) NOT NULL, texte TEXT NOT NULL, "
+                       "reponse_a VARCHAR(32), origine VARCHAR(32) NOT NULL, profondeur INTEGER NOT NULL, "
+                       "etat VARCHAR(12) NOT NULL, limite FLOAT)"))
+    depot = stockage.Echanges(url)
+    assert depot.deposer("m1", "alix", "lea", "Bonjour ?") and depot.lire("m1")["conclure"] == 0
 
 
 def test_la_table_est_preparee(tmp_path):
