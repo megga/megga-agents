@@ -87,6 +87,7 @@ test("de l'inscription à la première réponse d'un agent", async ({ page }) =>
   // Déconnexion, puis connexion.
   await page.getByRole("button", { name: "Compte et réglages" }).click();
   await page.getByRole("menuitem", { name: "Se déconnecter" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Se déconnecter", exact: true }).click(); // chaque geste se confirme
   await expect(page).toHaveURL(/\/connexion$/);
   await page.getByLabel("Courriel").fill(COMPTE_ESSAI.courriel);
   await page.getByLabel("Mot de passe").fill("pas-le-bon-mot");
