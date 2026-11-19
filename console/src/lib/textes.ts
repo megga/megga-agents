@@ -48,6 +48,11 @@ export const T = {
     `Bonjour, je suis ${prenom}. Essayez-moi : écrivez-moi comme le ferait un de vos clients, et dites-moi ce que je dois changer.`,
   apercuAccueil: (prenom: string, qui: string) => `Bonjour, je suis ${prenom}, ${qui}.`,
   sansReponse: "Pas de réponse pour l'instant. Réessayez dans un instant.", // nouveau
+  // Les échanges entre agents, en simples lignes de texte (maquette du 17.11.2026)
+  consulte: (agent: string, collegue: string) => `${agent} consulte ${collegue}…`,
+  aDemandeA: (agent: string, collegue: string) => `${agent} a demandé à ${collegue}`,
+  citation: (texte: string) => `«\u00a0${texte}\u00a0»`, // nouveau
+  unCollegue: "un collègue", // nouveau
 
   // Sans agent : la mascotte et ce bouton (nouveau)
   creerUnAgent: "Créer un agent",

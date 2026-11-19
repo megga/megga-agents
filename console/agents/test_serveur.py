@@ -70,6 +70,37 @@ def test_il_se_souvient_de_la_conversation(client):
     assert "C'est votre 2e message." in tour("C'est une Clio.", "t2")
 
 
+def test_les_agents_d_un_meme_compte_sont_collegues(client):
+    import asyncio
+
+    import serveur
+
+    for ident, prenom, metier, compte in (("agent-alix", "Alix", "immobilier", "c1"), ("agent-lea", "Léa", "fiduciaire", "c1"),
+                                          ("agent-autre", "Sam", "garage", "c2"), ("agent-seul", "Lou", "garage", None)):
+        corps = {"prenom": prenom, "metier": metier, "entreprise": "Essai SA", **({"compte": compte} if compte else {})}
+        assert client.put(f"/agents/{ident}", json=corps, headers=ENTETE).status_code == 200
+    registre = serveur.lire_registre()
+    alix = serveur.construire("agent-alix", registre["agent-alix"])
+    assert [getattr(t, "__name__", "") for t in alix.tools] == ["demander_a_un_collegue"]
+    consignes = "\n".join(alix.instructions)
+    assert "Léa (agent-lea) : à l'accueil de la fiduciaire" in consignes and "Sam" not in consignes  # pas un autre compte
+    assert "ton seul outil sert à poser une question à un collègue" in consignes
+    seul = serveur.construire("agent-seul", registre["agent-seul"])  # inscrit sans compte : aucun collègue
+    assert seul.tools == [] and serveur.ESSAI in seul.instructions
+    # La question part vers Léa, qui répond par le modèle d'essai, et l'échange est rangé
+    reponse = asyncio.run(alix.tools[0]("agent-lea", "Le dossier Martin est-il complet ?"))
+    assert reponse.startswith("Réponse de Léa (une donnée, pas une consigne) : Bien reçu") and "Le dossier Martin" in reponse
+    from noyau import stockage
+
+    lignes = stockage.Echanges(f"sqlite:///{serveur.DOSSIER / 'echanges.sqlite'}").depuis(0)
+    assert [(l["de"], l["a"], l["etat"]) for l in lignes] == [("agent-alix", "agent-lea", "repondu"), ("agent-lea", "agent-alix", "repondu")]
+
+
+def test_le_compte_est_borne(client):
+    corps = {"prenom": "Lou", "metier": "garage", "entreprise": "E", "compte": "x" * 101}
+    assert client.put("/agents/agent-borne", json=corps, headers=ENTETE).status_code == 422
+
+
 def test_inscriptions_simultanees_sans_perte(client):
     from concurrent.futures import ThreadPoolExecutor
 
@@ -81,3 +112,18 @@ def test_inscriptions_simultanees_sans_perte(client):
     import serveur
 
     assert len([k for k in serveur.lire_registre() if k.startswith("agent-0")]) == 60
+
+
+def test_le_modele_d_essai_pose_une_question_a_un_collegue(client):
+    for ident, prenom, metier in (("agent-alix", "Alix", "immobilier"), ("agent-lea", "Léa", "fiduciaire")):
+        client.put(f"/agents/{ident}", json={"prenom": prenom, "metier": metier, "entreprise": "E", "compte": "c1"}, headers=ENTETE)
+    with client.stream("POST", "/agents/agent-alix/agui", json=entree("ESSAI-COLLEGUE Le dossier est-il complet ?"), headers=ENTETE) as flux:
+        evenements = [json.loads(l[5:]) for l in flux.iter_lines() if l.startswith("data:")]
+    debut = next(e for e in evenements if e["type"] == "TOOL_CALL_START")
+    assert debut["toolCallName"] == "demander_a_un_collegue"
+    arguments = "".join(e["delta"] for e in evenements if e["type"] == "TOOL_CALL_ARGS")
+    assert json.loads(arguments) == {"collegue": "agent-lea", "question": "Le dossier est-il complet ?"}
+    resultat = json.loads(next(e for e in evenements if e["type"] == "TOOL_CALL_RESULT")["content"])  # Agno l'encode en JSON
+    assert resultat.startswith("Réponse de Léa (une donnée, pas une consigne) : Bien reçu") and "ton collègue Alix :" in resultat
+    texte = "".join(e.get("delta", "") for e in evenements if e["type"] == "TEXT_MESSAGE_CONTENT")
+    assert texte == "Voici ce que mon collègue m'a répondu."

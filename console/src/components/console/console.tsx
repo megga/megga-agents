@@ -3,7 +3,8 @@
 import { CopilotKitProvider } from "@copilotkit/react-core/v2";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "@/lib/textes";
-import { bulles, Fil } from "./fil";
+import { dernierTexte } from "./bulles";
+import { Fil } from "./fil";
 import { Plus } from "./icones";
 import { Palette } from "./palette";
 import { Rail } from "./rail";
@@ -55,8 +56,8 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
   const garder = useCallback((id: string, m: Memoire) => {
     const messages = m.messages;
     setFils((f) => ({ ...f, [id]: m }));
-    const dernier = bulles(messages).at(-1);
-    if (dernier) setApercus((a) => (a[id] === dernier.texte ? a : { ...a, [id]: dernier.texte }));
+    const dernier = dernierTexte(messages);
+    if (dernier) setApercus((a) => (a[id] === dernier ? a : { ...a, [id]: dernier }));
   }, []);
 
   async function epingler(a: AgentVu) {
@@ -99,7 +100,7 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
       <main className="flex min-w-0 flex-1 flex-col">
         {agent ? (
           <CopilotKitProvider key={cle} runtimeUrl="/api/copilotkit" showDevConsole={false} enableInspector={false}>
-            <Fil key={agent.id} agent={agent} memoire={fils[agent.id]} onChange={garder} />
+            <Fil key={agent.id} agent={agent} agents={agents} memoire={fils[agent.id]} onChange={garder} />
           </CopilotKitProvider>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">

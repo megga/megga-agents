@@ -160,7 +160,7 @@ def relais_des_collegues(conf, base, cles, url: str, journal=None, modele_des_co
     Un collègue ne reçoit que les outils de sa fiche, et peut interroger les autres collègues."""
     if not conf.collegues:
         return None
-    relais = Relais(stockage.Echanges(url), journal=journal)
+    relais = Relais(stockage.Echanges(url), journal=journal, noms={PRINCIPAL: conf.nom_agent})
     fiches = {}
     for ident, c in conf.collegues.items():  # d'abord les fiches : chacun connaît le prénom et le métier des autres
         fiches[ident] = c

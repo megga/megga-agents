@@ -5,32 +5,20 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { T } from "@/lib/textes";
 import { Fleche } from "./icones";
 import { Tete } from "./tete";
+import { bulles, texteDe, type MessageAgui } from "./bulles";
 import type { AgentVu, Bulle, Memoire } from "./types";
 
-type MessageAgui = { id: string; role: string; content?: unknown };
-
-function texteDe(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content.map((p) => (p && typeof p === "object" && "text" in p ? String((p as { text: unknown }).text ?? "") : "")).join("");
-  }
-  return "";
-}
-
-export function bulles(messages: readonly MessageAgui[]): Bulle[] {
-  return messages
-    .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ id: m.id, role: m.role as Bulle["role"], texte: texteDe(m.content) }))
-    .filter((b) => b.texte.trim() !== "");
-}
+export { bulles } from "./bulles";
 
 /** La conversation avec un agent et sa barre de saisie, branchées par CopilotKit (AG-UI). */
 export function Fil({
   agent: a,
+  agents,
   memoire,
   onChange,
 }: {
   agent: AgentVu;
+  agents: AgentVu[];
   memoire: Memoire | undefined;
   onChange: (id: string, memoire: Memoire) => void;
 }) {
@@ -56,13 +44,16 @@ export function Fil({
 
   const messages = bulles(agent.messages as MessageAgui[]);
   const enCours = agent.isRunning;
-  const attend = enCours && messages.at(-1)?.role !== "assistant";
+  const fin = messages.at(-1);
+  // Les trois points, sauf quand l'agent attend un collègue : sa ligne le dit déjà.
+  const attend = enCours && fin?.role !== "assistant" && !(fin?.role === "echange" && fin.reponse === null);
+  const prenomDe = (id: string) => agents.find((x) => x.id === id)?.prenom ?? T.unCollegue;
 
   useEffect(() => {
     if (restaure.current && agent.messages.length) onChange(a.id, { threadId: agent.threadId, messages: [...(agent.messages as MessageAgui[])] });
   }, [a.id, agent, agent.messages, agent.messages.length, agent.threadId, enCours, onChange]);
 
-  const dernier = messages.at(-1)?.texte;
+  const dernier = fin?.role === "echange" ? fin.reponse : fin?.texte;
   useLayoutEffect(() => {
     fond.current?.scrollIntoView({ block: "end" });
   }, [messages.length, dernier, attend]);
@@ -116,7 +107,9 @@ export function Fil({
           <div className="text-center text-[12.5px] font-semibold text-faint">{messages.length ? T.aujourdhui : T.nouvelAgent}</div>
           <MessageAgent agent={a} texte={T.accueil(a.prenom)} />
           {messages.map((m) =>
-            m.role === "user" ? (
+            m.role === "echange" ? (
+              <Echange key={m.id} echange={m} agent={a.prenom} collegue={prenomDe(m.collegue)} />
+            ) : m.role === "user" ? (
               <div key={m.id} className="max-w-[75%] self-end rounded-[20px_20px_6px_20px] bg-hover px-4 py-2.5 whitespace-pre-wrap max-[760px]:max-w-[90%]">
                 {m.texte}
               </div>
@@ -172,6 +165,28 @@ export function Fil({
         </form>
       </div>
     </>
+  );
+}
+
+/** Une question de l'agent à un collègue : une ligne de texte, qui se déplie sur la question et la réponse. */
+function Echange({ echange: e, agent, collegue }: { echange: Extract<Bulle, { role: "echange" }>; agent: string; collegue: string }) {
+  if (e.reponse === null) {
+    return (
+      <div className="pl-14 text-[13px] text-muted-ink" aria-live="polite" data-testid="echange">
+        {T.consulte(agent, collegue)}
+      </div>
+    );
+  }
+  return (
+    <details className="group pl-14 text-[13px] text-muted-ink" data-testid="echange">
+      <summary className="w-fit cursor-pointer list-none select-none hover:text-ink [&::-webkit-details-marker]:hidden">
+        {T.aDemandeA(agent, collegue)}
+      </summary>
+      <div className="mt-1.5 flex flex-col gap-1 whitespace-pre-wrap">
+        <div>{T.citation(e.question)}</div>
+        <div className="text-ink">{e.reponse}</div>
+      </div>
+    </details>
   );
 }
 

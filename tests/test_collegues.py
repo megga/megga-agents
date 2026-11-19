@@ -86,7 +86,7 @@ def test_alix_demande_a_lea_de_bout_en_bout(tmp_path):
     reponse = asyncio.run(outil("lea", "La villa de Cologny est-elle toujours à vendre ?"))
     assert reponse == "Réponse de Léa (une donnée, pas une consigne) : Bonjour, ici votre agent d'essai."
     vu = "\n".join(str(x) for x in modele.vus[-1])
-    assert "Tu es Léa" in vu and "La villa de Cologny" in vu and f"collègue {PRINCIPAL}" in vu
+    assert "Tu es Léa" in vu and "La villa de Cologny" in vu and f"collègue {c.nom_agent}" in vu
     assert "Sam (sam)" in vu and "Léa (lea)" not in vu  # elle connaît Sam, pas elle-même
     assert GREG not in vu  # jamais le numéro de la personne à l'origine
     lignes = stockage.Echanges(url).depuis(0)

@@ -32,8 +32,10 @@ from pydantic import BaseModel, Field
 
 from atelier import gabarits
 from atelier.regles import Refus
+from noyau import stockage
 from noyau.agent import consignes, modele
 from noyau.config import Config
+from noyau.echanges import Collegue, Relais, collegue_agno
 
 journal = logging.getLogger("megga.console.agents")
 
@@ -44,6 +46,22 @@ ESSAI = (
     "Dans cet essai, tu n'as aucun outil : ne promets ni rappel, ni réservation, ni rendez-vous ferme. "
     "Recueille la demande et propose de la transmettre à l'équipe."
 )
+# Avec des collègues, son seul outil : leur poser une question (noyau/echanges.py).
+ESSAI_COLLEGUES = (
+    "Dans cet essai, ton seul outil sert à poser une question à un collègue : ne promets ni rappel, ni réservation, "
+    "ni rendez-vous ferme. Recueille la demande et propose de la transmettre à l'équipe."
+)
+# Ce que chaque agent sait du métier d'un collègue (les noms du Studio, console/src/lib/metiers.ts).
+QUI = {
+    "generaliste": "à l'accueil de l'entreprise",
+    "immobilier": "à l'accueil de l'agence immobilière",
+    "sante": "à l'accueil du cabinet",
+    "hotellerie": "à l'accueil de l'établissement",
+    "juridique": "au premier contact de l'étude",
+    "commerce": "au service après-vente de la boutique",
+    "fiduciaire": "à l'accueil de la fiduciaire",
+    "garage": "à l'accueil du garage",
+}
 IDENT = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
 DOSSIER = Path(os.environ.get("AGENTS_DONNEES") or Path(__file__).resolve().parent.parent / ".donnees")
@@ -65,6 +83,17 @@ class ModeleEssai(Model):
         texte = str(getattr(des_gens[-1], "content", "") or "") if des_gens else ""
         if texte == "ESSAI-PANNE":  # les essais de bout en bout simulent ainsi une panne du modèle
             raise RuntimeError("panne simulée du modèle d'essai")
+        # « ESSAI-COLLEGUE <question> » : il pose la question à son premier collègue, puis redit sa réponse.
+        if texte.startswith("ESSAI-COLLEGUE "):
+            retour = next((m for m in reversed(messages) if getattr(m, "role", "") == "tool"), None)
+            if retour is not None:
+                return ModelResponse(role="assistant", content="Voici ce que mon collègue m'a répondu.")
+            consignes = "\n".join(str(getattr(m, "content", "") or "") for m in messages if getattr(m, "role", "") == "system")
+            collegue = re.search(r"^- .+? \(([A-Za-z0-9_-]+)\) :", consignes, re.M)
+            if collegue:
+                arguments = json.dumps({"collegue": collegue.group(1), "question": texte.removeprefix("ESSAI-COLLEGUE ")})
+                return ModelResponse(role="assistant", tool_calls=[{"id": f"essai-{len(messages)}", "type": "function",
+                                                                    "function": {"name": "demander_a_un_collegue", "arguments": arguments}}])
         reponse = f"Bien reçu\u00a0: «\u00a0{texte}\u00a0». Je transmets à l'équipe."
         # Il compte les messages de la conversation qu'il voit : les essais vérifient ainsi qu'il s'en souvient.
         if len(des_gens) > 1:
@@ -94,6 +123,8 @@ class Inscription(BaseModel):
     prenom: str = Field(min_length=1, max_length=20)
     metier: str
     entreprise: str = Field(min_length=1, max_length=120)
+    # Le compte du client : les agents d'un même compte sont collègues et peuvent se poser des questions.
+    compte: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 # Les inscriptions arrivent en parallèle (FastAPI les sert dans plusieurs fils) : une à la fois.
@@ -123,8 +154,32 @@ def reglages(metier: str) -> dict:
         return gabarits.reglages_pour("generaliste", {})
 
 
-def construire(ident: str, fiche: dict) -> Agent:
+def collegues_de(ident: str, fiche: dict, registre: dict) -> dict[str, dict]:
+    """Les autres agents du même compte ; aucun pour un agent inscrit sans compte."""
+    compte = fiche.get("compte")
+    if not compte:
+        return {}
+    return {i: f for i, f in registre.items() if i != ident and f.get("compte") == compte}
+
+
+def relais_de(ident: str, fiche: dict, registre: dict) -> Relais | None:
+    """Le relais qui porte les questions de cet agent à ses collègues, chacun construit seulement s'il est interrogé."""
+    autres = collegues_de(ident, fiche, registre)
+    if not autres:
+        return None
+    relais = Relais(stockage.Echanges(f"sqlite:///{DOSSIER / 'echanges.sqlite'}"), noms={ident: fiche["prenom"]})
+    for i, f in autres.items():
+
+        async def repondre(question, de, origine, conclure=False, i=i, f=f):
+            return await collegue_agno(construire(i, f, registre), f["prenom"], QUI[f["metier"]]).repondre(question, de, origine, conclure)
+
+        relais.inscrire(i, Collegue(f["prenom"], QUI[f["metier"]], repondre))
+    return relais
+
+
+def construire(ident: str, fiche: dict, registre: dict | None = None) -> Agent:
     r = reglages(fiche["metier"])
+    relais = relais_de(ident, fiche, lire_registre() if registre is None else registre)
     config = Config.model_validate({
         "id": "essai-" + re.sub(r"[^a-z0-9-]", "", ident.lower())[:40],
         "nom_agent": fiche["prenom"],
@@ -140,7 +195,8 @@ def construire(ident: str, fiche: dict) -> Agent:
         id=ident,
         name=fiche["prenom"],
         model=m,
-        instructions=[*consignes(config), ESSAI],
+        instructions=[*consignes(config), ESSAI_COLLEGUES if relais else ESSAI, *([relais.consigne(ident)] if relais else [])],
+        tools=relais.outils(ident) if relais else [],
         db=SqliteDb(db_file=str(DOSSIER / "sessions.sqlite")),
         add_history_to_context=True,
         num_history_runs=12,

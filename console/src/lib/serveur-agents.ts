@@ -16,7 +16,8 @@ export function urlAgui(id: string): string {
 }
 
 /** Met l'agent en service tout de suite : il répond dès sa création. */
-export async function inscrire(id: string, fiche: { prenom: string; metier: string; entreprise: string }): Promise<void> {
+/** `compte` : les agents d'un même compte sont collègues et peuvent se poser des questions. */
+export async function inscrire(id: string, fiche: { prenom: string; metier: string; entreprise: string; compte: string }): Promise<void> {
   const r = await fetch(`${adresseAgents()}/agents/${encodeURIComponent(id)}`, {
     method: "PUT",
     headers: { ...enteteAgents(), "Content-Type": "application/json" },

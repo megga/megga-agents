@@ -51,7 +51,8 @@ PLAFOND = "plafond du jour atteint"
 
 @dataclass(frozen=True)
 class Collegue:
-    """Un agent à qui l'on peut poser une question. `repondre` : async f(question, de, origine, conclure) -> texte ;
+    """Un agent à qui l'on peut poser une question. `repondre` : async f(question, de, origine, conclure) -> texte (`de` :
+    le prénom de celui qui demande) ;
     `conclure` : c'est la dernière question permise, il n'y aura pas de suite."""
 
     nom: str
@@ -76,7 +77,7 @@ class Relais:
     """Remet les messages entre les agents d'un client. `depot` : stockage.Echanges ; `collegues` : {identifiant: Collegue}."""
 
     def __init__(self, depot, collegues: dict[str, Collegue] | None = None, delai: float = DELAI, relais: int = RELAIS,
-                 allers: int = ALLERS, journal=None, permis=None):
+                 allers: int = ALLERS, journal=None, permis=None, noms: dict[str, str] | None = None):
         self.depot = depot
         self.collegues = dict(collegues or {})
         self.delai = delai
@@ -85,7 +86,13 @@ class Relais:
         self.journal = journal  # stockage.Journal : les échecs, jamais de texte
         # f(personne) -> bool : cette personne a-t-elle encore droit à une question aujourd'hui ? Compte celle-ci si oui.
         self.permis = permis
+        # Les prénoms des agents qui posent des questions sans être eux-mêmes inscrits (l'agent du client).
+        self.noms = dict(noms or {})
         self._verrous: dict[str, asyncio.Lock] = {}
+
+    def nom(self, ident: str) -> str:
+        """Le prénom d'un agent, tel que ses collègues le connaissent ; à défaut, son identifiant."""
+        return self.collegues[ident].nom if ident in self.collegues else self.noms.get(ident, ident)
 
     def inscrire(self, ident: str, collegue: Collegue) -> None:
         self.collegues[ident] = collegue
@@ -143,10 +150,10 @@ class Relais:
         try:
             async with asyncio.timeout(max(0.0, limite - time.time())):
                 if a in occupes:  # il répond déjà plus haut dans cette chaîne
-                    reponse = await self.collegues[a].repondre(texte, de, origine, conclure)
+                    reponse = await self.collegues[a].repondre(texte, self.nom(de), origine, conclure)
                 else:
                     async with verrou:  # les demandes faites à un même agent passent l'une après l'autre
-                        reponse = await self.collegues[a].repondre(texte, de, origine, conclure)
+                        reponse = await self.collegues[a].repondre(texte, self.nom(de), origine, conclure)
         except TimeoutError:
             await asyncio.to_thread(self.depot.clore, ident, "hors_delai")
             self._noter("echange_hors_delai")
