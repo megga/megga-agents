@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer, refusDe } from "@/components/admin/envoyer";
 import { ErreursChamps, Fait } from "@/components/admin/erreurs";
 import { cadre, champ, etiquette, titreBloc } from "@/components/admin/formulaire";
@@ -70,6 +71,7 @@ function base64(blob: Blob): Promise<string> {
 export function PhotoCompte({ nom, image }: { nom: string; image: string | null }) {
   const router = useRouter();
   const choix = useRef<HTMLInputElement>(null);
+  const { demander, fenetre } = useDemande();
   const [apercu, setApercu] = useState<{ blob: Blob; url: string } | null>(null);
   const [erreur, setErreur] = useState<string | null>(null);
   const [fait, setFait] = useState<string | null>(null);
@@ -129,7 +131,7 @@ export function PhotoCompte({ nom, image }: { nom: string; image: string | null 
           <div className="flex flex-wrap gap-2">
             {apercu ? (
               <>
-                <button type="button" onClick={enregistrer} disabled={envoi} className={bouton}>
+                <button type="button" onClick={() => demander(TA.confirmerPhoto, TA.enregistrerPhoto, () => void enregistrer())} disabled={envoi} className={bouton}>
                   {TA.enregistrerPhoto}
                 </button>
                 <button type="button" onClick={() => setApercu(null)} disabled={envoi} className={boutonDiscret}>
@@ -142,7 +144,7 @@ export function PhotoCompte({ nom, image }: { nom: string; image: string | null 
                   {image ? TA.changerPhoto : TA.choisirPhoto}
                 </label>
                 {image && (
-                  <button type="button" onClick={retirer} disabled={envoi} className={boutonDiscret}>
+                  <button type="button" onClick={() => demander(TA.confirmerRetraitPhoto, TA.retirerPhoto, () => void retirer())} disabled={envoi} className={boutonDiscret}>
                     {TA.retirerPhoto}
                   </button>
                 )}
@@ -154,6 +156,7 @@ export function PhotoCompte({ nom, image }: { nom: string; image: string | null 
       </div>
       <ErreursChamps erreur={erreur} />
       <Fait texte={fait} />
+      {fenetre}
     </section>
   );
 }
@@ -161,6 +164,7 @@ export function PhotoCompte({ nom, image }: { nom: string; image: string | null 
 export function NomCompte({ nom: initial, courriel }: { nom: string; courriel: string }) {
   const router = useRouter();
   const [nom, setNom] = useState(initial);
+  const { avant, fenetre } = useDemande();
   const [erreur, setErreur] = useState<string | null>(null);
   const [fait, setFait] = useState<string | null>(null);
   const [envoi, setEnvoi] = useState(false);
@@ -183,7 +187,8 @@ export function NomCompte({ nom: initial, courriel }: { nom: string; courriel: s
   }
 
   return (
-    <form onSubmit={enregistrer} className={cadre}>
+    <form onSubmit={avant(TA.confirmerNom, TA.enregistrer, enregistrer)} className={cadre}>
+      {fenetre}
       <h2 className={titreBloc}>{TA.nomAffiche}</h2>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="compte-nom" className={etiquette}>{TA.nomAffiche}</Label>
@@ -207,6 +212,7 @@ export function NomCompte({ nom: initial, courriel }: { nom: string; courriel: s
 
 export function MotDePasseCompte() {
   const [actuel, setActuel] = useState("");
+  const { avant, fenetre } = useDemande();
   const [nouveau, setNouveau] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [erreur, setErreur] = useState<string | null>(null);
@@ -243,7 +249,8 @@ export function MotDePasseCompte() {
   );
 
   return (
-    <form onSubmit={changer} className={cadre}>
+    <form onSubmit={avant(TA.confirmerChangementMotDePasse, TA.changerMotDePasse, changer)} className={cadre}>
+      {fenetre}
       <h2 className={titreBloc}>{TA.motDePasse}</h2>
       <div className="grid gap-3 min-[1000px]:grid-cols-3">
         {champMotDePasse("compte-actuel", TA.motDePasseActuel, actuel, setActuel, "current-password")}

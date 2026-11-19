@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer } from "@/components/admin/envoyer";
 import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, ChampsAcces, etiquette, ExterneGarde, perimetreDe, PerimetreVu, tousPossible, type RoleChoix, type Vu } from "@/components/admin/formulaire";
@@ -93,6 +94,7 @@ function NouvelleInvitation({ roles, defaut, tousPermis, onCreee }: {
   tousPermis: boolean;
   onCreee: (lien: string) => void;
 }) {
+  const { avant, fenetre } = useDemande();
   const [courriel, setCourriel] = useState("");
   const [externe, setExterne] = useState(false);
   const proposes = externe ? roles.filter((r) => r.id !== SUPERADMIN) : roles;
@@ -130,7 +132,8 @@ function NouvelleInvitation({ roles, defaut, tousPermis, onCreee }: {
   }
 
   return (
-    <form onSubmit={inviter} className="trait flex flex-col gap-3.5 rounded-2xl bg-bg px-5 pt-4 pb-5">
+    <form onSubmit={avant(TA.confirmerInvitation(courriel.trim()), TA.inviter, inviter)} className="trait flex flex-col gap-3.5 rounded-2xl bg-bg px-5 pt-4 pb-5">
+      {fenetre}
       <h2 className="m-0 text-[18px] font-extrabold">{TA.nouvelleInvitation}</h2>
       <div className="grid gap-3.5 min-[761px]:grid-cols-2">
         <div className="flex flex-col gap-1.5">

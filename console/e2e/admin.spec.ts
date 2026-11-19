@@ -140,6 +140,7 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   await page.getByRole("button", { name: TA.valider, exact: true }).click();
   await expect(page.getByText(TA.resultatValide(1))).toBeVisible();
   await page.getByRole("button", { name: TA.creerBrouillon }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.creerBrouillon, exact: true }).click(); // chaque geste se confirme
   await expect(page).toHaveURL(/\/versions\?v=2$/);
 
   // Jamais essayé, il ne se met en service qu'en forçant ; un essai, et « Mettre en service » vient.
@@ -205,6 +206,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await page.getByRole("textbox", { name: TA.uneListe }).fill(GARAGE.id);
   await page.screenshot({ path: "captures/admin-equipe.png", fullPage: true });
   await page.getByRole("button", { name: TA.inviter, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.inviter, exact: true }).click(); // chaque geste se confirme
 
   // Le lien, montré une fois : ni Échap ni un clic au-dehors ne le ferment, seulement « Fermer » ; ensuite il n'est plus nulle part.
   const secret = page.getByRole("dialog");
@@ -283,6 +285,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await externe.getByRole("button", { name: TA.valider, exact: true }).click();
   await expect(externe.getByText(TA.resultatValide(1))).toBeVisible();
   await externe.getByRole("button", { name: TA.creerBrouillon }).click();
+  await externe.getByRole("dialog").getByRole("button", { name: TA.creerBrouillon, exact: true }).click(); // chaque geste se confirme
   await expect(externe).toHaveURL(/\/versions\?v=2$/);
   await expect(externe.getByRole("heading", { name: TA.essaiTitre(2) })).toBeVisible();
   await expect(externe.getByRole("button", { name: TA.mettreEnService })).toHaveCount(0);
@@ -471,12 +474,14 @@ test("le superadmin règle son compte : nom, photo, mot de passe ; le retour au 
   // Le nom : le menu le montre aussitôt.
   await page.getByLabel(TA.nomAffiche, { exact: true }).fill("Chef Renommé");
   await page.getByRole("button", { name: TA.enregistrer, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.enregistrer, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.nomEnregistre)).toBeVisible();
   await expect(menu()).toContainText("Chef Renommé");
 
   // La photo : recadrée et réduite dans le navigateur, puis dans le menu et dans la liste de l'équipe.
   await page.locator("#compte-photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png(640, 400) });
   await page.getByRole("button", { name: TA.enregistrerPhoto }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.enregistrerPhoto, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.photoEnregistree)).toBeVisible();
   const photoMenu = menu().locator("img");
   await expect(photoMenu).toHaveAttribute("src", /^\/api\/compte\/photo\/[^/?]+\?v=[0-9a-f]{12}$/);
@@ -505,9 +510,11 @@ test("le superadmin règle son compte : nom, photo, mot de passe ; le retour au 
   await page.getByLabel(TA.nouveauMotDePasse).fill(nouveau);
   await page.getByLabel(TA.confirmerMotDePasse).fill(nouveau);
   await page.getByRole("button", { name: TA.changerMotDePasse }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.changerMotDePasse, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.motDePasseChange)).toBeVisible();
   await menu().click();
   await page.getByRole("menuitem", { name: T.seDeconnecter }).click();
+  await page.getByRole("dialog").getByRole("button", { name: T.seDeconnecter, exact: true }).click(); // chaque geste se confirme
   await expect(page).toHaveURL(/\/connexion$/);
   await connecter(page, { courriel: SUPERADMIN_ESSAI.courriel, motDePasse: nouveau });
   await page.goto("/admin/compte");

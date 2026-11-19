@@ -39,6 +39,7 @@ export const T = {
   desepingler: "Désépingler",
   compteEtReglages: "Compte et réglages",
   seDeconnecter: "Se déconnecter",
+  confirmerDeconnexion: "Se déconnecter ?",
   monCompte: "Mon compte", // nouveau
   retourSite: "Retour au site", // nouveau
   chercherPlaceholder: "Chercher un agent ou un groupe",

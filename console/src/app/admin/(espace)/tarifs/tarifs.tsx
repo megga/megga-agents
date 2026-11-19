@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer, RefusEnvoi } from "@/components/admin/envoyer";
 import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, etiquette } from "@/components/admin/formulaire";
@@ -64,6 +65,7 @@ const titre2 = "m-0 text-[17px] font-extrabold";
 const sousTitre = "m-0 text-[13.5px] text-muted-ink";
 
 export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: string[] }) {
+  const { avant, fenetre } = useDemande();
   const router = useRouter();
   const [devise, setDevise] = useState(tarifs.devise);
   const [lignes, setLignes] = useState(() => lignesDe(tarifs));
@@ -117,7 +119,8 @@ export function FormTarifs({ tarifs, proposes }: { tarifs: Tarifs; proposes: str
   const enDevise = devise.trim() || tarifs.devise; // la devise que l'on tape ; vide, celle enregistrée
 
   return (
-    <form noValidate onSubmit={enregistrer} className="flex flex-col gap-5">
+    <form noValidate onSubmit={avant(TA.confirmerTarifs, TA.enregistrer, enregistrer)} className="flex flex-col gap-5">
+      {fenetre}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="tarifs-devise" className={etiquette}>{TA.devise}</Label>
         <Input id="tarifs-devise" value={devise} maxLength={3} autoCapitalize="characters" onChange={(e) => { setDevise(e.target.value); setFait(false); }}
