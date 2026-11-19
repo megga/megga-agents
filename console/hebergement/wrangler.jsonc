@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // La console MEGGA en ligne (console.megga.ai) : un Worker à part de la porte (porte/), qui ne partage rien avec elle.
+  // Un seul conteneur, toujours le même, en juridiction UE ; l'image est celle de console/Dockerfile.
+  // Déployé depuis le Mac de Thomas ou de Julien : docs/console-en-ligne.md.
+  "name": "megga-console",
+  "main": "src/index.js",
+  "compatibility_date": "2026-11-01",
+  "observability": { "enabled": true },
+  // Une seule origine, celle de BETTER_AUTH_URL : ni adresse workers.dev, ni adresses d'aperçu.
+  "workers_dev": false,
+  "preview_urls": false,
+  // Prérequis : la zone megga.ai sur le compte Cloudflare de MEGGA Inc.
+  "routes": [{ "pattern": "console.megga.ai", "custom_domain": true }],
+  // « basic » : 1/4 vCPU, 1 Gio. Il s'endort après 15 minutes sans visite (src/index.js).
+  "containers": [
+    {
+      "class_name": "ConsoleConteneur",
+      "image": "../Dockerfile",
+      "image_build_context": "..",
+      "instance_type": "basic",
+      "max_instances": 1,
+      "constraints": { "jurisdiction": "eu" }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "CONSOLE", "class_name": "ConsoleConteneur" }]
+  },
+  "exports": {
+    "ConsoleConteneur": { "type": "durable-object", "storage": "sqlite" }
+  },
+  // L'étiquette de la version déployée (wrangler deploy --tag <commit>) : /api/sante la rend (CONSOLE_REVISION).
+  "version_metadata": { "binding": "VERSION" },
+  // ATELIER_URL : l'atelier derrière la porte ; la console y ajoute /atelier.
+  "vars": {
+    "BETTER_AUTH_URL": "https://console.megga.ai",
+    "ATELIER_URL": "https://megga-agents.api-963.workers.dev"
+  }
+  // Secrets (secrets.sh, jamais dans ce fichier) : BETTER_AUTH_SECRET, CONSOLE_BASE_URL, et ATELIER_JETON (facultatif).
+}

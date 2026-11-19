@@ -75,3 +75,19 @@ jobs:
           test "$SANTE" = '{"ok":true,"revision":"${{ github.sha }}"}' || { docker logs console; exit 1; }
           test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3300/connexion)" = 200 || { docker logs console; exit 1; }
           test "$(docker inspect -f '{{.Config.User}}' megga-console:essai)" = node
+
+  # Le Worker megga-console (console/hebergement) : ses essais (un faux conteneur, secrets.sh avec un faux wrangler), puis
+  # sa configuration lue par wrangler, sans rien déployer.
+  hebergement:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console/hebergement
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      - run: npx wrangler deploy --dry-run --containers-rollout=none --outdir /tmp/console

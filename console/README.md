@@ -57,6 +57,14 @@ Contre la base de production (Postgres chez Neon), depuis `console/` : l'adresse
 ( read -rs CONSOLE_BASE_URL && export CONSOLE_BASE_URL && BETTER_AUTH_URL=https://console.megga.ai npm run admin:inviter -- <courriel> )
 ```
 
+### En ligne
+
+`https://console.megga.ai` : l'image (`Dockerfile`) dans un conteneur Cloudflare, derrière le Worker `megga-console` (`hebergement/`). Un compte ne s'y crée que par invitation (`CONSOLE_INSCRIPTION`, libre seulement si elle vaut `ouverte`, comme en local). La base, les secrets, le déploiement et les premiers superadmins : [docs/console-en-ligne.md](../docs/console-en-ligne.md).
+
+```bash
+cd console/hebergement && npm ci && npm test
+```
+
 ### La base
 
 SQLite en local et dans les essais (`.donnees/console.sqlite`, ou `CONSOLE_BASE`) ; Postgres dès que `CONSOLE_BASE_URL` est posée, comme en production. Tout le SQL passe par l'interface de `src/lib/donnees` et s'écrit une fois pour les deux moteurs. Les tables se créent à la première requête (`pret()`, `src/lib/base.ts`).

@@ -30,6 +30,8 @@ const eslintConfig = defineConfig([
     "captures/**",
     "test-results/**",
     "playwright-report/**",
+    // Ce que wrangler construit pour le Worker de la console (hebergement/).
+    "hebergement/.wrangler/**",
   ]),
 ]);
 

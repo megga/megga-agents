@@ -1,0 +1,12 @@
+{
+  "name": "megga-console-hebergement",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import ./test/bouchons/enregistrer.js --test test/*.test.js",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.162.0"
+  }
+}
