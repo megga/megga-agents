@@ -17,6 +17,8 @@ export type LigneJournal = {
   cible: string | null;
   resultat: string;
   detail: unknown;
+  /** La photo de qui a agi (lue dans la table user) ; null pour le serveur ou un compte sans photo. */
+  image: string | null;
 };
 
 export type FiltresJournal = { membre?: string; action?: string; client?: string; depuis?: string; jusqua?: string; page: number };
@@ -58,14 +60,14 @@ function nettoyerCible(cible: string | null): string | null {
 }
 
 /** Nettoie lui-même la cible et le détail ; le détail sérialisé est coupé à DETAIL_MAX caractères. */
-export async function noter(b: Base, e: Omit<LigneJournal, "id" | "quand">, maintenant = new Date()): Promise<void> {
+export async function noter(b: Base, e: Omit<LigneJournal, "id" | "quand" | "image">, maintenant = new Date()): Promise<void> {
   const detail = nettoyer(e.detail);
   const texte = detail === undefined || detail === null ? null : (JSON.stringify(detail)?.slice(0, DETAIL_MAX) ?? null);
   await b.ecrire("INSERT INTO admin_journal (quand, qui, courriel, action, cible, resultat, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
     maintenant.toISOString(), e.qui, e.courriel, e.action, nettoyerCible(e.cible), e.resultat, texte);
 }
 
-type Ligne = Omit<LigneJournal, "detail"> & { detail: string | null };
+type Ligne = Omit<LigneJournal, "detail" | "image"> & { detail: string | null; image: string | null };
 
 const ZURICH = new Intl.DateTimeFormat("en-US", {
   timeZone: "Europe/Zurich",
@@ -130,9 +132,11 @@ export async function lireJournal(b: Base, a: Acces, f: FiltresJournal): Promise
   const total = (await b.un<{ n: number }>(`SELECT COUNT(*) AS n FROM admin_journal ${sql}`, ...valeurs))!.n;
   const pages = Math.max(1, Math.ceil(total / LIGNES_PAR_PAGE));
   const page = Math.min(f.page, pages);
-  const lignes = await b.tous<Ligne>(`SELECT * FROM admin_journal ${sql} ORDER BY quand DESC, id DESC LIMIT ? OFFSET ?`,
+  // Les conditions nomment des colonnes que la table user n'a pas (quand, qui, action, cible) : seul id se qualifie.
+  const lignes = await b.tous<Ligne>(
+    `SELECT j.*, u.image FROM admin_journal j LEFT JOIN "user" u ON u.id = j.qui ${sql} ORDER BY j.quand DESC, j.id DESC LIMIT ? OFFSET ?`,
     ...valeurs, LIGNES_PAR_PAGE, (page - 1) * LIGNES_PAR_PAGE);
-  return { lignes: lignes.map((l) => ({ ...l, detail: detailLu(l.detail) })), pages, page };
+  return { lignes: lignes.map((l) => ({ ...l, detail: detailLu(l.detail), image: l.image ?? null })), pages, page };
 }
 
 /** Les filtres tels que l'adresse les donne ; une valeur mal formée est ignorée, la page retombe sur 1. */

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Pastille } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
+import { Avatar } from "@/components/console/avatar";
 import { filtresComptesDe, listerComptes, type FiltresComptes } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
@@ -53,11 +54,14 @@ export default async function PageComptes({ searchParams }: PageProps<"/admin/co
         vide={f.q ? TA.aucunCompteTrouve : TA.videComptes}
         replier={[1, 2, 3, 4, 5, 6]}
         lignes={comptes.map((c) => [
-          <div key="compte" className="flex min-w-0 flex-col">
-            <Link href={`/admin/comptes/${encodeURIComponent(c.id)}`} className="font-bold wrap-anywhere text-ink hover:underline">
-              {c.entreprise || c.courriel}
-            </Link>
-            <span className="text-[13px] wrap-anywhere text-muted-ink">{c.courriel}</span>
+          <div key="compte" className="flex min-w-0 items-center gap-2.5">
+            <Avatar nom={c.entreprise || c.courriel} image={c.image} taille={32} />
+            <div className="flex min-w-0 flex-col">
+              <Link href={`/admin/comptes/${encodeURIComponent(c.id)}`} className="font-bold wrap-anywhere text-ink hover:underline">
+                {c.entreprise || c.courriel}
+              </Link>
+              <span className="text-[13px] wrap-anywhere text-muted-ink">{c.courriel}</span>
+            </div>
           </div>,
           <span key="inscrit" className="whitespace-nowrap">{TA.instant(c.inscritLe)}</span>,
           <span key="connexion" className="whitespace-nowrap">{c.derniereConnexion ? TA.instant(c.derniereConnexion) : TA.pasEncoreNotee}</span>,

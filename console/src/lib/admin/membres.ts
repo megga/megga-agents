@@ -22,6 +22,8 @@ export type Membre = {
   utilisateur: string;
   courriel: string;
   nom: string;
+  /** La photo du compte (le champ image de Better Auth), ou null. */
+  image: string | null;
   role: string;
   externe: boolean;
   perimetre: Perimetre;
@@ -35,6 +37,7 @@ type Ligne = {
   utilisateur: string;
   courriel: string;
   nom: string;
+  image: string | null;
   role: string;
   externe: number;
   perimetre: string | null;
@@ -44,7 +47,7 @@ type Ligne = {
   derniere: string | null;
 };
 
-const CHOIX = `SELECT m.*, COALESCE(u.email, '') AS courriel, COALESCE(u.name, '') AS nom, c.derniere
+const CHOIX = `SELECT m.*, COALESCE(u.email, '') AS courriel, COALESCE(u.name, '') AS nom, u.image, c.derniere
   FROM admin_membre m LEFT JOIN "user" u ON u.id = m.utilisateur LEFT JOIN compte_connexion c ON c.utilisateur = m.utilisateur`;
 
 /** Un périmètre lu en base : NULL vaut « tous », une liste illisible ne donne aucun client. */
@@ -63,6 +66,7 @@ function versMembre(l: Ligne): Membre {
     utilisateur: l.utilisateur,
     courriel: l.courriel,
     nom: l.nom,
+    image: l.image ?? null,
     role: l.role,
     externe: !!l.externe,
     perimetre: perimetreLu(l.perimetre),

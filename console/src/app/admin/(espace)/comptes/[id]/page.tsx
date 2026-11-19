@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { Pastille } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
+import { Avatar } from "@/components/console/avatar";
 import { Tete } from "@/components/console/tete";
 import { ficheCompte, peutAgirSur } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
@@ -23,7 +24,10 @@ export default async function PageCompte({ params }: PageProps<"/admin/comptes/[
   return (
     <>
       <header className="flex min-w-0 flex-col gap-1.5">
-        <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em] wrap-anywhere">{nom}</h1>
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar nom={nom} image={c.image} taille={44} />
+          <h1 className="m-0 min-w-0 text-[26px] font-extrabold tracking-[-0.02em] wrap-anywhere">{nom}</h1>
+        </div>
         <p className="m-0 flex flex-wrap gap-x-3 text-[14px] text-muted-ink">
           <span className="wrap-anywhere">{c.courriel}</span>
           <span>

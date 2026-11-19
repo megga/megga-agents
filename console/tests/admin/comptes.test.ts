@@ -245,13 +245,22 @@ describe("la liste des comptes", () => {
     await compterTour(db, a2.id, T0);
     await noterConnexion(db, "c", T0);
     expect(await tous(db, T0)).toEqual([
-      { id: "c", entreprise: "Garage du Lac", courriel: "garage@exemple.test", inscritLe: T0.toISOString(), derniereConnexion: T0.toISOString(),
+      { id: "c", entreprise: "Garage du Lac", courriel: "garage@exemple.test", image: null, inscritLe: T0.toISOString(), derniereConnexion: T0.toISOString(),
         agents: 2, messages30j: 3, suspendu: false, motif: null, membre: false },
-      { id: "d", entreprise: "Fleurs", courriel: "fleurs@exemple.test", inscritLe: avant(1).toISOString(), derniereConnexion: null,
+      { id: "d", entreprise: "Fleurs", courriel: "fleurs@exemple.test", image: null, inscritLe: avant(1).toISOString(), derniereConnexion: null,
         agents: 0, messages30j: 0, suspendu: true, motif: "Abus", membre: false },
-      { id: "chef", entreprise: "CHEF", courriel: "chef@megga.test", inscritLe: avant(5).toISOString(), derniereConnexion: null,
+      { id: "chef", entreprise: "CHEF", courriel: "chef@megga.test", image: null, inscritLe: avant(5).toISOString(), derniereConnexion: null,
         agents: 0, messages30j: 0, suspendu: false, motif: null, membre: true },
     ]);
+  });
+
+  it("se lisent avec la photo du compte quand il en a une, dans la liste et dans la fiche", async () => {
+    await compte(db, { id: "d", courriel: "fleurs@exemple.test", nom: "Fleurs" });
+    await db.ecrire('UPDATE "user" SET image = ? WHERE id = ?', "/api/compte/photo/d?v=0123456789ab", "d");
+    const images = Object.fromEntries((await tous(db, T0)).map((c) => [c.id, c.image]));
+    expect(images).toEqual({ c: null, d: "/api/compte/photo/d?v=0123456789ab" });
+    expect((await ficheCompte(db, "d", T0))?.compte.image).toBe("/api/compte/photo/d?v=0123456789ab");
+    expect((await ficheCompte(db, "c", T0))?.compte.image).toBeNull();
   });
 
   it("un membre dont l'accès a pris fin n'est plus marqué membre", async () => {

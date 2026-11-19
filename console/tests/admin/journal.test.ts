@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { filtresDe, LIGNES_PAR_PAGE, lireJournal, nettoyer, noter } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
 import type { Base } from "@/lib/donnees/base";
-import { acces, baseEssai, T0 } from "./aides";
+import { acces, baseEssai, compte, T0 } from "./aides";
 
 let db: Base;
 beforeEach(async () => {
@@ -43,6 +43,19 @@ describe("le journal", () => {
       detail: { jeton: "[masqué]", personne: "…4567" } });
     expect(lignes[0]).toMatchObject({ qui: null, courriel: null, resultat: "refuse 404", detail: null });
     expect(JSON.stringify((await db.tous("SELECT * FROM admin_journal")))).not.toContain("secret");
+  });
+
+  it("rend la photo de qui a agi quand son compte en a une, null sinon et pour le serveur", async () => {
+    const s = acces({ utilisateur: "s", superadmin: true });
+    await compte(db, { id: "s", courriel: "s@megga.test" });
+    await compte(db, { id: "t", courriel: "t@megga.test" });
+    await db.ecrire('UPDATE "user" SET image = ? WHERE id = ?', "/api/compte/photo/s?v=0123456789ab", "s");
+    await noter(db, geste("s", "essai", null), minute(0));
+    await noter(db, geste("t", "essai", null), minute(1));
+    await noter(db, { qui: null, courriel: null, action: "essai", cible: null, resultat: "ok", detail: null }, minute(2));
+    const { lignes } = await lireJournal(db, s, { page: 1 });
+    expect(lignes.map((l) => [l.qui, l.image])).toEqual([[null, null], ["t", null], ["s", "/api/compte/photo/s?v=0123456789ab"]]);
+    expect((await lireJournal(db, s, { page: 1, membre: "s" })).lignes.map((l) => l.image)).toEqual(["/api/compte/photo/s?v=0123456789ab"]);
   });
 
   it("nettoie aussi la cible : un numéro réduit, un secret masqué", async () => {

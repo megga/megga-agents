@@ -19,6 +19,7 @@ export default async function PageMembres() {
       utilisateur: m.utilisateur,
       nom: m.nom,
       courriel: m.courriel,
+      image: m.image,
       role: m.role,
       roleNom: role?.nom ?? m.role,
       externe: m.externe,

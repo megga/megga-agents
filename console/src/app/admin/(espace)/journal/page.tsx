@@ -2,6 +2,7 @@ import { X } from "lucide-react";
 import Link from "next/link";
 import { Pastille, type Etat } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
+import { Avatar } from "@/components/console/avatar";
 import { gardePage } from "@/lib/admin/garde";
 import { filtresDe, lireJournal, type FiltresJournal, type LigneJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
@@ -45,9 +46,12 @@ export default async function PageJournal({ searchParams }: PageProps<"/admin/jo
   const avec = (changer: Partial<FiltresJournal>) => adresse({ ...f, page: 1, ...changer });
   const qui = (l: LigneJournal) =>
     l.qui ? (
-      <Link key="qui" href={avec({ membre: l.qui })} title={TA.filtrerSur} className={lien + " whitespace-nowrap"}>
-        {l.courriel ?? l.qui}
-      </Link>
+      <span key="qui" className="flex items-center gap-2">
+        <Avatar nom={l.courriel ?? l.qui} image={l.image} taille={24} />
+        <Link href={avec({ membre: l.qui })} title={TA.filtrerSur} className={lien + " whitespace-nowrap"}>
+          {l.courriel ?? l.qui}
+        </Link>
+      </span>
     ) : (
       <span key="qui" className="whitespace-nowrap text-muted-ink">{TA.leServeur}</span>
     );

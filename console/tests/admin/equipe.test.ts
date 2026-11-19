@@ -117,8 +117,17 @@ describe("les membres", () => {
   it("se lisent avec le courriel et le nom de leur compte", async () => {
     await compte(db, { id: "c1", courriel: "chef@megga.test", nom: "Chef" });
     await ajouterMembre(db, { utilisateur: "c1", role: "lecture", externe: false, perimetre: ["a1"], finAcces: "2026-12-31", ajoutePar: "s" }, T0);
-    expect(await listerMembres(db)).toEqual([{ utilisateur: "c1", courriel: "chef@megga.test", nom: "Chef", role: "lecture", externe: false,
+    expect(await listerMembres(db)).toEqual([{ utilisateur: "c1", courriel: "chef@megga.test", nom: "Chef", image: null, role: "lecture", externe: false,
       perimetre: ["a1"], finAcces: "2026-12-31", ajoutePar: "s", ajouteLe: T0.toISOString(), derniereConnexion: null }]);
+  });
+
+  it("se lisent avec la photo de leur compte quand il en a une", async () => {
+    await compte(db, { id: "c1", courriel: "chef@megga.test", nom: "Chef" });
+    await compte(db, { id: "c2", courriel: "aide@megga.test", nom: "Aide" });
+    for (const c of ["c1", "c2"]) await ajouterMembre(db, { utilisateur: c, role: "lecture", externe: false, perimetre: "tous", finAcces: null, ajoutePar: "s" }, T0);
+    await db.ecrire('UPDATE "user" SET image = ? WHERE id = ?', "/api/compte/photo/c1?v=0123456789ab", "c1");
+    const images = Object.fromEntries((await listerMembres(db)).map((m) => [m.utilisateur, m.image]));
+    expect(images).toEqual({ c1: "/api/compte/photo/c1?v=0123456789ab", c2: null });
   });
 
   it("gardent toujours un superadmin", async () => {

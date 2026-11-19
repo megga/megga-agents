@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
+import { crc32, deflateSync } from "node:zlib";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 import { DROITS_EXTERNE } from "../src/lib/admin/droits";
 import { TA } from "../src/lib/admin/textes";
@@ -418,5 +419,101 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
   expect(await deborde(page)).toBe(false);
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: "captures/admin-sombre.png", fullPage: true });
+  await chef.close();
+});
+
+/** Un PNG fabriqué ici : largeur × hauteur pixels, un dégradé (en paysage, pour que le recadrage au centre ait à faire). */
+function png(largeur: number, hauteur: number): Buffer {
+  const morceau = (type: string, donnees: Buffer) => {
+    const longueur = Buffer.alloc(4);
+    longueur.writeUInt32BE(donnees.length);
+    const corps = Buffer.concat([Buffer.from(type, "ascii"), donnees]);
+    const somme = Buffer.alloc(4);
+    somme.writeUInt32BE(crc32(corps));
+    return Buffer.concat([longueur, corps, somme]);
+  };
+  const entete = Buffer.alloc(13);
+  entete.writeUInt32BE(largeur, 0);
+  entete.writeUInt32BE(hauteur, 4);
+  entete.set([8, 2, 0, 0, 0], 8); // 8 bits, RVB
+  const lignes = Buffer.alloc((largeur * 3 + 1) * hauteur);
+  for (let y = 0; y < hauteur; y++) {
+    for (let x = 0; x < largeur; x++) lignes.set([Math.round((255 * x) / largeur), 120, Math.round((255 * y) / hauteur)], y * (largeur * 3 + 1) + 1 + x * 3);
+  }
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  return Buffer.concat([signature, morceau("IHDR", entete), morceau("IDAT", deflateSync(lignes)), morceau("IEND", Buffer.alloc(0))]);
+}
+
+// Le dernier parcours : il change le mot de passe du superadmin et ferme sa session ; aucun ne reprend sessionChef après lui.
+test("le superadmin règle son compte : nom, photo, mot de passe ; le retour au site", async ({ browser, baseURL }) => {
+  // Une adresse à lui : le parcours d'un compte suspendu vient de faire trois connexions de l'adresse commune (ADRESSE), et
+  // Better Auth n'en admet pas une quatrième dans les dix secondes.
+  expect(sessionChef, "la session du premier parcours").toBeDefined();
+  const autreAdresse = { "x-forwarded-for": "198.51.100.66" };
+  const chef = await browser.newContext({ baseURL, locale: "fr-FR", viewport: { width: 1440, height: 900 }, storageState: sessionChef, extraHTTPHeaders: autreAdresse });
+  const page = await chef.newPage();
+  await page.goto("/admin");
+  await expect(titre(page, TA.vueEnsemble)).toBeVisible();
+  const ailleurs = requetesAilleurs(page);
+  const menu = () => page.getByRole("button", { name: T.compteEtReglages });
+
+  // Le menu du compte : le retour au site, dans un nouvel onglet ; puis Mon compte.
+  await menu().click();
+  const site = page.getByRole("menuitem", { name: T.retourSite });
+  await expect(site).toHaveAttribute("href", "https://megga.ai");
+  await expect(site).toHaveAttribute("target", "_blank");
+  await expect(site).toHaveAttribute("rel", "noopener noreferrer");
+  await page.getByRole("menuitem", { name: T.monCompte }).click();
+  await expect(titre(page, T.monCompte)).toBeVisible();
+  await expect(page.getByLabel(TA.courriel, { exact: true })).toHaveValue(SUPERADMIN_ESSAI.courriel);
+  await expect(page.getByText(TA.cetAppareil)).toBeVisible();
+
+  // Le nom : le menu le montre aussitôt.
+  await page.getByLabel(TA.nomAffiche, { exact: true }).fill("Chef Renommé");
+  await page.getByRole("button", { name: TA.enregistrer, exact: true }).click();
+  await expect(page.getByText(TA.nomEnregistre)).toBeVisible();
+  await expect(menu()).toContainText("Chef Renommé");
+
+  // La photo : recadrée et réduite dans le navigateur, puis dans le menu et dans la liste de l'équipe.
+  await page.locator("#compte-photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png(640, 400) });
+  await page.getByRole("button", { name: TA.enregistrerPhoto }).click();
+  await expect(page.getByText(TA.photoEnregistree)).toBeVisible();
+  const photoMenu = menu().locator("img");
+  await expect(photoMenu).toHaveAttribute("src", /^\/api\/compte\/photo\/[^/?]+\?v=[0-9a-f]{12}$/);
+  await expect.poll(() => photoMenu.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(256);
+  const adresse = (await photoMenu.getAttribute("src")) ?? "";
+  await page.screenshot({ path: "captures/admin-mon-compte.png", fullPage: true });
+  // Sans session, la photo ne se sert pas.
+  const anonyme = await browser.newContext({ baseURL, extraHTTPHeaders: autreAdresse });
+  expect((await anonyme.request.get(adresse)).status()).toBe(401);
+  await anonyme.close();
+  await rail(page).getByRole("link", { name: TA.equipe, exact: true }).click();
+  await expect(titre(page, TA.equipe)).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: SUPERADMIN_ESSAI.courriel }).locator(`img[src="${adresse}"]`)).toBeVisible();
+
+  // Le téléphone, en clair : la page ne défile pas de côté.
+  await page.goto("/admin/compte");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(titre(page, T.monCompte)).toBeVisible();
+  expect(await deborde(page)).toBe(false);
+  await page.screenshot({ path: "captures/admin-mon-compte-telephone.png", fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  // Le mot de passe : l'ancien exigé ; puis se déconnecter et revenir avec le nouveau.
+  const nouveau = "essai-admin-2026-nouveau";
+  await page.getByLabel(TA.motDePasseActuel).fill(SUPERADMIN_ESSAI.motDePasse);
+  await page.getByLabel(TA.nouveauMotDePasse).fill(nouveau);
+  await page.getByLabel(TA.confirmerMotDePasse).fill(nouveau);
+  await page.getByRole("button", { name: TA.changerMotDePasse }).click();
+  await expect(page.getByText(TA.motDePasseChange)).toBeVisible();
+  await menu().click();
+  await page.getByRole("menuitem", { name: T.seDeconnecter }).click();
+  await expect(page).toHaveURL(/\/connexion$/);
+  await connecter(page, { courriel: SUPERADMIN_ESSAI.courriel, motDePasse: nouveau });
+  await page.goto("/admin/compte");
+  await expect(titre(page, T.monCompte)).toBeVisible();
+  await expect(page.getByLabel(TA.nomAffiche, { exact: true })).toHaveValue("Chef Renommé");
+  // L'aperçu de la photo est une adresse blob: du navigateur lui-même, jamais une requête hors de la console.
+  expect(ailleurs.filter((url) => !url.startsWith(`blob:${baseURL}/`))).toEqual([]);
   await chef.close();
 });

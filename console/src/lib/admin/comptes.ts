@@ -17,6 +17,8 @@ export type CompteConsole = {
   id: string;
   entreprise: string;
   courriel: string;
+  /** La photo du compte (le champ image de Better Auth), ou null. */
+  image: string | null;
   inscritLe: string;
   derniereConnexion: string | null;
   agents: number;
@@ -38,6 +40,7 @@ type Ligne = {
   id: string;
   name: string | null;
   email: string;
+  image: string | null;
   createdAt: string;
   banned: number | boolean | null; // un entier sous SQLite, un booléen sous Postgres
   banReason: string | null;
@@ -52,7 +55,7 @@ type Ligne = {
 const depuis30j = (maintenant: Date) => joursZurich(30, maintenant)[0];
 
 /** Les colonnes de Better Auth en casse mixte se citent : Postgres les lit ainsi. */
-const CHOIX = `SELECT u.id, u.name, u.email, u."createdAt", u.banned, u."banReason", c.derniere, m.role AS role_membre, m.fin_acces,
+const CHOIX = `SELECT u.id, u.name, u.email, u.image, u."createdAt", u.banned, u."banReason", c.derniere, m.role AS role_membre, m.fin_acces,
   (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
   (SELECT COALESCE(SUM(ua.messages), 0) FROM usage_agent ua JOIN agent a ON a.id = ua.agent WHERE a.utilisateur = u.id AND ua.jour >= ?) AS messages
   FROM "user" u LEFT JOIN compte_connexion c ON c.utilisateur = u.id LEFT JOIN admin_membre m ON m.utilisateur = u.id`;
@@ -62,6 +65,7 @@ function versCompte(l: Ligne, maintenant: Date): CompteConsole {
     id: l.id,
     entreprise: l.name ?? "",
     courriel: l.email,
+    image: l.image ?? null,
     inscritLe: l.createdAt,
     derniereConnexion: l.derniere,
     agents: l.agents,

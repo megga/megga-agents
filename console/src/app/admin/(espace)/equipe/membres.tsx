@@ -8,6 +8,7 @@ import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, ChampsAcces, etiquette, ExterneGarde, perimetreDe, PerimetreVu, tousPossible, type RoleChoix, type Vu } from "@/components/admin/formulaire";
 import { Pastille } from "@/components/admin/pastille";
 import { Tableau } from "@/components/admin/tableau";
+import { Avatar } from "@/components/console/avatar";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { SUPERADMIN } from "@/lib/admin/droits";
@@ -20,6 +21,7 @@ export type MembreVu = {
   utilisateur: string;
   nom: string;
   courriel: string;
+  image: string | null;
   role: string;
   roleNom: string;
   externe: boolean;
@@ -35,9 +37,12 @@ export function Membres({ membres, roles, tousPermis }: { membres: MembreVu[]; r
   const [edite, setEdite] = useState<MembreVu | null>(null);
 
   const lignes = membres.map((m) => [
-    <div key="membre" className="flex flex-col">
-      <b>{m.nom || m.courriel}</b>
-      <span className="text-[13px] whitespace-nowrap text-muted-ink">{m.courriel}</span>
+    <div key="membre" className="flex items-center gap-2.5">
+      <Avatar nom={m.nom || m.courriel} image={m.image} taille={32} />
+      <div className="flex min-w-0 flex-col">
+        <b>{m.nom || m.courriel}</b>
+        <span className="text-[13px] whitespace-nowrap text-muted-ink">{m.courriel}</span>
+      </div>
     </div>,
     <span key="role" className="whitespace-nowrap">{m.roleNom}</span>,
     <Pastille key="statut" etat={m.externe ? "warn" : "faint"} texte={m.externe ? TA.externe : TA.interne} />,
