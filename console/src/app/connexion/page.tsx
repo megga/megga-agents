@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { fournisseursActifs, session } from "@/lib/auth";
+import { fournisseursActifs, inscriptionOuverte, session } from "@/lib/auth";
 import { Connexion } from "./connexion";
 import { messageErreur } from "./erreurs";
 import { retourSur } from "./retour";
@@ -11,7 +11,7 @@ export default async function PageConnexion({ searchParams }: PageProps<"/connex
   const retour = retourSur(p.retour);
   if (await session()) redirect(retour);
   const erreur = p.error === undefined || p.error === "" ? null : messageErreur(p.error); // ?error= vide : comme sans paramètre
-  return <Connexion fournisseurs={fournisseursActifs()} retour={retour} erreur={erreur} />;
+  return <Connexion fournisseurs={fournisseursActifs()} retour={retour} erreur={erreur} inscription={inscriptionOuverte()} />;
 }
 
 // Page propre à chaque compte : rendue à la demande, après la vérification de la session.

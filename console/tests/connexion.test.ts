@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ReactElement } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connexion, messageErreur, retourSur } from "@/app/connexion/connexion";
 import PageConnexion from "@/app/connexion/page";
-import { fournisseurs } from "@/lib/auth";
+import { ENTETE_INVITATION, fournisseurs } from "@/lib/auth";
 import { T } from "@/lib/textes";
 
 // La page de connexion appelée comme Next.js la rend, sans session.
@@ -17,7 +17,11 @@ vi.mock("next/navigation", () => ({
 }));
 
 const page = async (p: Record<string, string | string[]>) =>
-  (await PageConnexion({ searchParams: Promise.resolve(p) } as never)) as ReactElement<{ erreur?: string | null }>;
+  (await PageConnexion({ searchParams: Promise.resolve(p) } as never)) as ReactElement<{ erreur?: string | null; inscription?: boolean }>;
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("Google et Microsoft", () => {
   it("restent éteints sans leurs clés", () => {
@@ -40,6 +44,12 @@ describe("les erreurs de connexion", () => {
     expect(messageErreur("USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL")).toBe("Ce courriel a déjà un compte.");
     expect(messageErreur("PASSWORD_TOO_SHORT")).toBe("Le mot de passe fait 8 caractères au moins.");
     expect(messageErreur("AUTRE_CHOSE")).toBe("Un souci est survenu. Réessayez.");
+  });
+
+  it("un refus d'inscription hors invitation dit sa phrase, par courriel comme au retour de Google ou Microsoft", () => {
+    expect(T.inscriptionSurInvitation).toBe("Un compte se crée depuis un lien d'invitation.");
+    expect(messageErreur("INSCRIPTION_SUR_INVITATION")).toBe(T.inscriptionSurInvitation);
+    expect(messageErreur("signup_disabled")).toBe(T.inscriptionSurInvitation);
   });
 
   it("un compte suspendu lit une phrase claire", () => {
@@ -84,5 +94,23 @@ describe("le retour après la connexion", () => {
       [...readFileSync(f, "utf8").matchAll(/[?&]retour=([^"'`\s)]*)/g)].map((m) => ({ f, adresse: m[1] })));
     expect(retours.length).toBeGreaterThan(0);
     for (const r of retours) expect(r.adresse, r.f).toMatch(/^\/admin(\/invitation)?$/);
+  });
+});
+
+describe("l'inscription sur invitation", () => {
+  it("l'écran de connexion ne propose de créer un compte que si l'inscription est ouverte", async () => {
+    vi.stubEnv("CONSOLE_INSCRIPTION", "");
+    expect((await page({})).props.inscription).toBe(false);
+    vi.stubEnv("CONSOLE_INSCRIPTION", "invitation");
+    expect((await page({})).props.inscription).toBe(false);
+    vi.stubEnv("CONSOLE_INSCRIPTION", "ouverte");
+    expect((await page({})).props.inscription).toBe(true);
+  });
+
+  it("la page du lien envoie le jeton dans un en-tête de la demande d'inscription, jamais dans une adresse", () => {
+    const code = readFileSync(join(__dirname, "../src/app/admin/invitation/[jeton]/rejoindre.tsx"), "utf8");
+    expect(code).toMatch(/signUp\.email\(\s*\{[^}]*\},\s*\{\s*headers:\s*\{\s*\[ENTETE_INVITATION\]:\s*jeton\s*\}\s*\},?\s*\)/);
+    expect(code).not.toMatch(/callbackURL[^\n]*jeton/);
+    expect(code).toContain(`const ENTETE_INVITATION = "${ENTETE_INVITATION}";`); // le même nom que celui que lit le serveur
   });
 });

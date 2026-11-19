@@ -57,6 +57,7 @@ export default defineConfig({
         CONSOLE_BASE: ".donnees/e2e.sqlite",
         BETTER_AUTH_SECRET: "secret-des-essais-e2e-qui-ne-sert-qu-ici",
         BETTER_AUTH_URL: `http://localhost:${PORT}`,
+        CONSOLE_INSCRIPTION: "ouverte",
         AGENTS_URL: "http://127.0.0.1:8199",
         AGENTS_JETON: JETON,
         ATELIER_URL: `http://127.0.0.1:${PORT_ATELIER}`,

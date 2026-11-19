@@ -26,7 +26,8 @@ function actif(chemin: string, href: string): boolean {
   return href === "/admin" ? chemin === href : chemin === href || chemin.startsWith(href + "/");
 }
 
-export function RailAdmin({ entrees, nom }: { entrees: { href: string; texte: string }[]; nom: string }) {
+/** consoleAgents : la console des agents est branchée (AGENTS_URL) ; sinon, pas de retour vers elle. */
+export function RailAdmin({ entrees, nom, consoleAgents }: { entrees: { href: string; texte: string }[]; nom: string; consoleAgents: boolean }) {
   const chemin = usePathname();
   return (
     <nav aria-label={TA.railAdmin} className="trait-r relative flex w-[304px] flex-none flex-col gap-2 overflow-y-auto bg-side pt-4 [scrollbar-width:none] max-[760px]:w-[76px]">
@@ -55,7 +56,7 @@ export function RailAdmin({ entrees, nom }: { entrees: { href: string; texte: st
           );
         })}
       </div>
-      <Compte entreprise={nom} lien={{ href: "/", texte: TA.retourConsole }} />
+      <Compte entreprise={nom} lien={consoleAgents ? { href: "/", texte: TA.retourConsole } : undefined} />
     </nav>
   );
 }

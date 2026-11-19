@@ -1,10 +1,25 @@
 import "server-only";
+import { T } from "./textes";
 
 // Le serveur d'agents (console/agents/serveur.py en local ; l'atelier plus tard).
 // Le navigateur ne lui parle jamais : seule la console, avec le jeton partagé.
+// Sans AGENTS_URL (en ligne, tant que l'équipe d'agents n'existe pas), il n'est pas branché : la racine mène à /admin et
+// les routes des agents répondent 503 (nonBranches).
 
-export function adresseAgents(): string {
-  return (process.env.AGENTS_URL || "http://127.0.0.1:8100").replace(/\/+$/, "");
+/** L'adresse du serveur d'agents, ou null s'il n'est pas branché. Pas de valeur par défaut : le local la pose (.env.local). */
+export function serveurAgents(): string | null {
+  return process.env.AGENTS_URL?.replace(/\/+$/, "") || null;
+}
+
+/** La réponse des routes des agents quand le serveur n'est pas branché. */
+export function nonBranches(): Response {
+  return Response.json({ erreur: T.agentsNonBranches }, { status: 503 });
+}
+
+function adresseAgents(): string {
+  const a = serveurAgents();
+  if (!a) throw new Error("AGENTS_URL n'est pas posée : le serveur d'agents n'est pas branché");
+  return a;
 }
 
 export function enteteAgents(): Record<string, string> {

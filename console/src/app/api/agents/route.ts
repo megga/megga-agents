@@ -2,15 +2,17 @@ import { T } from "@/lib/textes";
 import { creer, lister, Refus, retirer } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { pret } from "@/lib/base";
-import { inscrire } from "@/lib/serveur-agents";
+import { inscrire, nonBranches, serveurAgents } from "@/lib/serveur-agents";
 
 export async function GET(requete: Request) {
+  if (!serveurAgents()) return nonBranches();
   const s = await sessionDe(requete);
   if (!s) return Response.json({ erreur: T.connectezVous }, { status: 401 });
   return Response.json({ agents: await lister(await pret(), s.user.id) });
 }
 
 export async function POST(requete: Request) {
+  if (!serveurAgents()) return nonBranches();
   const s = await sessionDe(requete);
   if (!s) return Response.json({ erreur: T.connectezVous }, { status: 401 });
   let agent;

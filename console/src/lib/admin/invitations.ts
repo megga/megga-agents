@@ -113,6 +113,12 @@ export async function lireInvitation(b: Base, jeton: string, maintenant = new Da
   return l && versInvitation(l);
 }
 
+/** Vrai si ce jeton est celui d'une invitation en attente pour ce courriel (l'inscription en mode invitation, auth.ts). */
+export async function invitationPour(b: Base, jeton: string, courriel: string, maintenant = new Date()): Promise<boolean> {
+  const i = await lireInvitation(b, jeton, maintenant);
+  return i !== undefined && normaliser(courriel) === i.courriel;
+}
+
 export function accepterInvitation(b: Base, jeton: string, compte: { id: string; email: string }, maintenant = new Date()): Promise<Membre> {
   return b.transaction(async (tx) => {
     const i = await lireInvitation(tx, jeton, maintenant);

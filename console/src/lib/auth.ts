@@ -1,24 +1,43 @@
 import "server-only";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
+import { APIError } from "better-auth/api";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { admin } from "better-auth/plugins/admin";
 import { headers } from "next/headers";
+import { invitationPour } from "./admin/invitations";
 import { noterConnexion } from "./admin/usage";
 import { donnees, pret } from "./base";
 import type { Base } from "./donnees/base";
 import { T } from "./textes";
 
 type Fournisseurs = NonNullable<BetterAuthOptions["socialProviders"]>;
+type Env = Record<string, string | undefined>;
+
+/**
+ * L'inscription libre, seulement si on l'écrit (CONSOLE_INSCRIPTION=ouverte : le local et les parcours). Sinon, en ligne
+ * notamment, un compte ne se crée que depuis la page d'un lien d'invitation, jeton à l'appui.
+ */
+export function inscriptionOuverte(env: Env = process.env): boolean {
+  return env.CONSOLE_INSCRIPTION === "ouverte";
+}
+
+/** L'en-tête qui porte le jeton du lien d'invitation avec la demande d'inscription (rejoindre.tsx), jamais une adresse. */
+export const ENTETE_INVITATION = "x-megga-invitation";
+
+/** Le seul chemin qui crée un compte en mode invitation : l'inscription par courriel. */
+const INSCRIPTION_COURRIEL = "/sign-up/email";
 
 /** Google et Microsoft sont préparés ; chacun ne s'allume que si ses deux clés sont posées. */
-export function fournisseurs(env: Record<string, string | undefined> = process.env): Fournisseurs {
+export function fournisseurs(env: Env = process.env): Fournisseurs {
   const f: Fournisseurs = {};
+  // En mode invitation, ni l'un ni l'autre ne crée de compte : ils ne servent qu'à un compte qui existe déjà.
+  const fermee = inscriptionOuverte(env) ? {} : { disableSignUp: true };
   if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
-    f.google = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
+    f.google = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET, ...fermee };
   }
   if (env.MICROSOFT_CLIENT_ID && env.MICROSOFT_CLIENT_SECRET) {
-    f.microsoft = { clientId: env.MICROSOFT_CLIENT_ID, clientSecret: env.MICROSOFT_CLIENT_SECRET, tenantId: env.MICROSOFT_TENANT_ID || "common" };
+    f.microsoft = { clientId: env.MICROSOFT_CLIENT_ID, clientSecret: env.MICROSOFT_CLIENT_SECRET, tenantId: env.MICROSOFT_TENANT_ID || "common", ...fermee };
   }
   return f;
 }
@@ -37,6 +56,18 @@ async function noterSansBloquer(b: Base, utilisateur: string): Promise<void> {
 }
 
 /**
+ * En mode invitation, avant toute création de compte : seule l'inscription par courriel passe, et seulement avec le jeton
+ * d'une invitation en attente pour ce même courriel (en-tête ENTETE_INVITATION). Les courriels ne sont pas vérifiés : une
+ * invitation en attente ne suffit pas, sinon qui connaît l'adresse d'un invité prendrait son compte avant lui. L'invitation
+ * n'est pas consommée ici : elle s'accepte ensuite par sa route (POST /api/admin/invitation).
+ */
+async function verifierInvitation(b: Base, courriel: string, ctx: { path?: string; headers?: Headers } | null): Promise<void> {
+  const jeton = ctx?.path === INSCRIPTION_COURRIEL ? ctx.headers?.get(ENTETE_INVITATION) : null;
+  if (jeton && (await invitationPour(b, jeton, courriel))) return;
+  throw new APIError("FORBIDDEN", { code: "INSCRIPTION_SUR_INVITATION", message: T.inscriptionSurInvitation });
+}
+
+/**
  * Les quinze routes HTTP de l'extension admin de Better Auth (ban-user, impersonate-user, set-role…), toutes fermées : ses
  * rôles ne servent pas. L'extension ne sert qu'au bannissement, écrit côté serveur par les routes gardées de l'admin (comptes.ts).
  */
@@ -45,16 +76,22 @@ export const CHEMINS_ADMIN_FERMES: string[] = Object.values(admin().endpoints).m
 /**
  * Les options de Better Auth sur une base donnée (celle de la console par défaut, une base en mémoire dans les essais).
  * L'extension admin refuse toute nouvelle session à un compte suspendu (BANNED_USER, T.compteSuspendu) ; nextCookies reste
- * la dernière extension.
+ * la dernière extension. En mode invitation (inscriptionOuverte), un compte ne se crée que jeton à l'appui, et un compte
+ * Google ou Microsoft ne se lie jamais de lui-même à un compte existant de même courriel.
  */
-export function optionsAuth(b: Base = donnees()): BetterAuthOptions {
+export function optionsAuth(b: Base = donnees(), env: Env = process.env): BetterAuthOptions {
+  const ouverte = inscriptionOuverte(env);
   return {
     appName: "MEGGA",
     database: b.pourAuth() as BetterAuthOptions["database"],
     emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
-    socialProviders: fournisseurs(),
+    socialProviders: fournisseurs(env),
+    ...(ouverte ? {} : { account: { accountLinking: { enabled: false } } }),
     telemetry: { enabled: false },
-    databaseHooks: { session: { create: { after: async (s) => noterSansBloquer(b, s.userId) } } },
+    databaseHooks: {
+      user: { create: { before: async (u, ctx) => (ouverte ? undefined : verifierInvitation(b, u.email, ctx)) } },
+      session: { create: { after: async (s) => noterSansBloquer(b, s.userId) } },
+    },
     disabledPaths: CHEMINS_ADMIN_FERMES,
     plugins: [admin({ bannedUserMessage: T.compteSuspendu }), nextCookies()],
   };

@@ -20,6 +20,7 @@ export const T = {
   erreurDejaInscrit: "Ce courriel a déjà un compte.",
   erreurMotDePasse: "Le mot de passe fait 8 caractères au moins.",
   erreurGenerale: "Un souci est survenu. Réessayez.",
+  inscriptionSurInvitation: "Un compte se crée depuis un lien d'invitation.", // nouveau
   compteSuspendu: "Ce compte est suspendu : il ne peut plus se connecter. Contactez MEGGA pour en savoir plus.", // nouveau
   pageIntrouvable: "Page introuvable", // nouveau
   retourAccueil: "Retour à l'accueil", // nouveau
@@ -79,4 +80,5 @@ export const T = {
   agentIntrouvable: "Agent introuvable.",
   connectezVous: "Connectez-vous.",
   serviceIndisponible: "Le service ne répond pas. Réessayez dans un instant.",
+  agentsNonBranches: "L'équipe d'agents n'est pas encore branchée.",
 } as const;

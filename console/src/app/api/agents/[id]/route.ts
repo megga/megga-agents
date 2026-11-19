@@ -2,8 +2,10 @@ import { T } from "@/lib/textes";
 import { epingler, Refus } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { pret } from "@/lib/base";
+import { nonBranches, serveurAgents } from "@/lib/serveur-agents";
 
 export async function PATCH(requete: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!serveurAgents()) return nonBranches();
   const s = await sessionDe(requete);
   if (!s) return Response.json({ erreur: T.connectezVous }, { status: 401 });
   const { id } = await params;

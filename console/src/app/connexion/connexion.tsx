@@ -19,12 +19,14 @@ const RETOUR_ERREUR = "/connexion";
 
 /**
  * retour : déjà passé par retourSur (page.tsx) ; on y va après la connexion. erreur : la phrase d'une erreur au retour de
- * Google ou Microsoft (page.tsx), montrée dès l'ouverture.
+ * Google ou Microsoft (page.tsx), montrée dès l'ouverture. inscription : l'inscription est ouverte (inscriptionOuverte) ;
+ * sinon, l'écran ne propose pas de créer un compte (un compte se crée depuis un lien d'invitation).
  */
-export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null }: {
+export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null, inscription: inscriptionPossible }: {
   fournisseurs: ("google" | "microsoft")[];
   retour: string;
   erreur?: string | null;
+  inscription: boolean;
 }) {
   const [mode, setMode] = useState<"connexion" | "inscription">("connexion");
   const [entreprise, setEntreprise] = useState("");
@@ -32,7 +34,7 @@ export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null 
   const [motDePasse, setMotDePasse] = useState("");
   const [erreur, setErreur] = useState<string | null>(erreurInitiale);
   const [envoi, setEnvoi] = useState(false);
-  const inscription = mode === "inscription";
+  const inscription = inscriptionPossible && mode === "inscription";
   const router = useRouter();
 
   async function valider(e: React.FormEvent) {
@@ -115,19 +117,21 @@ export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null 
           </Button>
         </form>
 
-        <p className="mt-5 mb-0 text-center text-[13.5px] text-muted-ink">
-          {inscription ? T.dejaUnCompte : T.pasDeCompte}{" "}
-          <button
-            type="button"
-            className="font-bold text-ink hover:underline"
-            onClick={() => {
-              setMode(inscription ? "connexion" : "inscription");
-              setErreur(null);
-            }}
-          >
-            {inscription ? T.seConnecter : T.inscriptionTitre}
-          </button>
-        </p>
+        {inscriptionPossible && (
+          <p className="mt-5 mb-0 text-center text-[13.5px] text-muted-ink">
+            {inscription ? T.dejaUnCompte : T.pasDeCompte}{" "}
+            <button
+              type="button"
+              className="font-bold text-ink hover:underline"
+              onClick={() => {
+                setMode(inscription ? "connexion" : "inscription");
+                setErreur(null);
+              }}
+            >
+              {inscription ? T.seConnecter : T.inscriptionTitre}
+            </button>
+          </p>
+        )}
       </div>
     </main>
   );

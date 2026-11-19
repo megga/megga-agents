@@ -65,8 +65,9 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
         headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie },
         body: JSON.stringify(corps),
       }));
-    const ouverte = betterAuth({ ...optionsAuth(db), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
-    const fermee = betterAuth({ ...optionsAuth(db), secret: SECRET, baseURL: "http://localhost:3000" });
+    const libre = { CONSOLE_INSCRIPTION: "ouverte" }; // le compte s'inscrit sans invitation (tests/inscription.test.ts)
+    const ouverte = betterAuth({ ...optionsAuth(db, libre), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
+    const fermee = betterAuth({ ...optionsAuth(db, libre), secret: SECRET, baseURL: "http://localhost:3000" });
     const inscrit = await appeler(fermee, "/sign-up/email", { name: "Chef", email: "chef@megga.test", password: "motdepasse" });
     const chef = ((await inscrit.json()) as { user: { id: string } }).user.id;
     await db.ecrire("UPDATE \"user\" SET role = 'admin' WHERE id = ?", chef);
@@ -195,7 +196,7 @@ describe("suspendre un compte", () => {
 
 describe("avec le vrai Better Auth", () => {
   it("un compte suspendu perd ses sessions, ne se reconnecte plus et lit T.compteSuspendu ; réactivé, il revient", async () => {
-    const auth = betterAuth({ ...optionsAuth(db), secret: SECRET });
+    const auth = betterAuth({ ...optionsAuth(db, { CONSOLE_INSCRIPTION: "ouverte" }), secret: SECRET });
     const inscrit = await auth.api.signUpEmail({ body: { name: "Fleuriste", email: "fleurs@exemple.test", password: "motdepasse" }, returnHeaders: true });
     const user = inscrit.response.user;
     const cookie = new Headers({ cookie: (inscrit.headers.get("set-cookie") ?? "").split(";")[0] });

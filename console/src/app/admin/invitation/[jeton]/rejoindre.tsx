@@ -10,12 +10,18 @@ import { Label } from "@/components/ui/label";
 import type { etatInvitation } from "@/lib/admin/invitations";
 import { TA } from "@/lib/admin/textes";
 import { authClient } from "@/lib/auth-client";
+import { T } from "@/lib/textes";
+
+/** Le nom de l'en-tête que lit le serveur (ENTETE_INVITATION, auth.ts, côté serveur seulement). */
+const ENTETE_INVITATION = "x-megga-invitation";
 
 type Etat = ReturnType<typeof etatInvitation>;
 
 /**
- * Le jeton, gardé le temps d'aller se connecter : dans cet onglet seulement, jamais envoyé au serveur ni mis dans une
- * adresse de retour (il partirait vers Google ou Microsoft). /admin/invitation le relit puis l'efface.
+ * Le jeton, gardé le temps d'aller se connecter : dans cet onglet seulement, jamais mis dans une adresse de retour (il
+ * partirait vers Google ou Microsoft). /admin/invitation le relit puis l'efface. Il ne part au serveur que dans le corps
+ * de l'acceptation (POST /api/admin/invitation) et, à l'inscription, dans l'en-tête ENTETE_INVITATION : en mode invitation,
+ * le serveur ne crée le compte qu'avec lui (auth.ts).
  */
 export const CLE_JETON = "megga.admin.invitation";
 
@@ -23,6 +29,7 @@ export const CLE_JETON = "megga.admin.invitation";
 function erreurInscription(code: string | undefined): string {
   if (code?.startsWith("USER_ALREADY_EXISTS")) return TA.courrielDejaInscrit;
   if (code === "PASSWORD_TOO_SHORT") return TA.motDePasseCourt;
+  if (code === "INSCRIPTION_SUR_INVITATION") return T.inscriptionSurInvitation;
   return TA.erreurInterne;
 }
 
@@ -65,7 +72,10 @@ export function Rejoindre({ etat, jeton, courriel }: { etat: Etat; jeton: string
     e.preventDefault();
     if (motDePasse.length < 8) return setErreur(TA.motDePasseCourt);
     await agir(async () => {
-      const { error } = await authClient.signUp.email({ name: nom.trim(), email: courriel, password: motDePasse });
+      const { error } = await authClient.signUp.email(
+        { name: nom.trim(), email: courriel, password: motDePasse },
+        { headers: { [ENTETE_INVITATION]: jeton } },
+      );
       if (error) {
         setErreur(erreurInscription(error.code));
         return false;

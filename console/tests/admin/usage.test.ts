@@ -10,6 +10,9 @@ import type { Base } from "@/lib/donnees/base";
 import { baseVide, moteurParDefaut } from "../moteurs";
 import { baseEssai, colonnes, compte, T0 } from "./aides";
 
+/** L'inscription libre, comme en local : ces essais inscrivent un compte sans invitation (tests/inscription.test.ts). */
+const OUVERTE = { CONSOLE_INSCRIPTION: "ouverte" };
+
 // Le compteur de messages (usage_agent) et la dernière connexion (compte_connexion). Le compteur s'écrit après la réponse de
 // l'agent (after de Next.js), sans texte, et une panne du compteur ne fait jamais échouer ni attendre une conversation.
 
@@ -195,7 +198,7 @@ describe("la dernière connexion", () => {
   });
 
   it("est notée à chaque session créée par Better Auth (inscription, connexion)", async () => {
-    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    const auth = betterAuth({ ...optionsAuth(db, OUVERTE), secret: "secret-des-essais-de-la-console-assez-long" });
     const { user } = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
     const premiere = (await db.un<{ derniere: string }>("SELECT derniere FROM compte_connexion WHERE utilisateur = ?", user.id))!;
     expect(Date.parse(premiere.derniere)).toBeGreaterThan(Date.now() - 60_000);
@@ -206,7 +209,7 @@ describe("la dernière connexion", () => {
 
   it("une panne de la dernière connexion ne refuse pas la connexion", async () => {
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
-    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    const auth = betterAuth({ ...optionsAuth(db, OUVERTE), secret: "secret-des-essais-de-la-console-assez-long" });
     await db.executer("DROP TABLE compte_connexion");
     const r = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
     expect(r.token).toBeTruthy();
@@ -216,6 +219,13 @@ describe("la dernière connexion", () => {
 
 describe("la route de CopilotKit", () => {
   const ROUTE = join(__dirname, "../../src/app/api/copilotkit/[[...chemin]]/route.ts");
+  // Un serveur d'agents branché (sans lui, la route répond 503 : tests/sans-agents.test.ts) ; CopilotKit est simulé.
+  beforeEach(() => {
+    vi.stubEnv("AGENTS_URL", "http://agents.test");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
 
   async function envoyer(chemin: string, methode = "POST") {
     const { POST, GET } = await import("@/app/api/copilotkit/[[...chemin]]/route");

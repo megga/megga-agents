@@ -10,5 +10,7 @@ export function messageErreur(code: unknown): string {
   if (code.startsWith("USER_ALREADY_EXISTS")) return T.erreurDejaInscrit;
   if (code === "PASSWORD_TOO_SHORT") return T.erreurMotDePasse;
   if (code === "BANNED_USER") return T.compteSuspendu;
+  // L'inscription sur invitation : par courriel (auth.ts), ou au retour de Google ou Microsoft (disableSignUp).
+  if (code === "INSCRIPTION_SUR_INVITATION" || code === "signup_disabled") return T.inscriptionSurInvitation;
   return T.erreurGenerale;
 }

@@ -6,7 +6,7 @@ import { agentDuTour, compterSansBloquer } from "@/lib/admin/usage";
 import { lister } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { pret } from "@/lib/base";
-import { enteteAgents, urlAgui } from "@/lib/serveur-agents";
+import { enteteAgents, nonBranches, serveurAgents, urlAgui } from "@/lib/serveur-agents";
 
 // CopilotKit côté serveur : chaque requête ne voit que les agents du compte connecté,
 // chacun branché par AG-UI au serveur d'agents. Le navigateur ne parle qu'à cette route.
@@ -48,6 +48,7 @@ const runtime = new CopilotRuntime({
 const gerer = createCopilotRuntimeHandler({ runtime, basePath: "/api/copilotkit" });
 
 async function traiter(requete: Request) {
+  if (!serveurAgents()) return nonBranches();
   const id = await utilisateur(requete);
   if (!id) return Response.json({ erreur: T.connectezVous }, { status: 401 });
   const agents = await lister(await pret(), id);
