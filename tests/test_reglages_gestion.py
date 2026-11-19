@@ -10,7 +10,7 @@ from pydantic import ValidationError
 
 from noyau import config as configuration
 from packs.immobilier.gestion import Gestion
-from packs.immobilier.reglages import ReglagesDeLaGestion, appliquer
+from packs.immobilier.reglages import ReglagesDeLaGestion, appliquer, appliquer_au_mieux
 
 CONF = configuration.lire("clients/four-seasons-properties.yaml")
 
@@ -39,6 +39,11 @@ def test_sans_reglage_la_version_reste():
 def test_un_reglage_hors_bornes_ne_passe_pas():
     with pytest.raises(ValidationError):
         appliquer(CONF, {"voix_vitesse": 3})
+
+
+def test_un_reglage_faux_n_emporte_pas_les_autres():
+    c, refuses = appliquer_au_mieux(CONF, {"voix_vitesse": 3, "reactions": False, "accueil": {"fr": "Court"}})
+    assert c.reactions is False and c.voix.vitesse == CONF.voix.vitesse and sorted(refuses) == ["accueil", "voix_vitesse"]
 
 
 class Horloge:
@@ -86,7 +91,7 @@ def test_jamais_de_panne_pour_un_reglage():
     assert not servies
     horloge.t += 31
     run(r.rafraichir())
-    assert not servies  # refusé par la validation : l'agent reste tel quel
+    assert servies[-1] == CONF  # refusé par la validation : l'agent reste tel quel
     horloge.t += 31
     run(r.rafraichir())
     horloge.t += 31

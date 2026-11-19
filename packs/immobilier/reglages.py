@@ -52,6 +52,23 @@ def appliquer(base: Config, reglages: dict) -> Config:
     return Config.model_validate(d)
 
 
+def appliquer_au_mieux(base: Config, reglages: dict) -> tuple[Config, list[str]]:
+    """Tous les réglages si possible ; sinon chacun de ceux qui tiennent, un à un, et la liste des refusés : un réglage
+    faux n'emporte pas les autres."""
+    try:
+        return appliquer(base, reglages), []
+    except (ValidationError, KeyError, TypeError):
+        pass
+    gardes, refuses = {}, []
+    for cle, valeur in reglages.items():
+        try:
+            appliquer(base, {**gardes, cle: valeur})
+            gardes[cle] = valeur
+        except (ValidationError, KeyError, TypeError):
+            refuses.append(cle)
+    return appliquer(base, gardes), refuses
+
+
 class ReglagesDeLaGestion:
     """Relit les réglages du courtier et les fait servir (`servir`, une Config) quand ils changent."""
 
@@ -84,12 +101,9 @@ class ReglagesDeLaGestion:
             reglages = {k: v for k, v in reglages.items() if k != "modifie"}
             if reglages == self.vus:
                 return
-            try:
-                nouvelle = appliquer(self.base, reglages)
-            except (ValidationError, KeyError, TypeError) as e:
-                log.error("réglages de la gestion refusés : %s", str(e)[:300])
-                self.vus = reglages  # pas de nouvel essai tant qu'ils ne changent pas
-                return
-            self.vus = reglages
+            nouvelle, refuses = appliquer_au_mieux(self.base, reglages)
+            if refuses:
+                log.error("réglages de la gestion refusés : %s", ", ".join(refuses))
+            self.vus = reglages  # pas de nouvel essai tant qu'ils ne changent pas
             self.servir(nouvelle)
             log.info("réglages de la gestion servis : %s", ", ".join(sorted(reglages)) or "aucun (version en service)")
