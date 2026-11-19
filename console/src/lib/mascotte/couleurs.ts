@@ -32,8 +32,9 @@ export function borner(i: number, n: number): number {
   return Number.isInteger(i) && i >= 0 && i < n ? i : 0;
 }
 
-/** Le SVG de la tête dans cette couleur et ces yeux ; en sombre, les sourcils s'éclaircissent (comme la maquette). */
-export function teteSvg(couleur: number, yeux: number, sombre: boolean): string {
+/** Le SVG de la tête dans cette couleur et ces yeux ; en sombre, les sourcils s'éclaircissent (comme la maquette).
+ * Endormie : les paupières fermées et les « z » (quand rien ne se passe, page Activité). */
+export function teteSvg(couleur: number, yeux: number, sombre: boolean, endormie = false): string {
   const c = borner(couleur, COULEURS.length);
   const y = borner(yeux, YEUX.length);
   let s = remplacer(TETE_SVG, COULEURS[0][1], COULEURS[c][1]);
@@ -42,9 +43,16 @@ export function teteSvg(couleur: number, yeux: number, sombre: boolean): string 
   if (sombre) {
     s = s.replace(/(id="sourcil[GD]" fill=")#[0-9A-Fa-f]{6}/g, `$1${c === 0 ? "#F0584A" : COULEURS[c][1][3]}`);
   }
+  if (endormie) {
+    // Les paupières se recouvrent (aucun filet blanc entre elles) ; le cadre s'élargit pour les « z », la tête restant au centre.
+    s = s.replace(/(class="lidTop" id="haut[LR]" transform=")translate\(0 -14\)/g, "$1translate(0 158)");
+    s = s.replace(/(class="lidBot" id="bas[LR]" transform=")translate\(0 30\)/g, "$1translate(0 -24)");
+    s = s.replace('id="fx-zzz" opacity="0"', 'id="fx-zzz" opacity="1"');
+    s = s.replace('viewBox="182 176 662 514"', 'viewBox="126 176 774 514"');
+  }
   return s;
 }
 
-export function teteUrl(couleur: number, yeux: number, sombre: boolean): string {
-  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(teteSvg(couleur, yeux, sombre));
+export function teteUrl(couleur: number, yeux: number, sombre: boolean, endormie = false): string {
+  return "data:image/svg+xml;charset=utf-8," + encodeURIComponent(teteSvg(couleur, yeux, sombre, endormie));
 }

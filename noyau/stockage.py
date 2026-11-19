@@ -1833,6 +1833,21 @@ class Echanges:
             lignes = c.execute(select(self._t).where(self._t.c.ordre > ordre).order_by(self._t.c.ordre).limit(limite))
             return [dict(l._mapping) for l in lignes]
 
+    def recents(self, depuis: float, agents: set[str] | list[str], limite: int = 200) -> list[dict]:
+        """Les questions posées depuis cette date par ou à ces agents, la plus récente d'abord, chacune avec sa réponse
+        (`reponse` : None s'il n'y en a pas)."""
+        agents = list(agents)
+        if not agents:
+            return []
+        t = self._t
+        with self._e.connect() as c:
+            demandes = [dict(l._mapping) for l in c.execute(
+                select(t).where(t.c.quand >= depuis, t.c.reponse_a.is_(None), or_(t.c.de.in_(agents), t.c.a.in_(agents)))
+                .order_by(t.c.quand.desc(), t.c.ordre.desc()).limit(limite))]
+            ids = [d["id"] for d in demandes]
+            reponses = {l.reponse_a: l.texte for l in c.execute(select(t.c.reponse_a, t.c.texte).where(t.c.reponse_a.in_(ids)))} if ids else {}
+        return [{**d, "reponse": reponses.get(d["id"])} for d in demandes]
+
     def chaine(self, origine: str) -> list[dict]:
         """Toute une chaîne, de la première demande à la dernière réponse."""
         with self._e.connect() as c:

@@ -1,4 +1,5 @@
 import "server-only";
+import type { EchangeVu } from "@/components/console/activite-donnees";
 
 // Le serveur d'agents (console/agents/serveur.py en local ; l'atelier plus tard).
 // Le navigateur ne lui parle jamais : seule la console, avec le jeton partagé.
@@ -37,6 +38,17 @@ export async function assurerInscriptions(
         }
       }),
   );
+}
+
+/** Les questions que les agents de ce compte se sont posées depuis cette date (en secondes), la plus récente d'abord. */
+export async function lireEchanges(compte: string, depuis: number): Promise<EchangeVu[]> {
+  const r = await fetch(`${adresseAgents()}/comptes/${encodeURIComponent(compte)}/echanges?depuis=${depuis}`, {
+    headers: enteteAgents(),
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`le serveur d'agents refuse la lecture des échanges (${r.status})`);
+  return ((await r.json()) as { echanges: EchangeVu[] }).echanges;
 }
 
 /** Met l'agent en service tout de suite : il répond dès sa création. */

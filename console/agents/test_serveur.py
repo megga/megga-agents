@@ -96,6 +96,25 @@ def test_les_agents_d_un_meme_compte_sont_collegues(client):
     assert [(l["de"], l["a"], l["etat"]) for l in lignes] == [("agent-alix", "agent-lea", "repondu"), ("agent-lea", "agent-alix", "repondu")]
 
 
+def test_les_echanges_d_un_compte(client):
+    import asyncio
+
+    import serveur
+
+    for ident, prenom, compte in (("agent-alix", "Alix", "c1"), ("agent-lea", "Léa", "c1"), ("agent-sam", "Sam", "c2"), ("agent-noe", "Noé", "c2")):
+        client.put(f"/agents/{ident}", json={"prenom": prenom, "metier": "garage", "entreprise": "E", "compte": compte}, headers=ENTETE)
+    registre = serveur.lire_registre()
+    asyncio.run(serveur.construire("agent-alix", registre["agent-alix"]).tools[0]("agent-lea", "Le dossier est-il complet ?"))
+    asyncio.run(serveur.construire("agent-sam", registre["agent-sam"]).tools[0]("agent-noe", "Et la voiture ?"))
+    assert client.get("/comptes/c1/echanges").status_code == 401
+    r = client.get("/comptes/c1/echanges", headers=ENTETE).json()["echanges"]
+    assert [(e["de"], e["a"], e["question"], e["etat"]) for e in r] == [("agent-alix", "agent-lea", "Le dossier est-il complet ?", "repondu")]
+    assert r[0]["reponse"].startswith("Bien reçu")
+    assert client.get("/comptes/c1/echanges", params={"depuis": r[0]["quand"] + 1}, headers=ENTETE).json() == {"echanges": []}
+    assert [e["de"] for e in client.get("/comptes/c2/echanges", headers=ENTETE).json()["echanges"]] == ["agent-sam"]
+    assert client.get("/comptes/inconnu/echanges", headers=ENTETE).json() == {"echanges": []}
+
+
 def test_le_compte_est_borne(client):
     corps = {"prenom": "Lou", "metier": "garage", "entreprise": "E", "compte": "x" * 101}
     assert client.put("/agents/agent-borne", json=corps, headers=ENTETE).status_code == 422

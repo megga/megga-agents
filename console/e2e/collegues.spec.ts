@@ -33,4 +33,34 @@ test("Alix a demandé à Léa", async ({ page }) => {
   await expect(echange.getByText("« Le dossier Martin est-il complet ? »")).toBeVisible();
   await expect(echange.getByText(/^Bien reçu.*Le dossier Martin est-il complet/)).toBeVisible();
   await page.screenshot({ path: "captures/echange-deplie.png" });
+
+  // La page Activité : l'échange en temps fort, qui se déplie, et ramène à la conversation
+  await page.getByRole("button", { name: "Activité" }).click();
+  const fort = page.getByTestId("temps-fort");
+  await expect(fort).toHaveCount(1);
+  await expect(fort.getByRole("button").first()).toContainText("Alix a demandé à Léa");
+  await page.screenshot({ path: "captures/activite.png" });
+  await fort.getByRole("button").first().click();
+  await expect(fort.getByText("«\u00a0Le dossier Martin est-il complet ?\u00a0»")).toBeVisible();
+  await page.screenshot({ path: "captures/activite-deplie.png" });
+  await fort.getByRole("button", { name: "Continuer avec Alix" }).click();
+  await expect(page.getByLabel("Écrivez à Alix")).toBeVisible();
+});
+
+test("sans échange, l'Activité montre une tête endormie", async ({ page }) => {
+  await page.goto("/connexion");
+  await page.getByRole("button", { name: "Créer un compte" }).click();
+  await page.getByLabel("Nom de votre entreprise").fill("Agence Calme");
+  await page.getByLabel("Courriel").fill(`calme-${Date.now()}@essai.megga.ch`);
+  await page.getByLabel("Mot de passe").fill("motdepasse-des-essais");
+  await page.getByRole("button", { name: "Créer mon compte" }).click();
+  await page.getByRole("button", { name: "Créer un agent" }).click();
+  await page.getByLabel("Prénom de l'agent").fill("Noé");
+  await page.getByRole("button", { name: "Métier" }).click();
+  await page.getByRole("button", { name: "Garage", exact: true }).click();
+  await page.getByRole("button", { name: "Créer", exact: true }).click();
+  await page.getByRole("button", { name: "Activité" }).click();
+  await expect(page.getByRole("img", { name: "Aucune action" })).toBeVisible();
+  await expect(page.getByTestId("temps-fort")).toHaveCount(0);
+  await page.screenshot({ path: "captures/activite-vide.png" });
 });

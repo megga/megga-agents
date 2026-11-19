@@ -234,6 +234,20 @@ def inscrire(ident: str, corps: Inscription):
     return {"id": ident, "en_service": True}
 
 
+@app.get("/comptes/{compte}/echanges", dependencies=[Depends(jeton)])
+def echanges(compte: str, depuis: float = 0, limite: int = 200):
+    """Les questions que les agents de ce compte se sont posées depuis cette date, la plus récente d'abord (page Activité).
+    Ni les questions refusées par les garde-fous, ni celles d'un autre compte."""
+    if not 1 <= len(compte) <= 100:
+        raise HTTPException(400, "compte invalide")
+    registre = lire_registre()
+    agents = {i for i, f in registre.items() if f.get("compte") == compte}
+    lignes = stockage.Echanges(f"sqlite:///{DOSSIER / 'echanges.sqlite'}").recents(depuis, agents, max(1, min(limite, 500)))
+    return {"echanges": [{"id": l["id"], "quand": l["quand"], "de": l["de"], "a": l["a"], "question": l["texte"], "etat": l["etat"],
+                          "reponse": l["reponse"]}
+                         for l in lignes if l["etat"] != "refuse" and l["de"] in agents and l["a"] in agents]}
+
+
 @app.post("/agents/{ident}/agui", dependencies=[Depends(jeton)])
 async def repondre(ident: str, entree: RunAgentInput):
     fiche = lire_registre().get(ident)

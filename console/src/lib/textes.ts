@@ -54,6 +54,21 @@ export const T = {
   citation: (texte: string) => `«\u00a0${texte}\u00a0»`, // nouveau
   unCollegue: "un collègue", // nouveau
 
+  // Activité (maquette, concept « Temps forts »)
+  activite: "Activité",
+  periodeJour: "Aujourd'hui",
+  periodeSemaine: "7 jours",
+  periodeMois: "30 jours",
+  periodeAn: "12 mois",
+  aDemandeAMilieu: " a demandé à ",
+  pasRepondu: " n'a pas répondu à ", // nouveau
+  rienAAjouter: "Rien à ajouter", // nouveau
+  continuerAvec: (prenom: string) => `Continuer avec ${prenom}`,
+  voirLeReste: "Voir tout le reste",
+  masquerLeReste: "Masquer le reste",
+  aucuneAction: "Aucune action",
+  hier: "Hier", // nouveau
+
   // Sans agent : la mascotte et ce bouton (nouveau)
   creerUnAgent: "Créer un agent",
 
