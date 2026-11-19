@@ -2,7 +2,7 @@ import { T } from "@/lib/textes";
 import { lister } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { base } from "@/lib/base";
-import { lireEchanges } from "@/lib/serveur-agents";
+import { lireEchanges, lireMesures } from "@/lib/serveur-agents";
 
 // Les échanges entre les agents du compte connecté depuis une date (page Activité). Jamais ceux d'un autre compte.
 export async function GET(requete: Request) {
@@ -12,8 +12,8 @@ export async function GET(requete: Request) {
   if (!Number.isFinite(depuis) || depuis < 0) return Response.json({ erreur: T.erreurGenerale }, { status: 400 });
   const ids = new Set(lister(base(), s.user.id).map((a) => a.id));
   try {
-    const echanges = (await lireEchanges(s.user.id, depuis)).filter((e) => ids.has(e.de) && ids.has(e.a));
-    return Response.json({ echanges });
+    const [tous, mesures] = await Promise.all([lireEchanges(s.user.id, depuis), lireMesures(s.user.id, depuis)]);
+    return Response.json({ echanges: tous.filter((e) => ids.has(e.de) && ids.has(e.a)), mesures });
   } catch (e) {
     console.error("activité :", e);
     return Response.json({ erreur: T.serviceIndisponible }, { status: 502 });

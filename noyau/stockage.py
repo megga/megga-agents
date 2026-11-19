@@ -1848,6 +1848,16 @@ class Echanges:
             reponses = {l.reponse_a: l.texte for l in c.execute(select(t.c.reponse_a, t.c.texte).where(t.c.reponse_a.in_(ids)))} if ids else {}
         return [{**d, "reponse": reponses.get(d["id"])} for d in demandes]
 
+    def compter(self, depuis: float, agents: set[str] | list[str]) -> int:
+        """Le nombre de questions posées depuis cette date entre ces agents, sans celles que les garde-fous ont refusées."""
+        agents = list(agents)
+        if not agents:
+            return 0
+        t = self._t
+        with self._e.connect() as c:
+            return c.execute(select(func.count()).where(t.c.quand >= depuis, t.c.reponse_a.is_(None), t.c.etat != "refuse",
+                                                        t.c.de.in_(agents), t.c.a.in_(agents))).scalar_one()
+
     def chaine(self, origine: str) -> list[dict]:
         """Toute une chaîne, de la première demande à la dernière réponse."""
         with self._e.connect() as c:

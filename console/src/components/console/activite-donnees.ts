@@ -10,6 +10,9 @@ export type EchangeVu = {
   reponse: string | null;
 };
 
+/** Les trois chiffres de la période, tous tirés de ce qui s'est passé. */
+export type Mesures = { conversations: number; reponses: number; echanges: number };
+
 export type Periode = "jour" | "semaine" | "mois" | "an";
 export const PERIODES: Periode[] = ["jour", "semaine", "mois", "an"];
 

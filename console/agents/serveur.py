@@ -248,6 +248,39 @@ def echanges(compte: str, depuis: float = 0, limite: int = 200):
                          for l in lignes if l["etat"] != "refuse" and l["de"] in agents and l["a"] in agents]}
 
 
+def tours(depuis: float, agents: set[str]) -> tuple[int, int]:
+    """Les conversations et les réponses des agents depuis cette date, d'après les tours d'Agno ; sans les questions
+    qu'ils se posent entre eux (leur conversation commence par « collegue: »)."""
+    import sqlite3
+
+    if not agents:
+        return 0, 0
+    fichier = DOSSIER / "sessions.sqlite"
+    if not fichier.exists():
+        return 0, 0
+    marques = ",".join("?" * len(agents))
+    with sqlite3.connect(f"file:{fichier}?mode=ro", uri=True) as c:
+        try:
+            n_conv, n_rep = c.execute(
+                f"SELECT COUNT(DISTINCT session_id), SUM(status = 'COMPLETED') FROM agno_runs WHERE created_at >= ? "
+                f"AND agent_id IN ({marques}) AND (user_id IS NULL OR user_id NOT LIKE 'collegue:%')",
+                (int(depuis), *sorted(agents))).fetchone()
+        except sqlite3.OperationalError:  # aucune conversation encore : Agno n'a pas créé sa table
+            return 0, 0
+    return int(n_conv or 0), int(n_rep or 0)
+
+
+@app.get("/comptes/{compte}/mesures", dependencies=[Depends(jeton)])
+def mesures(compte: str, depuis: float = 0):
+    """Les trois chiffres de la page Activité pour ce compte depuis cette date : tous tirés de ce qui s'est passé."""
+    if not 1 <= len(compte) <= 100:
+        raise HTTPException(400, "compte invalide")
+    agents = {i for i, f in lire_registre().items() if f.get("compte") == compte}
+    conversations, reponses = tours(depuis, agents)
+    echanges = stockage.Echanges(f"sqlite:///{DOSSIER / 'echanges.sqlite'}").compter(depuis, agents)
+    return {"conversations": conversations, "reponses": reponses, "echanges": echanges}
+
+
 @app.post("/agents/{ident}/agui", dependencies=[Depends(jeton)])
 async def repondre(ident: str, entree: RunAgentInput):
     fiche = lire_registre().get(ident)

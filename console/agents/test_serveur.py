@@ -115,6 +115,31 @@ def test_les_echanges_d_un_compte(client):
     assert client.get("/comptes/inconnu/echanges", headers=ENTETE).json() == {"echanges": []}
 
 
+def test_les_mesures_d_un_compte(client):
+    for ident, prenom, compte in (("agent-alix", "Alix", "c1"), ("agent-lea", "Léa", "c1"), ("agent-sam", "Sam", "c2")):
+        client.put(f"/agents/{ident}", json={"prenom": prenom, "metier": "garage", "entreprise": "E", "compte": compte}, headers=ENTETE)
+    assert client.get("/comptes/c1/mesures", headers=ENTETE).json() == {"conversations": 0, "reponses": 0, "echanges": 0}
+
+    def tour(agent, texte, fil, run):
+        e = {**entree(texte), "threadId": fil, "runId": run}
+        with client.stream("POST", f"/agents/{agent}/agui", json=e, headers=ENTETE) as flux:
+            list(flux.iter_lines())
+
+    tour("agent-alix", "Bonjour", "fil-a", "r1")
+    tour("agent-alix", "Encore", "fil-a", "r2")
+    tour("agent-lea", "Salut", "fil-b", "r3")
+    tour("agent-alix", "ESSAI-COLLEGUE Le dossier ?", "fil-c", "r4")  # Léa répond dans sa conversation d'échange
+    tour("agent-sam", "Autre compte", "fil-d", "r5")
+    m = client.get("/comptes/c1/mesures", headers=ENTETE).json()
+    assert m == {"conversations": 3, "reponses": 4, "echanges": 1}  # la réponse de Léa à Alix n'est pas une conversation
+    assert client.get("/comptes/c2/mesures", headers=ENTETE).json() == {"conversations": 1, "reponses": 1, "echanges": 0}
+    import time
+
+    assert client.get("/comptes/c1/mesures", params={"depuis": time.time() + 60}, headers=ENTETE).json() == {
+        "conversations": 0, "reponses": 0, "echanges": 0}
+    assert client.get("/comptes/c1/mesures").status_code == 401
+
+
 def test_le_compte_est_borne(client):
     corps = {"prenom": "Lou", "metier": "garage", "entreprise": "E", "compte": "x" * 101}
     assert client.put("/agents/agent-borne", json=corps, headers=ENTETE).status_code == 422

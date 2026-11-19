@@ -67,6 +67,9 @@ export const T = {
   voirLeReste: "Voir tout le reste",
   masquerLeReste: "Masquer le reste",
   aucuneAction: "Aucune action",
+  chiffreConversations: "Conversations", // nouveau
+  chiffreReponses: "Réponses", // nouveau
+  chiffreEchanges: "Questions entre agents", // nouveau
   hier: "Hier", // nouveau
 
   // Sans agent : la mascotte et ce bouton (nouveau)

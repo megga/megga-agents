@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { T } from "@/lib/textes";
-import { debut, parJour, PERIODES, souci, tempsForts, type EchangeVu, type Periode } from "./activite-donnees";
+import { debut, parJour, PERIODES, souci, tempsForts, type EchangeVu, type Mesures, type Periode } from "./activite-donnees";
 import { reponseLisible } from "./bulles";
 import { Chevron, Triangle } from "./icones";
 import { Tete } from "./tete";
@@ -36,6 +36,7 @@ function nomDuJour(cle: string): string {
 export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinuer: (id: string) => void }) {
   const [periode, setPeriode] = useState<Periode>("semaine");
   const [echanges, setEchanges] = useState<EchangeVu[] | null>(null);
+  const [mesures, setMesures] = useState<Mesures | null>(null);
   const [souciReseau, setSouciReseau] = useState(false);
   const [reste, setReste] = useState(false);
 
@@ -44,9 +45,9 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
     fetch(`/api/activite?depuis=${Math.floor(debut(periode))}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(String(r.status));
-        return (await r.json()) as { echanges: EchangeVu[] };
+        return (await r.json()) as { echanges: EchangeVu[]; mesures: Mesures };
       })
-      .then((d) => vivant && (setEchanges(d.echanges), setSouciReseau(false)))
+      .then((d) => vivant && (setEchanges(d.echanges), setMesures(d.mesures), setSouciReseau(false)))
       .catch(() => vivant && setSouciReseau(true));
     return () => {
       vivant = false;
@@ -79,6 +80,23 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
             ))}
           </div>
         </div>
+
+        {mesures && (
+          <div className="mt-1 mb-1.5 grid grid-cols-3 gap-3 max-[760px]:grid-cols-1" data-testid="chiffres">
+            {(
+              [
+                [mesures.conversations, T.chiffreConversations],
+                [mesures.reponses, T.chiffreReponses],
+                [mesures.echanges, T.chiffreEchanges],
+              ] as const
+            ).map(([n, nom]) => (
+              <div key={nom} className="flex flex-col gap-0.5 rounded-[20px] bg-side px-5 py-[18px]">
+                <b className="text-[34px] leading-[1.1] font-extrabold tracking-[-0.03em] tabular-nums">{n.toLocaleString("fr-CH")}</b>
+                <span className="text-[14px] text-muted-ink">{nom}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {souciReseau && <div className="text-center text-[13px] text-muted-ink">{T.serviceIndisponible}</div>}
 

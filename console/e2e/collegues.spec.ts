@@ -39,6 +39,9 @@ test("Alix a demandé à Léa", async ({ page }) => {
   const fort = page.getByTestId("temps-fort");
   await expect(fort).toHaveCount(1);
   await expect(fort.getByRole("button").first()).toContainText("Alix a demandé à Léa");
+  const chiffres = page.getByTestId("chiffres");
+  // Une conversation (avec Alix) et sa réponse ; la question à Léa est un échange, pas une conversation de plus
+  await expect(chiffres).toHaveText("1Conversations1Réponses1Questions entre agents");
   await page.screenshot({ path: "captures/activite.png" });
   await fort.getByRole("button").first().click();
   await expect(fort.getByText("«\u00a0Le dossier Martin est-il complet ?\u00a0»")).toBeVisible();
@@ -62,5 +65,6 @@ test("sans échange, l'Activité montre une tête endormie", async ({ page }) =>
   await page.getByRole("button", { name: "Activité" }).click();
   await expect(page.getByRole("img", { name: "Aucune action" })).toBeVisible();
   await expect(page.getByTestId("temps-fort")).toHaveCount(0);
+  await expect(page.getByTestId("chiffres")).toContainText("0Conversations");
   await page.screenshot({ path: "captures/activite-vide.png" });
 });
