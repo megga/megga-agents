@@ -15,6 +15,30 @@ export function urlAgui(id: string): string {
   return `${adresseAgents()}/agents/${encodeURIComponent(id)}/agui`;
 }
 
+// Les agents déjà inscrits avec leur compte par ce processus : une seule fois chacun.
+const inscrits = new Set<string>();
+
+/** Réinscrit, une fois, les agents d'un compte avec ce compte : un agent créé avant les collègues reçoit alors les siens.
+ * Un échec n'empêche pas de parler à l'agent ; il sera retenté à la prochaine requête. */
+export async function assurerInscriptions(
+  agents: { id: string; prenom: string; metier: string }[],
+  entreprise: string,
+  compte: string,
+): Promise<void> {
+  await Promise.all(
+    agents
+      .filter((a) => !inscrits.has(`${a.id}:${compte}`))
+      .map(async (a) => {
+        try {
+          await inscrire(a.id, { prenom: a.prenom, metier: a.metier, entreprise, compte });
+          inscrits.add(`${a.id}:${compte}`);
+        } catch (e) {
+          console.error("réinscription d'agent :", e);
+        }
+      }),
+  );
+}
+
 /** Met l'agent en service tout de suite : il répond dès sa création. */
 /** `compte` : les agents d'un même compte sont collègues et peuvent se poser des questions. */
 export async function inscrire(id: string, fiche: { prenom: string; metier: string; entreprise: string; compte: string }): Promise<void> {

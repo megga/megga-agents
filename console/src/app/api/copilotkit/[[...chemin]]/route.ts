@@ -4,7 +4,7 @@ import { CopilotRuntime, createCopilotRuntimeHandler } from "@copilotkit/runtime
 import { lister } from "@/lib/agents";
 import { sessionDe } from "@/lib/auth";
 import { base } from "@/lib/base";
-import { enteteAgents, urlAgui } from "@/lib/serveur-agents";
+import { assurerInscriptions, enteteAgents, urlAgui } from "@/lib/serveur-agents";
 
 // CopilotKit côté serveur : chaque requête ne voit que les agents du compte connecté,
 // chacun branché par AG-UI au serveur d'agents. Le navigateur ne parle qu'à cette route.
@@ -46,9 +46,13 @@ const runtime = new CopilotRuntime({
 const gerer = createCopilotRuntimeHandler({ runtime, basePath: "/api/copilotkit" });
 
 async function traiter(requete: Request) {
-  const id = await utilisateur(requete);
-  if (!id) return Response.json({ erreur: T.connectezVous }, { status: 401 });
-  if (!lister(base(), id).length) return Response.json({ erreur: "Aucun agent." }, { status: 404 });
+  const s = await sessionDe(requete);
+  if (!s) return Response.json({ erreur: T.connectezVous }, { status: 401 });
+  utilisateurs.set(requete, s.user.id);
+  const agents = lister(base(), s.user.id);
+  if (!agents.length) return Response.json({ erreur: "Aucun agent." }, { status: 404 });
+  // Les agents d'un même compte sont collègues : ceux créés avant le savoir sont réinscrits avec leur compte.
+  await assurerInscriptions(agents, s.user.name || "Votre entreprise", s.user.id);
   return gerer(requete);
 }
 
