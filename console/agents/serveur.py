@@ -29,6 +29,7 @@ from agno.session.summary import SessionSummaryManager
 from agno.os.interfaces.agui.router import run_entity
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
 from atelier import gabarits
@@ -209,23 +210,38 @@ def construire(ident: str, fiche: dict, registre: dict | None = None) -> Agent:
     })
     cle = os.environ.get("ANTHROPIC_API_KEY")
     m = modele(config.modeles.principal, {"ANTHROPIC_API_KEY": cle}) if cle else ModeleEssai()
-    # Le résumé de chaque conversation, par le petit modèle : un appel court de plus par tour.
-    petit = modele(config.modeles.petit(), {"ANTHROPIC_API_KEY": cle}, jetons=300) if cle else ModeleEssai()
-    resumes = SessionSummaryManager(model=petit, session_summary_prompt=RESUME.format(prenom=fiche["prenom"]), last_n_runs=6)
+
     return Agent(
         id=ident,
         name=fiche["prenom"],
         model=m,
         instructions=[*consignes(config), ESSAI_COLLEGUES if relais else ESSAI, *([relais.consigne(ident)] if relais else [])],
         tools=relais.outils(ident) if relais else [],
-        session_summary_manager=resumes,
-        add_session_summary_to_context=False,  # le résumé sert la page Activité, pas les réponses
         db=SqliteDb(db_file=str(DOSSIER / "sessions.sqlite")),
         add_history_to_context=True,
         num_history_runs=12,
         markdown=False,
         telemetry=False,
     )
+
+
+def resumeur(fiche: dict) -> SessionSummaryManager:
+    """Le résumé d'une conversation, par le petit modèle : un appel court de plus par tour, fait après la réponse."""
+    cle = os.environ.get("ANTHROPIC_API_KEY")
+    config = Config.model_validate({"id": "essai-resume", "nom_agent": fiche["prenom"], "entreprise": fiche["entreprise"], "zone": "europe"})
+    petit = modele(config.modeles.petit(), {"ANTHROPIC_API_KEY": cle}, jetons=300) if cle else ModeleEssai()
+    return SessionSummaryManager(model=petit, session_summary_prompt=RESUME.format(prenom=fiche["prenom"]), last_n_runs=6)
+
+
+async def resumer(agent: Agent, fiche: dict, session_id: str) -> None:
+    """Résume la conversation une fois la réponse partie : l'écran n'attend pas le résumé pour envoyer le message suivant.
+    Un échec ne touche ni la conversation ni la réponse ; il est seulement noté."""
+    try:
+        session = agent.get_session(session_id=session_id)
+        if session is not None and await resumeur(fiche).acreate_session_summary(session) is not None:
+            agent.save_session(session)
+    except Exception as e:
+        journal.warning("résumé de conversation impossible : %s", str(e)[:200])
 
 
 def jeton(requete: Request) -> None:
@@ -368,4 +384,5 @@ async def repondre(ident: str, entree: RunAgentInput):
         async for evenement in run_entity(agent, entree, user_id=ident):
             yield encodeur.encode(evenement)
 
-    return StreamingResponse(flux(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+    return StreamingResponse(flux(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"},
+                             background=BackgroundTask(resumer, agent, fiche, entree.thread_id))

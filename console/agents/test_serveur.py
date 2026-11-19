@@ -164,6 +164,25 @@ def test_les_conversations_resumees_d_un_compte(client):
     assert client.get("/comptes/c1/conversations").status_code == 401
 
 
+def test_le_resume_ne_retarde_pas_la_reponse(client, monkeypatch):
+    """Le résumé est fait après la réponse : l'agent ne le fait pas pendant son tour, et une panne du résumé ne touche
+    pas la réponse (l'écran sinon attend la fin du résumé avant d'accepter le message suivant)."""
+    import serveur
+
+    client.put("/agents/agent-alix", json={"prenom": "Alix", "metier": "garage", "entreprise": "E", "compte": "c1"}, headers=ENTETE)
+    assert not serveur.construire("agent-alix", serveur.lire_registre()["agent-alix"]).enable_session_summaries
+
+    async def en_panne(*a, **k):
+        raise RuntimeError("panne du résumé")
+
+    monkeypatch.setattr(serveur.SessionSummaryManager, "acreate_session_summary", en_panne)
+    with client.stream("POST", "/agents/agent-alix/agui", json=entree("Bonjour"), headers=ENTETE) as flux:
+        types = [json.loads(l[5:])["type"] for l in flux.iter_lines() if l.startswith("data:")]
+    assert types[-1] == "RUN_FINISHED"
+    (c,) = client.get("/comptes/c1/conversations", headers=ENTETE).json()["conversations"]
+    assert c["resume"] is None  # pas de résumé, mais la conversation est là
+
+
 def test_le_compte_est_borne(client):
     corps = {"prenom": "Lou", "metier": "garage", "entreprise": "E", "compte": "x" * 101}
     assert client.put("/agents/agent-borne", json=corps, headers=ENTETE).status_code == 422
