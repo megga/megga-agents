@@ -184,3 +184,55 @@ test("la configuration : une seule origine, en UE, un seul conteneur", () => {
     instance_type: "basic", max_instances: 1, constraints: { jurisdiction: "eu" } }]);
   assert.doesNotMatch(texte, /BETTER_AUTH_SECRET"\s*:|CONSOLE_BASE_URL"\s*:|postgres:\/\//); // aucun secret dans le fichier
 });
+
+test("la console n'est vérifiée qu'au réveil, puis revérifiée après une panne", async () => {
+  let santes = 0;
+  const { c } = conteneur();
+  const fetchPort = c.getTcpPort;
+  c.getTcpPort = (port) => {
+    const p = fetchPort(port);
+    return {
+      async fetch(entree, init) {
+        if (new URL(new Request(entree, init).url).pathname === "/api/sante") santes++;
+        return p.fetch(entree, init);
+      },
+    };
+  };
+  const o = new ConsoleConteneur({ container: c, blockConcurrencyWhile: (f) => f() }, { ...VARS, ...SECRETS });
+  for (let i = 0; i < 3; i++) assert.equal(await (await o.fetch(new Request("https://console.megga.ai/admin"))).text(), "console");
+  assert.equal(santes, 1);
+
+  c.getTcpPort = () => ({ fetch: async () => { throw new Error("connexion refusée"); } });
+  const avant = console.error;
+  console.error = () => {};
+  try {
+    await estPageAttente(await o.fetch(new Request("https://console.megga.ai/admin")));
+  } finally {
+    console.error = avant;
+  }
+  assert.equal(o.repond, false);
+});
+
+test("les fichiers de construction se servent depuis le cache de Cloudflare", async () => {
+  const garde = new Map();
+  globalThis.caches = { default: { match: async (r) => garde.get(r.url)?.clone(), put: async (r, rep) => void garde.set(r.url, rep) } };
+  let appels = 0;
+  const env = { CONSOLE: { jurisdiction: () => ({ getByName: () => ({ fetch: async () => {
+    appels++;
+    return new Response("js", { headers: { "cache-control": "public, max-age=31536000, immutable" } });
+  } }) }) } };
+  const attente = [];
+  const ctx = { waitUntil: (p) => attente.push(p) };
+  try {
+    const url = "https://console.megga.ai/_next/static/chunks/a.js";
+    assert.equal(await (await Worker.fetch(new Request(url), env, ctx)).text(), "js");
+    await Promise.all(attente);
+    assert.equal(await (await Worker.fetch(new Request(url), env, ctx)).text(), "js");
+    assert.equal(appels, 1);
+    await Worker.fetch(new Request("https://console.megga.ai/admin"), env, ctx);
+    await Worker.fetch(new Request("https://console.megga.ai/admin"), env, ctx);
+    assert.equal(appels, 3); // les pages ne passent jamais par le cache
+  } finally {
+    delete globalThis.caches;
+  }
+});

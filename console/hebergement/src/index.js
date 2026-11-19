@@ -106,13 +106,24 @@ export class ConsoleConteneur extends DurableObject {
     try {
       return await this.ctx.container.getTcpPort(PORT).fetch(versConsole(requete));
     } catch (e) {
+      this.repond = false; // la prochaine requête revérifie la console avant de lui transmettre
       console.error("la console ne répond pas :", String(e?.message ?? e).slice(0, 200));
       return pageAttente();
     }
   }
 
+  /**
+   * La console est vérifiée (/api/sante) au réveil seulement : tant que le conteneur tourne et qu'il a répondu une fois,
+   * les requêtes lui vont directement, sans un aller-retour de plus chacune.
+   */
   pret() {
-    this.demarrage ??= this.demarrer().finally(() => (this.demarrage = undefined));
+    // Le délai d'inactivité est rafraîchi à chaque requête, comme avant : c'est un appel local, sans aller-retour au conteneur.
+    if (this.repond && this.ctx.container?.running) return this.ctx.container.setInactivityTimeout(INACTIVITE_MS);
+    this.demarrage ??= this.demarrer()
+      .then(() => {
+        this.repond = true;
+      })
+      .finally(() => (this.demarrage = undefined));
     return this.demarrage;
   }
 
@@ -137,15 +148,33 @@ export class ConsoleConteneur extends DurableObject {
   }
 }
 
+/**
+ * Les fichiers de construction de Next (/_next/static/…) : leur nom change à chaque construction et la console les sert
+ * « immutable ». Gardés au bord de Cloudflare, ils ne traversent le conteneur qu'une fois par construction.
+ */
+export function estStatique(requete) {
+  return requete.method === "GET" && new URL(requete.url).pathname.startsWith("/_next/static/");
+}
+
+async function versObjet(requete, env) {
+  try {
+    return await env.CONSOLE.jurisdiction("eu").getByName(NOM).fetch(requete);
+  } catch (e) {
+    console.error("objet de la console injoignable :", String(e?.message ?? e).slice(0, 200));
+    return pageAttente();
+  }
+}
+
 const worker = {
-  /** Tout part au conteneur unique de la console, en juridiction UE. */
-  async fetch(requete, env) {
-    try {
-      return await env.CONSOLE.jurisdiction("eu").getByName(NOM).fetch(requete);
-    } catch (e) {
-      console.error("objet de la console injoignable :", String(e?.message ?? e).slice(0, 200));
-      return pageAttente();
-    }
+  /** Tout part au conteneur unique de la console, en juridiction UE ; les fichiers de construction, depuis le cache. */
+  async fetch(requete, env, ctx) {
+    const cache = globalThis.caches?.default;
+    if (!cache || !estStatique(requete)) return versObjet(requete, env);
+    const garde = await cache.match(requete);
+    if (garde) return garde;
+    const r = await versObjet(requete, env);
+    if (r.status === 200 && /immutable/.test(r.headers.get("cache-control") ?? "")) ctx?.waitUntil(cache.put(requete, r.clone()));
+    return r;
   },
 };
 

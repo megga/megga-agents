@@ -5,6 +5,7 @@ import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
 import { admin } from "better-auth/plugins/admin";
 import { headers } from "next/headers";
+import { cache } from "react";
 import { invitationPour } from "./admin/invitations";
 import { noterConnexion } from "./admin/usage";
 import { donnees, pret } from "./base";
@@ -141,10 +142,14 @@ export function migrer(): Promise<void> {
   return globale.migre;
 }
 
-export async function session() {
+/**
+ * La session de la requête en cours. Lue une fois par rendu (cache de React) : la coquille et la page de l'admin la
+ * demandent chacune, et elle ne change pas pendant un même rendu.
+ */
+export const session = cache(async () => {
   await pret();
   return auth().api.getSession({ headers: await headers() });
-}
+});
 
 export async function sessionDe(requete: Request) {
   await pret();
