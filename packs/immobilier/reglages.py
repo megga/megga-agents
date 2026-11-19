@@ -72,10 +72,13 @@ def appliquer_au_mieux(base: Config, reglages: dict) -> tuple[Config, list[str]]
 class ReglagesDeLaGestion:
     """Relit les réglages du courtier et les fait servir (`servir`, une Config) quand ils changent."""
 
-    def __init__(self, gestion: Gestion, compte: str, base: Config, servir: Callable[[Config], None],
+    def __init__(self, gestion: Gestion, comptes: str | list[str], base: Config, servir: Callable[[Config], None],
                  intervalle: float = INTERVALLE, horloge: Callable[[], float] = time.monotonic):
         self.gestion = gestion
-        self.compte = compte
+        # Les comptes des gestionnaires : les réglages se lisent au nom d'un administrateur ; un compte refusé (403)
+        # cède la place au suivant, et celui qui répond est gardé.
+        self.comptes = [comptes] if isinstance(comptes, str) else list(dict.fromkeys(comptes))
+        self.compte = self.comptes[0] if self.comptes else ""
         self.base = base
         self.servir = servir
         self.intervalle = intervalle
@@ -89,13 +92,23 @@ class ReglagesDeLaGestion:
             return
         async with self._verrou:
             self._prochain = self.horloge() + self.intervalle
-            try:
-                r = await self.gestion.appel(self.compte, "GET", CHEMIN, delai=DELAI)
-            except GestionErreur as e:
-                if e.statut == 404:
-                    self._prochain = self.horloge() + SANS_ROUTE
-                else:
-                    log.warning("réglages de la gestion illisibles (%s) : %s", e.statut, e.message[:200])
+            r = None
+            for compte in [self.compte, *(c for c in self.comptes if c != self.compte)]:
+                try:
+                    r = await self.gestion.appel(compte, "GET", CHEMIN, delai=DELAI)
+                    self.compte = compte
+                    break
+                except GestionErreur as e:
+                    if e.statut in (401, 403):
+                        continue
+                    if e.statut == 404:
+                        self._prochain = self.horloge() + SANS_ROUTE
+                    else:
+                        log.warning("réglages de la gestion illisibles (%s) : %s", e.statut, e.message[:200])
+                    return
+            if r is None:  # aucun compte n'est administrateur : une seule ligne au journal, puis dix minutes de silence
+                self._prochain = self.horloge() + SANS_ROUTE
+                log.warning("réglages de la gestion : aucun compte de gestionnaire n'y a droit")
                 return
             reglages = r.get("reglages") if isinstance(r.get("reglages"), dict) else {}
             reglages = {k: v for k, v in reglages.items() if k != "modifie"}

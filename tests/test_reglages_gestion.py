@@ -131,7 +131,7 @@ def test_l_agent_sert_les_reglages_sans_redemarrer(tmp_path):
                 expediteur=FauxExpediteur())
     c = app.state.conversations
     lecteur = c.avant_le_tour.__self__
-    assert lecteur.compte == "greg@agence.ch"
+    assert lecteur.comptes == ["greg@agence.ch"]
 
     def site(requete):
         return httpx.Response(200, content=json.dumps({"reglages": {"voix_vitesse": 0.8, "reactions": False}}))
@@ -172,3 +172,41 @@ def test_un_autre_modele_refait_les_agents(tmp_path):
     assert c.agent.model.id == "claude-opus-5-5"
     nom = lambda o: getattr(o, "name", None) or getattr(o, "__name__", "")  # noqa: E731
     assert [nom(o) for o in c.agents["gestionnaire"].tools] == [nom(o) for o in avant.tools] and avant.tools
+
+
+def test_un_compte_refuse_cede_la_place():
+    vus = []
+
+    def site(requete):
+        vus.append(requete.headers.get("x-gestion-compte"))
+        if requete.headers.get("x-gestion-compte") == "lea@agence.ch":
+            return httpx.Response(403, content=json.dumps({"erreur": "Réservé à l'administrateur de l'agence."}))
+        return httpx.Response(200, content=json.dumps({"reglages": {"reactions": False}}))
+
+    servies, horloge = [], Horloge()
+    r = ReglagesDeLaGestion(Gestion(CONF.gestion, "cle", transport=httpx.MockTransport(site)), ["lea@agence.ch", "greg@agence.ch"], CONF,
+                            servies.append, horloge=horloge)
+    run(r.rafraichir())
+    assert vus == ["lea@agence.ch", "greg@agence.ch"] and servies[-1].reactions is False and r.compte == "greg@agence.ch"
+    horloge.t += 31
+    run(r.rafraichir())
+    assert vus[-1] == "greg@agence.ch" and len(vus) == 3  # le bon compte est gardé
+
+
+def test_les_rappels_et_le_mot_du_matin_relisent_les_reglages():
+    from noyau.tour import Conversations
+    from test_lot7_4 import FauxExp
+    from test_lot7_6 import FauxAgent
+
+    c = Conversations(CONF, FauxAgent(), FauxExp())
+    vus = []
+
+    async def avant():
+        vus.append("relu")
+
+    async def echeance(maintenant):
+        vus.append("echeance")
+
+    c.avant_le_tour, c.echeances = avant, [echeance]
+    run(c.envoyer_rappels_echus(1000.0))
+    assert vus == ["relu", "echeance"]

@@ -391,7 +391,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             if fabriquer is not None and nouvelle.modeles != avant.modeles:
                 conversations.agent, conversations.agents = fabriquer(nouvelle)
 
-        conversations.avant_le_tour = ReglagesDeLaGestion(gestion, next(iter(personnes.gestionnaires.values())), conf, servir).rafraichir
+        conversations.avant_le_tour = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir).rafraichir
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
@@ -418,7 +418,12 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         # Chez le client, pas de porte pour réveiller l'agent à l'heure d'un rappel ni pour le relancer
         # sur une nouvelle configuration : il veille lui-même.
         veille = asyncio.create_task(veiller(arret)) if (chez_le_client and rappels is not None) or ordres is not None else None
+        # Les réglages que le client change lui-même (packs/immobilier/reglages.py), lus dès le démarrage : un rappel ou le mot
+        # du matin qui partent avant tout message les suivent déjà.
+        relus = asyncio.create_task(conversations._sans_echec(conversations.avant_le_tour())) if conversations.avant_le_tour else None
         yield
+        if relus is not None and not relus.done():
+            relus.cancel()
         # L'arrêt (SIGTERM : mise à jour, redémarrage) : ce qui est en route va au bout. La veille finit
         # sa tournée de rappels (un rappel envoyé est aussi marqué), puis les tours en cours se terminent.
         arret.set()
