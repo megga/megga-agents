@@ -1,0 +1,22 @@
+# Ce qui n'entre pas dans l'image de la console (Dockerfile) : les dépendances et constructions locales, les données
+# locales, les secrets, et tout ce qui ne sert qu'aux essais (le serveur d'agents et l'atelier d'essai, agents/).
+node_modules
+.next
+.next-e2e
+.donnees
+.env*
+agents
+e2e
+tests
+test-results
+playwright-report
+captures
+scripts
+hebergement
+playwright*.ts
+vitest.config.mts
+*.tsbuildinfo
+next-env.d.ts
+Dockerfile
+.dockerignore
+README.md

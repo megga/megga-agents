@@ -8,6 +8,8 @@ const ici = dirname(fileURLToPath(import.meta.url));
 const nextConfig: NextConfig = {
   // Un dossier de construction à part pour les essais de bout en bout (playwright.config.ts).
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // L'image (Dockerfile) : .next/standalone porte server.js et seulement les dépendances dont il a besoin.
+  output: "standalone",
   // Pas de pastille de Next.js sur l'écran, même en local.
   devIndicators: false,
   outputFileTracingRoot: ici,

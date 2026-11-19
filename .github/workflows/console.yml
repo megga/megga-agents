@@ -57,3 +57,21 @@ jobs:
       # À l'échec d'un parcours : ce que l'écran montrait (l'instantané de Playwright), pour ne pas deviner.
       - if: failure()
         run: find test-results -name error-context.md -exec sh -c 'echo "=== $1"; sed -n "/^# Page snapshot/,/^# Test source/p" "$1"' _ {} \; 2>/dev/null || true
+
+  # L'image de la console (console/Dockerfile), celle que le conteneur du Worker megga-console construit : elle se construit,
+  # démarre sans base Postgres ni serveur d'agents, et répond sur /api/sante (ce que le Worker attend) et sur /connexion.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: docker build -f console/Dockerfile --build-arg CONSOLE_REVISION=${{ github.sha }} -t megga-console:essai console
+      - name: Le conteneur démarre et répond à /api/sante et à /connexion
+        run: |
+          docker run -d --name console -p 3300:3000 -e BETTER_AUTH_SECRET=secret-de-la-ci-qui-ne-sert-qu-ici-et-nulle-part-ailleurs \
+            -e BETTER_AUTH_URL=http://localhost:3300 megga-console:essai
+          for i in $(seq 1 60); do curl -sf localhost:3300/api/sante >/dev/null && break; sleep 1; done
+          SANTE=$(curl -sf localhost:3300/api/sante) || { docker logs console; exit 1; }
+          echo "$SANTE"
+          test "$SANTE" = '{"ok":true,"revision":"${{ github.sha }}"}' || { docker logs console; exit 1; }
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:3300/connexion)" = 200 || { docker logs console; exit 1; }
+          test "$(docker inspect -f '{{.Config.User}}' megga-console:essai)" = node
