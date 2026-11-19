@@ -1760,6 +1760,77 @@ class Nonces:
             return False
 
 
+class Echanges:
+    """Les messages entre agents d'un même client (table megga_echanges) : une ligne par message, dans l'ordre.
+
+    Une demande porte son état (remis, repondu, passe, hors_delai, echec, refuse) et son heure limite ; la réponse est une
+    autre ligne, qui la nomme (reponse_a). `origine` : la toute première demande de la chaîne ; `profondeur` : le nombre
+    de relais depuis elle. `ordre` croît à chaque ligne : un écran redemande « depuis tel ordre » et ne reçoit que la suite.
+    Même base et même confidentialité que le fil des conversations.
+    """
+
+    ETATS = ("remis", "repondu", "passe", "hors_delai", "echec", "refuse")
+
+    def __init__(self, url: str):
+        self._e, self._t = _table(
+            url,
+            "megga_echanges",
+            Column("ordre", Integer, primary_key=True, autoincrement=True),
+            Column("id", String(32), nullable=False, unique=True),
+            Column("quand", Float, nullable=False, index=True),
+            Column("de", String(63), nullable=False),
+            Column("a", String(63), nullable=False),
+            Column("texte", Text, nullable=False, default=""),
+            Column("reponse_a", String(32), nullable=True, index=True),
+            Column("origine", String(32), nullable=False, index=True),
+            Column("profondeur", Integer, nullable=False, default=0),
+            Column("etat", String(12), nullable=False, default="remis"),
+            Column("limite", Float, nullable=True),
+        )
+
+    def deposer(self, ident: str, de: str, a: str, texte: str, origine: str | None = None, profondeur: int = 0,
+                reponse_a: str | None = None, limite: float | None = None, etat: str = "remis",
+                quand: float | None = None) -> bool:
+        """Range un message. Faux si ce message (même identifiant) est déjà rangé : il ne compte qu'une fois."""
+        try:
+            with self._e.begin() as c:
+                c.execute(insert(self._t).values(id=ident, quand=quand or time.time(), de=de[:63], a=a[:63], texte=texte or "",
+                                                 reponse_a=reponse_a, origine=origine or ident, profondeur=profondeur,
+                                                 etat=etat, limite=limite))
+            return True
+        except IntegrityError:
+            return False
+
+    def clore(self, ident: str, etat: str) -> None:
+        if etat not in self.ETATS:
+            raise ValueError(f"état inconnu : {etat}")
+        with self._e.begin() as c:
+            c.execute(update(self._t).where(self._t.c.id == ident).values(etat=etat))
+
+    def lire(self, ident: str) -> dict | None:
+        with self._e.connect() as c:
+            l = c.execute(select(self._t).where(self._t.c.id == ident)).first()
+            return dict(l._mapping) if l else None
+
+    def reponse(self, ident: str) -> dict | None:
+        """La réponse rangée pour cette demande, s'il y en a une."""
+        with self._e.connect() as c:
+            l = c.execute(select(self._t).where(self._t.c.reponse_a == ident).order_by(self._t.c.ordre).limit(1)).first()
+            return dict(l._mapping) if l else None
+
+    def depuis(self, ordre: int = 0, limite: int = 100) -> list[dict]:
+        """Les messages rangés après cet ordre, du plus ancien au plus récent."""
+        with self._e.connect() as c:
+            lignes = c.execute(select(self._t).where(self._t.c.ordre > ordre).order_by(self._t.c.ordre).limit(limite))
+            return [dict(l._mapping) for l in lignes]
+
+    def chaine(self, origine: str) -> list[dict]:
+        """Toute une chaîne, de la première demande à la dernière réponse."""
+        with self._e.connect() as c:
+            lignes = c.execute(select(self._t).where(self._t.c.origine == origine).order_by(self._t.c.ordre))
+            return [dict(l._mapping) for l in lignes]
+
+
 # Chaque classe qui crée une de nos tables ; preparer() les crée toutes.
 TABLES = (Contacts, Rappels, Jetons, ClesApi, Bloques, Partenaires, Reseau, Questions, Differes, Carnet, Veilles, Regles, Medias,
-          Etats, Journal, Fil, Reglages, Ordres, JournalPilotage, Installations, Nonces, Vus)
+          Etats, Journal, Fil, Reglages, Ordres, JournalPilotage, Installations, Nonces, Vus, Echanges)
