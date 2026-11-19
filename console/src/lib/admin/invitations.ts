@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { Refus } from "@/lib/agents";
 import type { Base } from "@/lib/donnees/base";
-import { aPuDonner, droitsEffectifs, lirePerimetre, type Acces, type Perimetre } from "./acces";
+import { aPuDonner, lirePerimetre, type Acces, type Perimetre } from "./acces";
 import { SUPERADMIN } from "./droits";
 import {
   ajouterMembre,
@@ -18,8 +18,8 @@ import { TA } from "./textes";
 
 // Les invitations : un lien /admin/invitation/<jeton>, montré une fois ; la base n'en garde que l'empreinte (SHA-256).
 // Valable 7 jours, une seule fois, retirable. Inconnue, expirée, acceptée ou retirée : la même réponse, 404.
-// Créer, accepter et retirer lisent puis écrivent dans une même transaction : une invitation ne sert qu'une fois, et ce
-// qu'elle donne se vérifie au moment de l'écrire.
+// Créer, accepter et retirer lisent puis écrivent dans une même transaction : une invitation ne sert qu'une fois, et le rôle
+// qu'elle donne est relu au moment de l'écrire. L'accès de l'auteur, lui, est celui que garde a lu pour la requête.
 
 export const DUREE_INVITATION_JOURS = 7;
 
@@ -78,16 +78,6 @@ function lireCourriel(v: unknown): string {
   return courriel;
 }
 
-/**
- * Les droits du membre a tels que son rôle les porte maintenant : garde lit son accès une fois par requête, mais le rôle
- * qu'il porte peut avoir changé depuis (un droit retiré) ; ce qu'il donne se vérifie sur ses droits du moment.
- */
-async function droitsDuMoment(tx: Base, a: Acces): Promise<Acces> {
-  if (a.superadmin) return a;
-  const sien = await lireRole(tx, a.role.id);
-  return { ...a, droits: sien ? droitsEffectifs(sien.droits, a.externe, false) : new Set() };
-}
-
 /** a === null : la commande lancée sur le serveur ; sinon, un membre qui ne donne ni plus de droits ni plus de clients qu'il n'en a. */
 export function creerInvitation(b: Base, a: Acces | null, corps: unknown, maintenant = new Date()): Promise<{ invitation: Invitation; jeton: string; lien: string }> {
   const c = (corps && typeof corps === "object" ? corps : {}) as Record<string, unknown>;
@@ -96,8 +86,8 @@ export function creerInvitation(b: Base, a: Acces | null, corps: unknown, mainte
     const role = await roleExistant(tx, c.role);
     const externe = c.externe === true;
     const regle = regleMembre(role.id, externe, lirePerimetre(c.perimetre ?? "tous", externe), lireFinAcces(c.finAcces ?? null));
+    // Le rôle donné, relu dans la transaction, contre l'accès de l'auteur lu par garde pour cette requête.
     if (a && !aPuDonner(a, role, regle.perimetre)) throw new Refus(403, TA.escalade);
-    if (a && !aPuDonner(await droitsDuMoment(tx, a), role, regle.perimetre)) throw new Refus(403, TA.escalade);
     const jeton = randomBytes(32).toString("base64url");
     const id = "in_" + randomUUID().replace(/-/g, "").slice(0, 20);
     const valable = new Date(maintenant.getTime() + DUREE_INVITATION_JOURS * 24 * 3600 * 1000);

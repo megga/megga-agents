@@ -7,9 +7,9 @@ import type { Base } from "@/lib/donnees/base";
 import { acces, baseEssai, compte, membre } from "./aides";
 
 // Les routes des comptes, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle de
-// l'essai, l'adaptateur de Better Auth est simulé. Le journal note le motif d'une suspension (coupé), rien d'autre.
+// l'essai, l'adaptateur de Better Auth (réactiver, déconnecter) est simulé. Le journal note le motif d'une suspension (coupé), rien d'autre.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, appels: [] as unknown[][], sessionsBloquees: false, ecritureBloquee: false }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, appels: [] as unknown[][] }));
 vi.mock("@/lib/base", async (original) => ({
   ...(await original<typeof import("@/lib/base")>()),
   pret: async () => etat.db,
@@ -26,12 +26,10 @@ vi.mock("@/lib/admin/comptes", async (original) => ({
   ...(await original<typeof import("@/lib/admin/comptes")>()),
   adaptateurComptes: async () => ({
     updateUser: async (...a: unknown[]) => {
-      if (etat.ecritureBloquee) throw new Error("base fermée");
       etat.appels.push(["updateUser", ...a]);
     },
     deleteUserSessions: async (...a: unknown[]) => {
       etat.appels.push(["deleteUserSessions", ...a]);
-      if (etat.sessionsBloquees) throw new Error("base occupée");
     },
   }),
 }));
@@ -47,13 +45,24 @@ function appeler<P>(route: Route<P>, methode: string, params: P, qui: string, co
   return route(requete, { params: Promise.resolve(params) });
 }
 
+async function ouvrirSession(utilisateur: string) {
+  await etat.db.ecrire('INSERT INTO session (id, "expiresAt", token, "createdAt", "updatedAt", "userId") VALUES (?, ?, ?, ?, ?, ?)',
+    `s-${utilisateur}`, "2026-12-01T10:00:00.000Z", `jeton-${utilisateur}`, "2026-11-18T10:00:00.000Z", "2026-11-18T10:00:00.000Z", utilisateur);
+}
+
+/** Banni (1 ou 0 sous les deux moteurs), le motif, les sessions d'un compte. */
+async function etatCompte(id: string) {
+  const u = (await etat.db.un<{ banni: number; motif: string | null }>(
+    'SELECT CASE WHEN banned THEN 1 ELSE 0 END AS banni, "banReason" AS motif FROM "user" WHERE id = ?', id))!;
+  const { n } = (await etat.db.un<{ n: number }>('SELECT COUNT(*) AS n FROM session WHERE "userId" = ?', id))!;
+  return { ...u, sessions: n };
+}
+
 const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes.map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail]);
 
 beforeEach(async () => {
   etat.db = await baseEssai();
   etat.appels = [];
-  etat.sessionsBloquees = false;
-  etat.ecritureBloquee = false;
   await compte(etat.db, { id: "c", courriel: "garage@exemple.test" });
   await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
   await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
@@ -61,28 +70,23 @@ beforeEach(async () => {
 });
 
 describe("suspendre un compte", () => {
-  it("un membre Exploitation suspend un compte ordinaire : 200, l'adaptateur appelé, le motif au journal", async () => {
+  it("un membre Exploitation suspend un compte ordinaire : 200, le bannissement et ses sessions effacées, le motif au journal", async () => {
+    await ouvrirSession("c");
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus répétés", autre: "rien" });
     expect([r.status, await r.json()]).toEqual([200, { ok: true }]);
-    expect(etat.appels).toEqual([["updateUser", "c", { banned: true, banReason: "Abus répétés", banExpires: null }], ["deleteUserSessions", "c"]]);
+    expect(await etatCompte("c")).toEqual({ banni: 1, motif: "Abus répétés", sessions: 0 });
+    expect(etat.appels).toEqual([]); // par la transaction de la console, sans l'adaptateur de Better Auth
     expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus répétés" }]]);
   });
 
-  it("des sessions qui restent après deux essais : 200, le compte suspendu, l'avertissement, la ligne ok et son détail", async () => {
-    etat.sessionsBloquees = true;
-    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
-    const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
-    expect([r.status, await r.json()]).toEqual([200, { sessionsRestent: true, avertissement: TA.sessionsRestent }]);
-    expect(etat.appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
-    expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus", sessions: "restent" }]]);
-    erreur.mockRestore();
-  });
-
-  it("une écriture du bannissement en échec reste une erreur (500, notée « erreur »)", async () => {
-    etat.ecritureBloquee = true;
+  it("une suspension en échec reste une erreur (500, notée « erreur ») : ni bannissement, ni session effacée", async () => {
+    await ouvrirSession("c");
+    await etat.db.executer("ALTER TABLE session RENAME TO session_cachee"); // l'effacement des sessions échouera
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
     expect([r.status, await r.json()]).toEqual([500, { erreur: TA.erreurInterne }]);
+    await etat.db.executer("ALTER TABLE session_cachee RENAME TO session");
+    expect(await etatCompte("c")).toEqual({ banni: 0, motif: null, sessions: 1 });
     expect(etat.appels).toEqual([]);
     expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "erreur", { motif: "Abus" }]]);
     erreur.mockRestore();

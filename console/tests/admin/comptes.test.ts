@@ -82,31 +82,52 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
   });
 });
 
+/** Une session ouverte d'un compte. */
+async function ouvrirSession(id: string, utilisateur: string) {
+  await db.ecrire('INSERT INTO session (id, "expiresAt", token, "createdAt", "updatedAt", "userId") VALUES (?, ?, ?, ?, ?, ?)',
+    id, "2026-12-01T10:00:00.000Z", `jeton-${id}`, T0.toISOString(), T0.toISOString(), utilisateur);
+}
+
+/** Ce que la base dit d'un compte : banni (1 ou 0, sous les deux moteurs), son motif, ses sessions. */
+async function etatCompte(id: string) {
+  const u = (await db.un<{ banni: number; motif: string | null }>(
+    'SELECT CASE WHEN banned THEN 1 ELSE 0 END AS banni, "banReason" AS motif FROM "user" WHERE id = ?', id))!;
+  const { n } = (await db.un<{ n: number }>('SELECT COUNT(*) AS n FROM session WHERE "userId" = ?', id))!;
+  return { ...u, sessions: n };
+}
+
 describe("suspendre un compte", () => {
+  beforeEach(async () => {
+    await ouvrirSession("s1", "c");
+    await ouvrirSession("s2", "c");
+  });
+
   it("un membre avec comptes.gerer suspend un compte ordinaire : le bannissement, puis ses sessions effacées", async () => {
     const a = await membre(db, { utilisateur: "exploitant", role: "exploitation" });
-    await suspendre(db, a, "c", { motif: "  Abus  " }, ad);
-    expect(appels).toEqual([
-      ["updateUser", "c", { banned: true, banReason: "Abus", banExpires: null }],
-      ["deleteUserSessions", "c"],
-    ]);
+    await ouvrirSession("s3", "exploitant");
+    await suspendre(db, a, "c", { motif: "  Abus  " });
+    expect(await etatCompte("c")).toEqual({ banni: 1, motif: "Abus", sessions: 0 });
+    expect(await etatCompte("exploitant")).toEqual({ banni: 0, motif: null, sessions: 1 }); // seulement les siennes
+    expect(appels).toEqual([]); // ni l'adaptateur de Better Auth, ni une autre connexion
   });
 
   it("sans motif, ou un motif de plus de 200 caractères : 400, rien n'est écrit", async () => {
     const a = await membre(db, { utilisateur: "exploitant", role: "exploitation" });
     for (const corps of [{ motif: "" }, { motif: "   " }, { motif: "x".repeat(201) }, {}, { motif: 3 }, null]) {
-      const e = await refusAsync(() => suspendre(db, a, "c", corps, ad));
+      const e = await refusAsync(() => suspendre(db, a, "c", corps));
       expect([e.statut, e.message], JSON.stringify(corps)).toEqual([400, TA.motifManquant]);
     }
-    await suspendre(db, a, "c", { motif: "é".repeat(200) }, ad);
-    expect(appels).toHaveLength(2);
+    expect(await etatCompte("c")).toEqual({ banni: 0, motif: null, sessions: 2 });
+    await suspendre(db, a, "c", { motif: "é".repeat(200) });
+    expect(await etatCompte("c")).toEqual({ banni: 1, motif: "é".repeat(200), sessions: 0 });
   });
 
   it("un compte inconnu : 404", async () => {
     const a = await membre(db, { utilisateur: "exploitant", role: "exploitation" });
-    const e = await refusAsync(() => suspendre(db, a, "personne", { motif: "Abus" }, ad));
+    const e = await refusAsync(() => suspendre(db, a, "personne", { motif: "Abus" }));
     expect([e.statut, e.message]).toEqual([404, TA.compteInconnu]);
-    expect(appels).toEqual([]);
+    expect(await db.tous('SELECT id FROM "user" WHERE banned IS TRUE')).toEqual([]);
+    expect(await etatCompte("c")).toEqual({ banni: 0, motif: null, sessions: 2 });
   });
 
   it("le compte d'un membre sans être superadmin, celui d'un superadmin, le sien : 403, rien n'est écrit", async () => {
@@ -115,13 +136,15 @@ describe("suspendre un compte", () => {
     await membre(db, { utilisateur: "autre-chef", role: "superadmin" });
     await membre(db, { utilisateur: "lecteur", role: "lecture" });
     await membre(db, { utilisateur: "invite", role: "lecture", externe: true, perimetre: ["garage-essai"] });
+    for (const qui of ["exploitant", "chef", "autre-chef", "lecteur", "invite"]) await ouvrirSession(`s-${qui}`, qui);
     const essais: [typeof chef, string][] = [[exploitant, "lecteur"], [exploitant, "invite"], [exploitant, "chef"], [exploitant, "exploitant"],
       [chef, "autre-chef"], [chef, "chef"]];
     for (const [a, cible] of essais) {
-      for (const geste of [() => suspendre(db, a, cible, { motif: "Abus" }, ad), () => reactiver(db, a, cible, ad), () => deconnecter(db, a, cible, ad)]) {
+      for (const geste of [() => suspendre(db, a, cible, { motif: "Abus" }), () => reactiver(db, a, cible, ad), () => deconnecter(db, a, cible, ad)]) {
         const e = await refusAsync(geste);
         expect([e.statut, e.message], `${a.utilisateur} sur ${cible}`).toEqual([403, TA.suspensionInterdite]);
       }
+      expect(await etatCompte(cible), cible).toEqual({ banni: 0, motif: null, sessions: 1 });
     }
     expect(appels).toEqual([]);
   });
@@ -129,14 +152,15 @@ describe("suspendre un compte", () => {
   it("le compte d'un membre, par un superadmin : permis", async () => {
     const chef = await membre(db, { utilisateur: "chef", role: "superadmin" });
     await membre(db, { utilisateur: "lecteur", role: "lecture" });
-    await suspendre(db, chef, "lecteur", { motif: "Départ" }, ad);
-    expect(appels[0]).toEqual(["updateUser", "lecteur", { banned: true, banReason: "Départ", banExpires: null }]);
+    await suspendre(db, chef, "lecteur", { motif: "Départ" });
+    expect(await etatCompte("lecteur")).toEqual({ banni: 1, motif: "Départ", sessions: 0 });
   });
 
   it("sans comptes.gerer : 403", async () => {
     const lecteur = await membre(db, { utilisateur: "lecteur", role: "lecture" });
-    expect((await refusAsync(() => suspendre(db, lecteur, "c", { motif: "Abus" }, ad))).statut).toBe(403);
+    expect((await refusAsync(() => suspendre(db, lecteur, "c", { motif: "Abus" }))).statut).toBe(403);
     expect(await peutAgirSur(db, lecteur, "c")).toBe(false);
+    expect(await etatCompte("c")).toEqual({ banni: 0, motif: null, sessions: 2 });
   });
 
   it("peutAgirSur suit la même règle que les gestes (l'écran ne montre pas un geste refusé)", async () => {
@@ -150,43 +174,12 @@ describe("suspendre un compte", () => {
     expect(await peutAgirSur(db, exploitant, "parti", new Date("2026-11-19T10:00:00Z"))).toBe(true);
   });
 
-  it("des sessions qui ne s'effacent pas : un second essai ; s'il échoue aussi, le compte reste suspendu et le geste le dit, sans refus", async () => {
+  it("le bannissement et l'effacement des sessions vont ensemble : un échec n'en laisse aucun", async () => {
     const a = await membre(db, { utilisateur: "exploitant", role: "exploitation" });
-    let echecs = 1;
-    const fragile: AdaptateurComptes = {
-      updateUser: async (...x: unknown[]) => appels.push(["updateUser", ...x]),
-      deleteUserSessions: async (...x: unknown[]) => {
-        appels.push(["deleteUserSessions", ...x]);
-        if (echecs-- > 0) throw new Error("base occupée");
-      },
-    };
-    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
-    // Un échec, puis réussi au second essai.
-    expect(await suspendre(db, a, "c", { motif: "Abus" }, fragile)).toEqual({ sessionsRestent: false });
-    expect(appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
-    appels = [];
-    echecs = 2;
-    // Deux échecs : le bannissement est écrit, le geste le dit (ce n'est pas un refus).
-    expect(await suspendre(db, a, "c", { motif: "Abus" }, fragile)).toEqual({ sessionsRestent: true });
-    expect(appels).toEqual([
-      ["updateUser", "c", { banned: true, banReason: "Abus", banExpires: null }],
-      ["deleteUserSessions", "c"],
-      ["deleteUserSessions", "c"],
-    ]);
-    expect(erreur).toHaveBeenCalled();
-    erreur.mockRestore();
-  });
-
-  it("une écriture du bannissement en échec reste une erreur, et rien n'est effacé", async () => {
-    const a = await membre(db, { utilisateur: "exploitant", role: "exploitation" });
-    const panne: AdaptateurComptes = {
-      updateUser: async () => {
-        throw new Error("base fermée");
-      },
-      deleteUserSessions: async (...x: unknown[]) => appels.push(["deleteUserSessions", ...x]),
-    };
-    await expect(suspendre(db, a, "c", { motif: "Abus" }, panne)).rejects.toThrow("base fermée");
-    expect(appels).toEqual([]);
+    await db.executer("ALTER TABLE session RENAME TO session_cachee"); // l'effacement des sessions échouera, après le bannissement
+    await expect(suspendre(db, a, "c", { motif: "Abus" })).rejects.toThrow();
+    await db.executer("ALTER TABLE session_cachee RENAME TO session");
+    expect(await etatCompte("c")).toEqual({ banni: 0, motif: null, sessions: 2 });
   });
 
   it("réactiver : le bannissement levé ; déconnecter : seulement ses sessions", async () => {
@@ -210,7 +203,7 @@ describe("avec le vrai Better Auth", () => {
     const chef = await membre(db, { utilisateur: "chef", role: "superadmin" });
     expect((await auth.api.getSession({ headers: cookie }))?.user.id).toBe(user.id);
 
-    await suspendre(db, chef, user.id, { motif: "Abus" }, reel);
+    await suspendre(db, chef, user.id, { motif: "Abus" });
     expect(await db.un('SELECT CASE WHEN banned THEN 1 ELSE 0 END AS banned, "banReason" FROM "user" WHERE id = ?', user.id)).toEqual({ banned: 1, banReason: "Abus" });
     expect(await db.un("SELECT COUNT(*) AS n FROM session WHERE \"userId\" = ?", user.id)).toEqual({ n: 0 });
     expect(await auth.api.getSession({ headers: cookie })).toBeNull(); // son cookie ne vaut plus rien, dès la requête suivante

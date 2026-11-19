@@ -22,8 +22,7 @@ export function GestesCompte({ id, nom, suspendu, sessions }: { id: string; nom:
   const [avertissement, setAvertissement] = useState<string | null>(null);
 
   /**
-   * Le geste, puis la fiche relue, réussi ou non. Une suspension dont les sessions restent est faite : son avertissement
-   * remplace la réussite, et la fiche relue propose « Déconnecter partout ».
+   * Le geste, puis la fiche relue, réussi ou non. Un avertissement rendu par la route remplace la réussite.
    */
   async function agir(url: string, methode: "POST" | "DELETE", corps: unknown, texte: string) {
     try {

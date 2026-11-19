@@ -51,10 +51,10 @@ Pour entrer dans `/admin`, il faut un superadmin : cette commande imprime le lie
 npm run admin:inviter -- <courriel>
 ```
 
-Contre la base de production (Postgres chez Neon), depuis `console/` : l'adresse de la base se tape en masqué, sans passer par l'historique du terminal ni par un fichier.
+Contre la base de production (Postgres chez Neon), depuis `console/` : l'adresse de la base se tape en masqué, sans passer par l'historique du terminal ni par un fichier, et dans un sous-shell (les parenthèses) : elle meurt avec lui, rien ne reste exporté dans le terminal.
 
 ```bash
-read -rs CONSOLE_BASE_URL && export CONSOLE_BASE_URL && BETTER_AUTH_URL=https://console.megga.ai npm run admin:inviter -- <courriel>
+( read -rs CONSOLE_BASE_URL && export CONSOLE_BASE_URL && BETTER_AUTH_URL=https://console.megga.ai npm run admin:inviter -- <courriel> )
 ```
 
 ### La base

@@ -14,8 +14,9 @@ import { TA } from "./textes";
 
 // Les membres de l'admin : un compte de Better Auth, un rôle, un périmètre, une fin d'accès facultative, externe ou non.
 // Un membre retiré est une ligne effacée (le journal garde la trace) ; le courriel et le nom se lisent dans la table user.
-// Chaque écriture lit puis écrit dans une même transaction : il reste toujours un superadmin en cours, et le rôle donné existe
-// au moment de l'écriture, même quand deux requêtes arrivent à la fois.
+// Chaque écriture lit puis écrit dans une même transaction : il reste toujours un superadmin en cours, et ce qu'elle vérifie sur
+// sa cible (le rôle donné et ses droits, le membre modifié) est relu dans la transaction, même quand deux requêtes arrivent à
+// la fois. L'accès de celui qui agit reste celui que garde a lu pour la requête.
 
 export type Membre = {
   utilisateur: string;

@@ -9,6 +9,24 @@ const JETON_ATELIER = "jeton-atelier-e2e";
 const PORT = Number(process.env.E2E_PORT || 3311);
 const PORT_ATELIER = 8197;
 
+// Les parcours inscrivent des comptes et invitent un superadmin au mot de passe écrit dans e2e/compte.ts : jamais sur une
+// base qui n'est pas locale (la production, par une CONSOLE_BASE_URL restée exportée dans le terminal).
+const BASE_POSTGRES = process.env.CONSOLE_BASE_URL;
+if (BASE_POSTGRES) {
+  let hote = "";
+  try {
+    hote = new URL(BASE_POSTGRES).hostname;
+  } catch {
+    // illisible : refusée plus bas
+  }
+  if (!["localhost", "127.0.0.1", "[::1]", "::1"].includes(hote)) {
+    throw new Error(
+      "CONSOLE_BASE_URL nomme une base qui n'est pas sur cette machine : les parcours ne jouent que sur une base locale. " +
+        "Retirez-la (unset CONSOLE_BASE_URL) ou nommez un Postgres local.",
+    );
+  }
+}
+
 export default defineConfig({
   testDir: "e2e",
   timeout: 60_000,
@@ -44,7 +62,7 @@ export default defineConfig({
         ATELIER_URL: `http://127.0.0.1:${PORT_ATELIER}`,
         ATELIER_JETON: JETON_ATELIER,
         NEXT_DIST_DIR: ".next-e2e",
-        ...(process.env.CONSOLE_BASE_URL ? { CONSOLE_BASE_URL: process.env.CONSOLE_BASE_URL } : {}),
+        ...(BASE_POSTGRES ? { CONSOLE_BASE_URL: BASE_POSTGRES } : {}),
       },
       reuseExistingServer: false,
       timeout: 240_000,

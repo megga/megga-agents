@@ -612,7 +612,6 @@ export const TA = {
   suspendreTitre: (nom: string) => `Suspendre le compte ${nom} ?`,
   effetSuspendre: "Il ne se connecte plus et perd ses sessions tout de suite. Ses agents restent.",
   compteSuspenduFait: "Compte suspendu.",
-  sessionsRestent: "Le compte est suspendu, mais ses sessions ouvertes n'ont pas pu être fermées : retirez-les par « Déconnecter partout ».",
   reactiver: "Réactiver",
   reactiverTitre: (nom: string) => `Réactiver le compte ${nom} ?`,
   effetReactiver: "Il peut de nouveau se connecter. Ses sessions fermées ne reviennent pas.",

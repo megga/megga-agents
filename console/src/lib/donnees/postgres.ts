@@ -72,47 +72,81 @@ function operations(cible: Cible, reessayer: boolean) {
   };
 }
 
+/** Attendre une connexion du Pool, un verrou, ou une transaction restée ouverte : jamais sans fin, une erreur au bout. */
+const DELAIS = { connexionMs: 5_000, verrou: "5s", transactionInactive: "15s" } as const;
+
 export function basePostgres(url: string): Base {
-  const pool = new Pool({ connectionString: url, max: 5 });
+  const pool = new Pool({ connectionString: url, max: 5, connectionTimeoutMillis: DELAIS.connexionMs });
   // Une connexion du pool coupée (Neon qui s'endort) : notée, sans tuer le processus ; le pool la remplace.
   pool.on("error", (e) => console.error("base postgres, connexion perdue :", e.message));
 
   let fermee: Promise<void> | null = null;
   const fermer = () => (fermee ??= pool.end());
 
-  async function ouvrir(): Promise<PoolClient> {
+  /**
+   * Une connexion sortie du Pool pour une transaction. Le Pool n'écoute plus ses erreurs tant qu'elle est sortie : sans
+   * écouteur, une coupure (Neon, pg_terminate_backend) tuerait le processus. L'écouteur note la panne, la requête en cours ou
+   * la suivante échoue, et la connexion est jetée à sa remise (rendre(erreur)).
+   */
+  async function sortir(): Promise<{ client: PoolClient; rendre: (e?: Error) => void; panne: () => Error | undefined }> {
     const client = await pool.connect();
+    let perdue: Error | undefined;
+    const ecouteur = (e: Error) => {
+      perdue ??= e;
+      console.error("base postgres, connexion perdue pendant une transaction :", e.message);
+    };
+    client.on("error", ecouteur);
+    return {
+      client,
+      panne: () => perdue,
+      rendre: (e) => {
+        client.removeListener("error", ecouteur);
+        client.release(e ?? perdue);
+      },
+    };
+  }
+
+  async function ouvrir(): Promise<Awaited<ReturnType<typeof sortir>>> {
+    const sortie = await sortir();
     try {
-      await client.query("BEGIN");
-      await client.query(`SELECT pg_advisory_xact_lock(${VERROU})`);
-      return client;
+      await sortie.client.query("BEGIN");
+      await sortie.client.query(`SET LOCAL lock_timeout = '${DELAIS.verrou}'`);
+      await sortie.client.query(`SET LOCAL idle_in_transaction_session_timeout = '${DELAIS.transactionInactive}'`);
+      await sortie.client.query(`SELECT pg_advisory_xact_lock(${VERROU})`);
+      return sortie;
     } catch (e) {
-      client.release(true);
+      sortie.rendre(e instanceof Error ? e : new Error(String(e)));
       throw e;
     }
   }
 
   async function transaction<T>(f: (tx: Base) => Promise<T>): Promise<T> {
-    let client: PoolClient;
+    let sortie: Awaited<ReturnType<typeof sortir>>;
     try {
-      client = await ouvrir();
+      sortie = await ouvrir();
     } catch (e) {
       if (!coupee(e)) throw e;
-      client = await ouvrir();
+      sortie = await ouvrir();
     }
+    const { client } = sortie;
     const tx: Base = { dialecte: "postgres", ...operations(client, false), transaction: (g) => g(tx), pourAuth: () => pool, fermer };
     let casse: Error | undefined;
     try {
       const r = await f(tx);
+      const panne = sortie.panne();
+      if (panne) throw panne; // une coupure pendant f, sans requête en cours pour la voir : rien n'est validé
       await client.query("COMMIT");
       return r;
     } catch (e) {
-      await client.query("ROLLBACK").catch((x: Error) => {
-        casse = x;
-      });
+      casse = sortie.panne();
+      if (!casse) {
+        await client.query("ROLLBACK").catch((x: Error) => {
+          casse = x;
+        });
+      }
       throw e;
     } finally {
-      client.release(casse);
+      sortie.rendre(casse);
     }
   }
 

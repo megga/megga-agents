@@ -9,8 +9,9 @@ import { TA } from "./textes";
 import { jourZurich, joursZurich, messagesDepuis, messagesParJour } from "./usage";
 
 // Les comptes de la console (la table user de Better Auth et leurs agents), leur fiche, les totaux de la vue d'ensemble ;
-// suspendre, réactiver, déconnecter partout. Le bannissement est celui de l'extension admin de Better Auth (auth.ts), écrit par
-// son adaptateur interne : ses routes HTTP restent fermées. Jamais une adresse IP ni un jeton de session hors d'ici.
+// suspendre, réactiver, déconnecter partout. Le bannissement est celui de l'extension admin de Better Auth (auth.ts), ses routes
+// HTTP restent fermées : la suspension l'écrit dans une transaction de la console, réactiver et déconnecter par son adaptateur
+// interne. Jamais une adresse IP ni un jeton de session hors d'ici.
 
 export type CompteConsole = {
   id: string;
@@ -166,27 +167,20 @@ export async function adaptateurComptes(): Promise<AdaptateurComptes> {
 }
 
 /**
- * Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. Le
- * bannissement écrit (s'il échoue, l'erreur remonte : rien n'est fait), un effacement des sessions en échec est réessayé une
- * fois. sessionsRestent : le compte est suspendu, mais ses sessions restent après ces deux essais (« Déconnecter partout »).
- * La vérification du compte et le bannissement passent dans une même transaction : un compte qu'on vient de nommer
- * superadmin n'est pas suspendu d'après ce qu'il était avant.
+ * Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. La
+ * vérification du compte, le bannissement (les colonnes que l'extension admin de Better Auth écrit) et l'effacement de ses
+ * sessions passent dans une même transaction, par sa seule connexion : tout ou rien, et un compte qu'on vient de nommer
+ * superadmin n'est pas suspendu d'après ce qu'il était avant. Pas d'appel à l'adaptateur de Better Auth ici : il prendrait
+ * une autre connexion pendant que celle-ci tient le verrou des transactions.
  */
-export async function suspendre(b: Base, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<{ sessionsRestent: boolean }> {
+export async function suspendre(b: Base, a: Acces, id: string, corps: unknown, maintenant = new Date()): Promise<void> {
   await b.transaction(async (tx) => {
     await exigerCompte(tx, a, id);
     const motif = lireMotif(corps);
-    await ad.updateUser(id, { banned: true, banReason: motif, banExpires: null });
+    await tx.ecrire('UPDATE "user" SET banned = ?, "banReason" = ?, "banExpires" = NULL, "updatedAt" = ? WHERE id = ?',
+      true, motif, maintenant.toISOString(), id);
+    await tx.ecrire('DELETE FROM session WHERE "userId" = ?', id);
   });
-  for (let essai = 1; essai <= 2; essai++) {
-    try {
-      await ad.deleteUserSessions(id);
-      return { sessionsRestent: false };
-    } catch (e) {
-      console.error(`suspension : sessions non effacées (essai ${essai}) :`, e);
-    }
-  }
-  return { sessionsRestent: true };
 }
 
 export async function reactiver(b: Base, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {

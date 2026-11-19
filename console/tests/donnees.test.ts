@@ -1,5 +1,5 @@
 import { Client, type Pool } from "pg";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { baseVide, moteursEssai } from "./moteurs";
 
 // L'interface de base, jouée sur chaque moteur d'essai (Postgres seulement si CONSOLE_BASE_ESSAI_URL est posée).
@@ -78,5 +78,30 @@ describe.each(moteursEssai())("la base, sous %s", (moteur) => {
       await autre.end();
     }
     expect(await b.un("SELECT 1 AS n")).toEqual({ n: 1 });
+  });
+
+  it.runIf(moteur === "postgres")("survit à une connexion coupée pendant une transaction", async () => {
+    const b = await baseVide(moteur);
+    const autre = new Client({ connectionString: (b.pourAuth() as Pool).options.connectionString });
+    await autre.connect();
+    const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await b.executer("CREATE TABLE t (id TEXT PRIMARY KEY)");
+      await expect(
+        b.transaction(async (tx) => {
+          await tx.ecrire("INSERT INTO t VALUES (?)", "a");
+          const { pid } = (await tx.un<{ pid: number }>("SELECT pg_backend_pid() AS pid"))!;
+          await autre.query("SELECT pg_terminate_backend($1)", [pid]);
+          await attendre(100); // la coupure arrive pendant que la transaction attend, sans requête en cours
+          await tx.un("SELECT 1 AS n");
+        }),
+      ).rejects.toThrow();
+    } finally {
+      await autre.end();
+    }
+    expect(erreur).toHaveBeenCalled(); // la panne est notée, le processus est toujours là
+    erreur.mockRestore();
+    expect(await b.un("SELECT 1 AS n")).toEqual({ n: 1 });
+    expect(await b.tous("SELECT id FROM t")).toEqual([]);
   });
 });
