@@ -5,7 +5,7 @@ import { Tete } from "@/components/console/tete";
 import { ficheCompte, peutAgirSur } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { base, pret } from "@/lib/base";
 import { metier } from "@/lib/metiers";
 import { GestesCompte } from "./compte";
 
@@ -16,7 +16,7 @@ export default async function PageCompte({ params }: PageProps<"/admin/comptes/[
   const { id } = await params;
   const a = await gardePage("comptes.voir");
   const db = base();
-  const f = ficheCompte(db, id);
+  const f = await ficheCompte(await pret(), id);
   if (!f) notFound();
   const { compte: c } = f;
   const nom = c.entreprise || c.courriel;

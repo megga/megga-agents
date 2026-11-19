@@ -17,7 +17,10 @@ import { acces, dbEssai, compte, membre } from "./aides";
 // la base est celle de l'essai. La garde elle-même a ses essais (garde.test.ts) ; ici, ce que chaque route fait et note.
 
 const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
-vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
+vi.mock("@/lib/base", async (original) => {
+  const { baseDe } = await import("./aides");
+  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
+});
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {

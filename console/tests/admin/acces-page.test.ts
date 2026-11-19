@@ -14,7 +14,10 @@ import { acces, dbEssai, membre } from "./aides";
 
 const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
+vi.mock("@/lib/base", async (original) => {
+  const { baseDe } = await import("./aides");
+  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
+});
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),

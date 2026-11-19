@@ -1,5 +1,4 @@
 import "server-only";
-import type { DatabaseSync } from "node:sqlite";
 import { betterAuth, type BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { nextCookies } from "better-auth/next-js";
@@ -29,9 +28,9 @@ export function fournisseursActifs(): ("google" | "microsoft")[] {
 }
 
 /** La dernière connexion d'un compte, notée à chaque session créée ; une panne ne refuse jamais la connexion. */
-function noterSansBloquer(b: Base, utilisateur: string): void {
+async function noterSansBloquer(b: Base, utilisateur: string): Promise<void> {
   try {
-    if (b.dialecte === "sqlite") noterConnexion(b.pourAuth() as DatabaseSync, utilisateur); // le temps de la conversion
+    await noterConnexion(b, utilisateur);
   } catch (e) {
     console.error("dernière connexion :", e);
   }

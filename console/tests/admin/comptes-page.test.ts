@@ -14,7 +14,7 @@ import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { compterTour } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
-import { acces, dbEssai, compte, membre } from "./aides";
+import { acces, baseDe, compte, dbEssai, membre } from "./aides";
 
 // L'écran Comptes, la fiche d'un compte et le bloc Console de la vue d'ensemble, appelés comme Next.js les rend (session, base
 // et atelier simulés, un lien est un simple <a>), puis dessinés en HTML. Sans comptes.voir, ni courriel de client ni total ;
@@ -22,7 +22,10 @@ import { acces, dbEssai, compte, membre } from "./aides";
 
 const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null, appels: [] as string[] }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => ({ ...(await original<typeof import("@/lib/base")>()), base: () => etat.db }));
+vi.mock("@/lib/base", async (original) => {
+  const { baseDe } = await import("./aides");
+  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
+});
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -85,9 +88,9 @@ beforeEach(async () => {
   membre(etat.db, { utilisateur: "compteur", role: comptesSeuls.id });
   membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
   compte(etat.db, { id: "c", courriel: "garage@exemple.test", nom: "Garage du Lac" });
-  const a = creer(etat.db, "c", { prenom: "Lou", metier: "garage" });
-  compterTour(etat.db, a.id);
-  compterTour(etat.db, a.id);
+  const a = await creer(baseDe(etat.db), "c", { prenom: "Lou", metier: "garage" });
+  await compterTour(baseDe(etat.db), a.id);
+  await compterTour(baseDe(etat.db), a.id);
   etat.db.prepare("INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, ipAddress, userAgent, userId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
     .run("s1", new Date(Date.now() + 86_400_000).toISOString(), "jeton-de-session", new Date().toISOString(), new Date().toISOString(),
       "203.0.113.42", "Mozilla/5.0 Essai", "c");

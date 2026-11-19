@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import type { Base } from "@/lib/donnees/base";
 import { lister, Refus, type Agent } from "@/lib/agents";
 import { auth } from "@/lib/auth";
 import { peutSuspendre, type Acces } from "./acces";
@@ -38,7 +39,7 @@ type Ligne = {
   name: string | null;
   email: string;
   createdAt: string;
-  banned: number | null;
+  banned: number | boolean | null; // un entier sous SQLite, un booléen sous Postgres
   banReason: string | null;
   derniere: string | null;
   role_membre: string | null;
@@ -51,6 +52,12 @@ type Ligne = {
 const depuis30j = (maintenant: Date) => joursZurich(30, maintenant)[0];
 
 const CHOIX = `SELECT u.id, u.name, u.email, u.createdAt, u.banned, u.banReason, c.derniere, m.role AS role_membre, m.fin_acces,
+  (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
+  (SELECT COALESCE(SUM(ua.messages), 0) FROM usage_agent ua JOIN agent a ON a.id = ua.agent WHERE a.utilisateur = u.id AND ua.jour >= ?) AS messages
+  FROM "user" u LEFT JOIN compte_connexion c ON c.utilisateur = u.id LEFT JOIN admin_membre m ON m.utilisateur = u.id`;
+
+/** CHOIX, les colonnes de Better Auth citées : ce que Postgres lit aussi. */
+const CHOIX_B = `SELECT u.id, u.name, u.email, u."createdAt", u.banned, u."banReason", c.derniere, m.role AS role_membre, m.fin_acces,
   (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
   (SELECT COALESCE(SUM(ua.messages), 0) FROM usage_agent ua JOIN agent a ON a.id = ua.agent WHERE a.utilisateur = u.id AND ua.jour >= ?) AS messages
   FROM "user" u LEFT JOIN compte_connexion c ON c.utilisateur = u.id LEFT JOIN admin_membre m ON m.utilisateur = u.id`;
@@ -111,18 +118,19 @@ export function listerComptes(db: DatabaseSync, f: FiltresComptes = { page: 1 },
 }
 
 /** La fiche d'un compte : ses agents et leurs messages sur 30 jours, ses sessions ouvertes (sans adresse IP ni jeton). */
-export function ficheCompte(db: DatabaseSync, id: string, maintenant = new Date()): {
+export async function ficheCompte(b: Base, id: string, maintenant = new Date()): Promise<{
   compte: CompteConsole;
   agents: (Agent & { messages30j: number })[];
   sessions: { creeLe: string; expireLe: string; appareil: string | null }[];
-} | undefined {
-  const l = db.prepare(`${CHOIX} WHERE u.id = ?`).get(depuis30j(maintenant), id) as Ligne | undefined;
+} | undefined> {
+  const l = await b.un<Ligne>(`${CHOIX_B} WHERE u.id = ?`, depuis30j(maintenant), id);
   if (!l) return undefined;
-  const agents = lister(db, id);
-  const messages = messagesDepuis(db, agents.map((a) => a.id), depuis30j(maintenant));
-  const sessions = db
-    .prepare("SELECT createdAt, expiresAt, userAgent FROM session WHERE userId = ? AND expiresAt > ? ORDER BY createdAt DESC")
-    .all(id, maintenant.toISOString()) as { createdAt: string; expiresAt: string; userAgent: string | null }[];
+  const agents = await lister(b, id);
+  const messages = await messagesDepuis(b, agents.map((a) => a.id), depuis30j(maintenant));
+  const sessions = await b.tous<{ createdAt: string; expiresAt: string; userAgent: string | null }>(
+    'SELECT "createdAt", "expiresAt", "userAgent" FROM session WHERE "userId" = ? AND "expiresAt" > ? ORDER BY "createdAt" DESC',
+    id, maintenant.toISOString(),
+  );
   return {
     compte: versCompte(l, maintenant),
     agents: agents.map((a) => ({ ...a, messages30j: messages[a.id] ?? 0 })),
@@ -199,24 +207,24 @@ export async function deconnecter(db: DatabaseSync, a: Acces, id: string, ad: Ad
  * (une inscription à 0 h 30 de Zurich compte ce jour-là). Les comptes inscrits dès la veille UTC du premier jour sont lus,
  * puis rangés par leur jour de Zurich.
  */
-export function totauxConsole(db: DatabaseSync, jours: Jours, maintenant = new Date()): {
+export async function totauxConsole(b: Base, jours: Jours, maintenant = new Date()): Promise<{
   comptes: number;
   agents: number;
   messages: number;
   parJour: { jour: string; inscriptions: number; messages: number }[];
-} {
-  const compter = (sql: string) => (db.prepare(sql).get() as { n: number }).n;
-  const messages = messagesParJour(db, jours, maintenant);
+}> {
+  const compter = async (sql: string) => (await b.un<{ n: number }>(sql))!.n;
+  const messages = await messagesParJour(b, jours, maintenant);
   const veille = new Date(Date.parse(`${messages[0].jour}T00:00:00Z`) - 24 * 3600 * 1000).toISOString();
-  const inscrits = db.prepare('SELECT createdAt FROM "user" WHERE createdAt >= ?').all(veille) as { createdAt: string }[];
+  const inscrits = await b.tous<{ createdAt: string }>('SELECT "createdAt" FROM "user" WHERE "createdAt" >= ?', veille);
   const parJour = new Map<string, number>();
   for (const i of inscrits) {
     const jour = jourZurich(new Date(i.createdAt));
     parJour.set(jour, (parJour.get(jour) ?? 0) + 1);
   }
   return {
-    comptes: compter('SELECT COUNT(*) AS n FROM "user"'),
-    agents: compter("SELECT COUNT(*) AS n FROM agent"),
+    comptes: await compter('SELECT COUNT(*) AS n FROM "user"'),
+    agents: await compter("SELECT COUNT(*) AS n FROM agent"),
     messages: messages.reduce((s, j) => s + j.messages, 0),
     parJour: messages.map((j) => ({ jour: j.jour, inscriptions: parJour.get(j.jour) ?? 0, messages: j.messages })),
   };

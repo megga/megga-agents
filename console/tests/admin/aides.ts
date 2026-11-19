@@ -43,6 +43,17 @@ export function baseDe(db: DatabaseSync): Base {
   return b;
 }
 
+/** Les colonnes d'une table, dans leur ordre, sous chaque moteur. */
+export async function colonnes(b: Base, table: string): Promise<string[]> {
+  const lignes = b.dialecte === "postgres"
+    ? await b.tous<{ name: string }>(
+      "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ? ORDER BY ordinal_position",
+      table,
+    )
+    : await b.tous<{ name: string }>(`PRAGMA table_info("${table}")`);
+  return lignes.map((c) => c.name);
+}
+
 /** Un compte de la console (une ligne de la table user de Better Auth). */
 export function compte(db: DatabaseSync, c: { id: string; courriel: string; nom?: string; creeLe?: string }): void {
   const quand = c.creeLe ?? T0.toISOString();

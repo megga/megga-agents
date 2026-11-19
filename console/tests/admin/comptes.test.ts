@@ -20,6 +20,7 @@ import { compterTour, noterConnexion } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
 import { CHEMINS_ADMIN_FERMES, optionsAuth } from "@/lib/auth";
 import { preparer } from "@/lib/base";
+import type { Base } from "@/lib/donnees/base";
 import { baseSqlite } from "@/lib/donnees/sqlite";
 import { T } from "@/lib/textes";
 import { baseDe, dbEssai, compte, membre, refusAsync, T0 } from "./aides";
@@ -31,11 +32,13 @@ const JOUR = 24 * 3600 * 1000;
 const avant = (jours: number) => new Date(T0.getTime() - jours * JOUR);
 
 let db: DatabaseSync;
+let b: Base;
 let appels: unknown[][];
 let ad: AdaptateurComptes;
 
 beforeEach(async () => {
   db = await dbEssai();
+  b = baseDe(db);
   appels = [];
   ad = {
     updateUser: vi.fn(async (...a: unknown[]) => appels.push(["updateUser", ...a])),
@@ -55,7 +58,7 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
     for (const c of ["/admin/ban-user", "/admin/impersonate-user", "/admin/set-role", "/admin/create-user", "/admin/unban-user", "/admin/list-users"]) {
       expect(CHEMINS_ADMIN_FERMES).toContain(c);
     }
-    expect(optionsAuth(baseDe(db)).disabledPaths).toEqual(CHEMINS_ADMIN_FERMES);
+    expect(optionsAuth(b).disabledPaths).toEqual(CHEMINS_ADMIN_FERMES);
   });
 
   it("ne répondent à personne, même à un superadmin qui serait aussi « admin » pour Better Auth", async () => {
@@ -65,8 +68,8 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
         headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie },
         body: JSON.stringify(corps),
       }));
-    const ouverte = betterAuth({ ...optionsAuth(baseDe(db)), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
-    const fermee = betterAuth({ ...optionsAuth(baseDe(db)), secret: SECRET, baseURL: "http://localhost:3000" });
+    const ouverte = betterAuth({ ...optionsAuth(b), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
+    const fermee = betterAuth({ ...optionsAuth(b), secret: SECRET, baseURL: "http://localhost:3000" });
     const inscrit = await appeler(fermee, "/sign-up/email", { name: "Chef", email: "chef@megga.test", password: "motdepasse" });
     const chef = ((await inscrit.json()) as { user: { id: string } }).user.id;
     db.prepare("UPDATE \"user\" SET role = 'admin' WHERE id = ?").run(chef);
@@ -202,7 +205,7 @@ describe("suspendre un compte", () => {
 
 describe("avec le vrai Better Auth", () => {
   it("un compte suspendu perd ses sessions, ne se reconnecte plus et lit T.compteSuspendu ; réactivé, il revient", async () => {
-    const auth = betterAuth({ ...optionsAuth(baseDe(db)), secret: SECRET });
+    const auth = betterAuth({ ...optionsAuth(b), secret: SECRET });
     const inscrit = await auth.api.signUpEmail({ body: { name: "Fleuriste", email: "fleurs@exemple.test", password: "motdepasse" }, returnHeaders: true });
     const user = inscrit.response.user;
     const cookie = new Headers({ cookie: (inscrit.headers.get("set-cookie") ?? "").split(";")[0] });
@@ -240,18 +243,18 @@ describe("avec le vrai Better Auth", () => {
 });
 
 describe("la liste des comptes", () => {
-  it("entreprise, courriel, inscription, dernière connexion, agents, messages des 30 derniers jours, état, membre", () => {
+  it("entreprise, courriel, inscription, dernière connexion, agents, messages des 30 derniers jours, état, membre", async () => {
     compte(db, { id: "d", courriel: "fleurs@exemple.test", nom: "Fleurs", creeLe: avant(1).toISOString() });
     membre(db, { utilisateur: "chef", role: "superadmin" });
     db.prepare("UPDATE \"user\" SET createdAt = ? WHERE id = 'chef'").run(avant(5).toISOString());
     db.prepare("UPDATE \"user\" SET banned = 1, banReason = 'Abus' WHERE id = 'd'").run();
-    const a1 = creer(db, "c", { prenom: "Lou", metier: "garage" }, T0);
-    const a2 = creer(db, "c", { prenom: "Max", metier: "garage" }, T0);
-    compterTour(db, a1.id, avant(31)); // hors des 30 jours
-    compterTour(db, a1.id, avant(29));
-    compterTour(db, a1.id, T0);
-    compterTour(db, a2.id, T0);
-    noterConnexion(db, "c", T0);
+    const a1 = await creer(b, "c", { prenom: "Lou", metier: "garage" }, T0);
+    const a2 = await creer(b, "c", { prenom: "Max", metier: "garage" }, T0);
+    await compterTour(b, a1.id, avant(31)); // hors des 30 jours
+    await compterTour(b, a1.id, avant(29));
+    await compterTour(b, a1.id, T0);
+    await compterTour(b, a2.id, T0);
+    await noterConnexion(b, "c", T0);
     expect(tous(db, T0)).toEqual([
       { id: "c", entreprise: "Garage du Lac", courriel: "garage@exemple.test", inscritLe: T0.toISOString(), derniereConnexion: T0.toISOString(),
         agents: 2, messages30j: 3, suspendu: false, motif: null, membre: false },
@@ -315,53 +318,54 @@ describe("les pages et la recherche", () => {
 });
 
 describe("la fiche d'un compte", () => {
-  it("ses agents et leurs messages, ses sessions ouvertes ; jamais une adresse IP", () => {
-    const a1 = creer(db, "c", { prenom: "Lou", metier: "garage", couleur: 2 }, T0);
-    compterTour(db, a1.id, T0);
-    compterTour(db, a1.id, avant(40));
-    const session = db.prepare("INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, ipAddress, userAgent, userId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-    session.run("s1", "2026-11-25T10:00:00.000Z", "t1", T0.toISOString(), T0.toISOString(), "203.0.113.42", "Mozilla/5.0 Essai", "c");
-    session.run("s2", "2026-11-17T10:00:00.000Z", "t2", avant(8).toISOString(), avant(8).toISOString(), "203.0.113.43", null, "c"); // expirée
-    const f = ficheCompte(db, "c", T0)!;
+  it("ses agents et leurs messages, ses sessions ouvertes ; jamais une adresse IP", async () => {
+    const a1 = await creer(b, "c", { prenom: "Lou", metier: "garage", couleur: 2 }, T0);
+    await compterTour(b, a1.id, T0);
+    await compterTour(b, a1.id, avant(40));
+    const session = (...v: (string | null)[]) => b.ecrire(
+      'INSERT INTO session (id, "expiresAt", token, "createdAt", "updatedAt", "ipAddress", "userAgent", "userId") VALUES (?, ?, ?, ?, ?, ?, ?, ?)', ...v);
+    await session("s1", "2026-11-25T10:00:00.000Z", "t1", T0.toISOString(), T0.toISOString(), "203.0.113.42", "Mozilla/5.0 Essai", "c");
+    await session("s2", "2026-11-17T10:00:00.000Z", "t2", avant(8).toISOString(), avant(8).toISOString(), "203.0.113.43", null, "c"); // expirée
+    const f = (await ficheCompte(b, "c", T0))!;
     expect(f.compte).toMatchObject({ id: "c", entreprise: "Garage du Lac", agents: 1, messages30j: 1 });
     expect(f.agents).toEqual([{ ...a1, messages30j: 1 }]);
     expect(f.sessions).toEqual([{ creeLe: T0.toISOString(), expireLe: "2026-11-25T10:00:00.000Z", appareil: "Mozilla/5.0 Essai" }]);
     expect(JSON.stringify(f)).not.toMatch(/203\.0\.113|ipAddress|token/);
   });
 
-  it("un compte inconnu : rien", () => {
-    expect(ficheCompte(db, "personne", T0)).toBeUndefined();
+  it("un compte inconnu : rien", async () => {
+    expect(await ficheCompte(b, "personne", T0)).toBeUndefined();
   });
 });
 
 describe("les totaux de la console", () => {
-  it("comptes et agents en tout ; messages et inscriptions jour par jour sur la période", () => {
+  it("comptes et agents en tout ; messages et inscriptions jour par jour sur la période", async () => {
     compte(db, { id: "d", courriel: "d@exemple.test", creeLe: avant(2).toISOString() });
     compte(db, { id: "e", courriel: "e@exemple.test", creeLe: avant(10).toISOString() });
-    const a = creer(db, "c", { prenom: "Lou", metier: "garage" }, T0);
-    creer(db, "d", { prenom: "Max", metier: "sante" }, T0);
-    compterTour(db, a.id, T0);
-    compterTour(db, a.id, T0);
-    compterTour(db, a.id, avant(2));
-    compterTour(db, a.id, avant(9));
-    const t = totauxConsole(db, 7, T0);
+    const a = await creer(b, "c", { prenom: "Lou", metier: "garage" }, T0);
+    await creer(b, "d", { prenom: "Max", metier: "sante" }, T0);
+    await compterTour(b, a.id, T0);
+    await compterTour(b, a.id, T0);
+    await compterTour(b, a.id, avant(2));
+    await compterTour(b, a.id, avant(9));
+    const t = await totauxConsole(b, 7, T0);
     expect([t.comptes, t.agents, t.messages]).toEqual([3, 2, 3]);
     expect(t.parJour).toHaveLength(7);
     expect(t.parJour[0]).toEqual({ jour: "2026-11-12", inscriptions: 0, messages: 0 });
     expect(t.parJour[4]).toEqual({ jour: "2026-11-16", inscriptions: 1, messages: 1 });
     expect(t.parJour[6]).toEqual({ jour: "2026-11-18", inscriptions: 1, messages: 2 });
-    expect(totauxConsole(db, 30, T0).messages).toBe(4);
+    expect((await totauxConsole(b, 30, T0)).messages).toBe(4);
   });
 
-  it("les inscriptions par jour de Zurich : 0 h 30 compte dans le jour affiché, 23 h 59 la veille non", () => {
+  it("les inscriptions par jour de Zurich : 0 h 30 compte dans le jour affiché, 23 h 59 la veille non", async () => {
     compte(db, { id: "minuit", courriel: "m@exemple.test", creeLe: "2026-11-11T23:30:00.000Z" }); // le 12 à 0 h 30, à Zurich
     compte(db, { id: "veille", courriel: "v@exemple.test", creeLe: "2026-11-11T22:59:00.000Z" }); // le 11 à 23 h 59
     compte(db, { id: "soir", courriel: "s@exemple.test", creeLe: "2026-11-18T23:30:00.000Z" }); // déjà le 19 à Zurich
-    const t = totauxConsole(db, 7, T0);
+    const t = await totauxConsole(b, 7, T0);
     expect(t.parJour[0]).toEqual({ jour: "2026-11-12", inscriptions: 1, messages: 0 });
     expect(t.parJour.reduce((n, j) => n + j.inscriptions, 0)).toBe(2); // « minuit » et « c » (T0) ; ni la veille, ni demain
     expect(t.comptes).toBe(4); // en tout
-    expect(totauxConsole(db, 1, new Date("2026-11-18T23:45:00Z")).parJour).toEqual([{ jour: "2026-11-19", inscriptions: 1, messages: 0 }]);
+    expect((await totauxConsole(b, 1, new Date("2026-11-18T23:45:00Z"))).parJour).toEqual([{ jour: "2026-11-19", inscriptions: 1, messages: 0 }]);
   });
 });
 

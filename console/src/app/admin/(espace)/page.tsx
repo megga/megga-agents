@@ -11,7 +11,7 @@ import { totauxConsole } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { agreger, joursDe, lireTout, texteGenre, type Souci } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 
 // La vue d'ensemble. Le bloc du moteur (clients.voir) : la période, les tuiles, « À surveiller », « Activité par client »,
 // tout borné au périmètre du membre (lireTout ne lit que ses clients). Un client injoignable est dit, les autres restent.
@@ -92,8 +92,8 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
  * La console (comptes.voir) : comptes et agents en tout, messages de la période ; inscriptions et messages par jour (jours
  * de Zurich). Sous le titre, ce que le bloc compte pour la période choisie.
  */
-function BlocConsole({ jours }: { jours: Jours }) {
-  const t = totauxConsole(base(), jours);
+async function BlocConsole({ jours }: { jours: Jours }) {
+  const t = await totauxConsole(await pret(), jours);
   return (
     <>
       <div className="flex flex-col gap-1">

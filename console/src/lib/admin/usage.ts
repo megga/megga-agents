@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { Base } from "@/lib/donnees/base";
 import type { Jours } from "./atelier";
 
 // Le compteur de messages de la console (usage_agent : un agent, un jour de Zurich, un nombre, jamais un texte) et la dernière
@@ -46,49 +46,54 @@ export function agentDuTour(methode: string, chemin: string): string | null {
 }
 
 /** Un tour de plus pour cet agent, le jour de Zurich de quand. */
-export function compterTour(db: DatabaseSync, agent: string, quand = new Date()): void {
-  db.prepare(
-    "INSERT INTO usage_agent (agent, jour, messages) VALUES (?, ?, 1) ON CONFLICT (agent, jour) DO UPDATE SET messages = messages + 1",
-  ).run(agent, jourZurich(quand));
+export async function compterTour(b: Base, agent: string, quand = new Date()): Promise<void> {
+  await b.ecrire(
+    "INSERT INTO usage_agent (agent, jour, messages) VALUES (?, ?, 1) ON CONFLICT (agent, jour) DO UPDATE SET messages = usage_agent.messages + 1",
+    agent, jourZurich(quand),
+  );
 }
 
 /** Compte un tour sans jamais lever : une panne (base, table) part à console.error, la conversation n'en sait rien. */
-export function compterSansBloquer(db: () => DatabaseSync, agent: string): void {
+export async function compterSansBloquer(b: () => Base | Promise<Base>, agent: string): Promise<void> {
   try {
-    compterTour(db(), agent);
+    await compterTour(await b(), agent);
   } catch (e) {
     console.error("compteur de messages :", e);
   }
 }
 
+/** Les « ? » d'une liste IN (…) de n valeurs. */
+export const marques = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+
 /** Les messages de chaque agent demandé, depuis un jour AAAA-MM-JJ inclus ; zéro pour un agent sans message. */
-export function messagesDepuis(db: DatabaseSync, agents: readonly string[], depuis: string): Record<string, number> {
+export async function messagesDepuis(b: Base, agents: readonly string[], depuis: string): Promise<Record<string, number>> {
   const total: Record<string, number> = Object.fromEntries(agents.map((a) => [a, 0]));
   if (!agents.length) return total;
-  const lignes = db
-    .prepare(
-      `SELECT agent, SUM(messages) AS n FROM usage_agent
-       WHERE jour >= ? AND agent IN (SELECT value FROM json_each(?)) GROUP BY agent`,
-    )
-    .all(depuis, JSON.stringify(agents)) as { agent: string; n: number }[];
+  const lignes = await b.tous<{ agent: string; n: number }>(
+    `SELECT agent, SUM(messages) AS n FROM usage_agent WHERE jour >= ? AND agent IN (${marques(agents.length)}) GROUP BY agent`,
+    depuis, ...agents,
+  );
   for (const l of lignes) total[l.agent] = l.n;
   return total;
 }
 
 /** Les messages de tous les agents, jour par jour sur la période (jours de Zurich), zéros compris, le plus ancien d'abord. */
-export function messagesParJour(db: DatabaseSync, jours: Jours, maintenant = new Date()): { jour: string; messages: number }[] {
+export async function messagesParJour(b: Base, jours: Jours, maintenant = new Date()): Promise<{ jour: string; messages: number }[]> {
   const liste = joursZurich(jours, maintenant);
-  const lignes = db
-    .prepare("SELECT jour, SUM(messages) AS n FROM usage_agent WHERE jour >= ? AND jour <= ? GROUP BY jour")
-    .all(liste[0], liste[liste.length - 1]) as { jour: string; n: number }[];
+  const lignes = await b.tous<{ jour: string; n: number }>(
+    "SELECT jour, SUM(messages) AS n FROM usage_agent WHERE jour >= ? AND jour <= ? GROUP BY jour",
+    liste[0], liste[liste.length - 1],
+  );
   const parJour = new Map(lignes.map((l) => [l.jour, l.n]));
   return liste.map((jour) => ({ jour, messages: parJour.get(jour) ?? 0 }));
 }
 
 /** La dernière connexion d'un compte (une session créée par Better Auth) ; une date plus ancienne n'efface pas la dernière. */
-export function noterConnexion(db: DatabaseSync, utilisateur: string, quand = new Date()): void {
-  db.prepare(
+export async function noterConnexion(b: Base, utilisateur: string, quand = new Date()): Promise<void> {
+  await b.ecrire(
     `INSERT INTO compte_connexion (utilisateur, derniere) VALUES (?, ?)
-     ON CONFLICT (utilisateur) DO UPDATE SET derniere = MAX(derniere, excluded.derniere)`,
-  ).run(utilisateur, quand.toISOString());
+     ON CONFLICT (utilisateur) DO UPDATE SET derniere =
+       CASE WHEN excluded.derniere > compte_connexion.derniere THEN excluded.derniere ELSE compte_connexion.derniere END`,
+    utilisateur, quand.toISOString(),
+  );
 }
