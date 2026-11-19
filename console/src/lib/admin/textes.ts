@@ -631,6 +631,10 @@ export const TA = {
   motifManquant: "Donnez un motif, en 200 caractères au plus.",
   suspensionInterdite: "Vous ne pouvez pas agir sur ce compte : ni le vôtre, ni celui d'un superadmin ; celui d'un membre de l'admin, un superadmin seulement.",
 
+  // Mon compte (la photo, le nom, le mot de passe, les appareils connectés)
+  photoInvalide: "Cette photo n'est pas une image WebP, JPEG ou PNG.",
+  photoTropLourde: "Cette photo dépasse 200 Ko.",
+
   // L'atelier (le moteur)
   moteurNonBranche: "Le moteur n'est pas branché à cette console.",
   atelierInjoignable: "L'atelier ne répond pas. Réessayez dans un instant.",

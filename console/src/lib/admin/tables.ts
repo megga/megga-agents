@@ -61,6 +61,14 @@ export async function creerTablesAdmin(b: Base, maintenant = new Date()): Promis
     utilisateur TEXT PRIMARY KEY,
     derniere TEXT NOT NULL
   )`);
+  // La photo de profil d'un compte (photo.ts) : ses octets en base64, au plus 200 Ko décodés ; la version change avec elle.
+  await b.executer(`CREATE TABLE IF NOT EXISTS compte_photo (
+    utilisateur TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    donnees TEXT NOT NULL,
+    version TEXT NOT NULL,
+    modifiee_le TEXT NOT NULL
+  )`);
   await b.executer("CREATE UNIQUE INDEX IF NOT EXISTS admin_role_nom ON admin_role (lower(nom))");
   await b.executer("CREATE INDEX IF NOT EXISTS admin_membre_role ON admin_membre (role)");
   await b.executer("CREATE INDEX IF NOT EXISTS admin_journal_quand ON admin_journal (quand)");
