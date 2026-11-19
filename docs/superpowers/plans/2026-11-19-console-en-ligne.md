@@ -210,10 +210,10 @@ Ce qui se dit autrement :
 - Essais : `console/tests/inscription.test.ts` (nouveau), `console/tests/sante.test.ts` (nouveau), `console/tests/connexion.test.ts`
 
 **Interfaces :**
-- Produit : `export function inscriptionOuverte(env = process.env): boolean` (vrai seulement si `CONSOLE_INSCRIPTION === "ouverte"`), dans `auth.ts`. L'en-tête `x-megga-invitation` porte le jeton du lien. `serveurAgents(): string | null` (null sans `AGENTS_URL`).
+- Produit : `export function inscriptionOuverte(env = process.env): boolean` (vrai seulement si `CONSOLE_INSCRIPTION === "ouverte"`), dans `auth.ts`. L'en-tête `x-megga-invitation-token` porte le jeton du lien. `serveurAgents(): string | null` (null sans `AGENTS_URL`).
 
 Ce qui change :
-- En mode invitation, `databaseHooks.user.create.before` lit `x-megga-invitation` dans la requête, et refuse (`APIError("FORBIDDEN", { message: T.inscriptionSurInvitation })`) sauf si ce jeton est celui d'une invitation en attente pour ce courriel. Sans en-tête, Google et Microsoft sont refusés de la même façon. `account.accountLinking.enabled` vaut `false` dans ce mode.
+- En mode invitation, `databaseHooks.user.create.before` lit `x-megga-invitation-token` dans la requête, et refuse (`APIError("FORBIDDEN", { message: T.inscriptionSurInvitation })`) sauf si ce jeton est celui d'une invitation en attente pour ce courriel. Sans en-tête, Google et Microsoft sont refusés de la même façon. `account.accountLinking.enabled` vaut `false` dans ce mode.
 - `rejoindre.tsx` envoie le jeton à l'inscription, par `fetchOptions: { headers: { "x-megga-invitation": jeton } }`, jamais dans une adresse. Le commentaire « jamais envoyé au serveur » est corrigé.
 - L'écran de connexion ne propose plus de créer un compte quand l'inscription est fermée. `T.inscriptionSurInvitation` : « Un compte se crée depuis un lien d'invitation. »
 - `GET /api/sante`, sans session : `{ "ok": true, "revision": process.env.CONSOLE_REVISION ?? null }`. Elle ne touche pas à la base.

@@ -13,7 +13,7 @@ import { authClient } from "@/lib/auth-client";
 import { T } from "@/lib/textes";
 
 /** Le nom de l'en-tête que lit le serveur (ENTETE_INVITATION, auth.ts, côté serveur seulement). */
-const ENTETE_INVITATION = "x-megga-invitation";
+const ENTETE_INVITATION = "x-megga-invitation-token";
 
 type Etat = ReturnType<typeof etatInvitation>;
 

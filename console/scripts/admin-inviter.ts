@@ -1,6 +1,6 @@
 // Les premiers superadmins : npm run admin:inviter -- <courriel>, lancé sur le serveur de la console.
 // Imprime un lien d'invitation superadmin (valable 7 jours, une fois), à envoyer soi-même, et note le geste au journal.
-// Pas de liste de courriels dans l'environnement : l'inscription est ouverte et les courriels ne sont pas vérifiés.
+// Pas de liste de courriels dans l'environnement : en ligne, un compte ne se crée qu'avec ce lien.
 import { inviterSuperadmin, lireInvitation } from "@/lib/admin/invitations";
 import { noter } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";

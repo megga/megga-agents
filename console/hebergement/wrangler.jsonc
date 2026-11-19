@@ -6,7 +6,8 @@
   "name": "megga-console",
   "main": "src/index.js",
   "compatibility_date": "2026-11-01",
-  "observability": { "enabled": true },
+  // Les journaux d'invocation sont coupés : ils gardent 7 jours l'adresse et les en-têtes des requêtes, donc le jeton d'une invitation.
+  "observability": { "enabled": true, "logs": { "invocation_logs": false } },
   // Une seule origine, celle de BETTER_AUTH_URL : ni adresse workers.dev, ni adresses d'aperçu.
   "workers_dev": false,
   "preview_urls": false,

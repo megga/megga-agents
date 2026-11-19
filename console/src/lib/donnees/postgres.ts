@@ -75,8 +75,17 @@ function operations(cible: Cible, reessayer: boolean) {
 /** Attendre une connexion du Pool, un verrou, ou une transaction restée ouverte : jamais sans fin, une erreur au bout. */
 const DELAIS = { connexionMs: 5_000, verrou: "5s", transactionInactive: "15s" } as const;
 
+/**
+ * pg traite déjà « prefer », « require » et « verify-ca » comme « verify-full » et l'écrit à chaque connexion. On écrit
+ * « verify-full » nous-mêmes, ce qui ne change rien au comportement et fait taire l'avertissement. L'adresse n'est jamais
+ * journalisée : une adresse qu'on ne sait pas lire est rendue telle quelle.
+ */
+export function normaliserSsl(url: string): string {
+  return url.replace(/([?&]sslmode=)(?:require|prefer|verify-ca)(?=&|$)/, "$1verify-full");
+}
+
 export function basePostgres(url: string): Base {
-  const pool = new Pool({ connectionString: url, max: 5, connectionTimeoutMillis: DELAIS.connexionMs });
+  const pool = new Pool({ connectionString: normaliserSsl(url), max: 5, connectionTimeoutMillis: DELAIS.connexionMs });
   // Une connexion du pool coupée (Neon qui s'endort) : notée, sans tuer le processus ; le pool la remplace.
   pool.on("error", (e) => console.error("base postgres, connexion perdue :", e.message));
 
@@ -135,7 +144,9 @@ export function basePostgres(url: string): Base {
       const r = await f(tx);
       const panne = sortie.panne();
       if (panne) throw panne; // une coupure pendant f, sans requête en cours pour la voir : rien n'est validé
-      await client.query("COMMIT");
+      const fin = await client.query("COMMIT");
+      // Sur une transaction en erreur, Postgres répond « ROLLBACK » à COMMIT, sans lever d'erreur : rien n'est validé.
+      if (fin.command !== "COMMIT") throw new Error("base postgres, la transaction n'a pas été validée");
       return r;
     } catch (e) {
       casse = sortie.panne();

@@ -60,11 +60,13 @@ Vérifier, sans session :
 curl -s https://console.megga.ai/api/sante
 ```
 
-La réponse est `{"ok":true,"revision":"<commit>"}`. Elle ne touche pas à la base.
+La réponse est `{"ok":true,"revision":"<commit>"}`. Elle ne touche pas à la base. Après `secrets.sh`, la version créée n'a pas d'étiquette et la révision redevient `"inconnue"` : redéployer avec `--tag` pour retrouver le commit.
+
+Les journaux d'invocation de Cloudflare sont coupés (`invocation_logs: false` dans `wrangler.jsonc`) : ils garderaient 7 jours l'adresse et les en-têtes des requêtes, donc le jeton d'une invitation. L'en-tête d'inscription s'appelle `x-megga-invitation-token`, pour que le masquage de Cloudflare le couvre si ces journaux revenaient. Une invitation créée avant ce déploiement et pas encore acceptée se retire, puis se refait.
 
 ## Les deux premiers superadmins
 
-Depuis `console/`, l'adresse de la base de production tapée en masqué, dans un sous-shell (rien ne reste exporté dans le terminal) :
+La commande joue les migrations de la base de production avec le `node_modules` de ce poste : la lancer depuis le commit déployé (`git checkout <étiquette>`, puis `npm ci`). Depuis `console/`, l'adresse de la base de production tapée en masqué, dans un sous-shell (rien ne reste exporté dans le terminal) :
 
 ```bash
 npm ci
@@ -76,5 +78,5 @@ Deux fois : Julien, puis Thomas. Chacun ouvre son lien (valable 7 jours, une seu
 ## Revenir en arrière
 
 - **Couper l'accès** : retirer le domaine `console.megga.ai` du Worker (tableau de bord Cloudflare, Workers, `megga-console`, Paramètres, Domaines et routes). Plus rien n'arrive à la console. La base reste chez Neon, intacte.
-- **Revenir à la version précédente** : `cd console/hebergement && npx wrangler rollback`.
+- **Revenir à la version précédente** : redéployer le commit précédent, `git checkout <commit précédent>` puis `cd console/hebergement && npx wrangler deploy --tag <commit précédent>`. Pas `wrangler rollback` : il vise la version du Worker et ne ramène pas l'image du conteneur, qui a son propre déploiement progressif.
 - **Tout retirer** : `npx wrangler delete` depuis `console/hebergement`. La base reste ; elle se supprime à part, chez Neon, si on le décide.

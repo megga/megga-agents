@@ -37,19 +37,25 @@ else
   echo "→ BETTER_AUTH_SECRET tiré au hasard et posé"
 fi
 
-# Repris de l'environnement s'il y est, sinon demandé en masqué ; vide, il passe son tour.
+# Repris de l'environnement s'il y est (confirmé o/N sur un terminal), sinon demandé en masqué ; vide, il passe son tour.
 demander() {
-  local nom=$1 explication=$2 valeur
+  local nom=$1 explication=$2 valeur origine=saisi reponse=
   valeur=${!nom-}
-  if [ -z "$valeur" ]; then
+  if [ -n "$valeur" ]; then
+    origine=environnement
+    if [ -t 0 ]; then
+      read -rp "$nom est dans l'environnement de ce terminal : le poser sur le Worker ? [o/N] " reponse || true
+      case "$reponse" in o | O | oui | OUI) ;; *) valeur="" ;; esac
+    fi
+  else
     read -rsp "$nom ($explication, vide pour passer) : " valeur || true
     [ -t 0 ] && echo >&2
   fi
   if [ -z "$valeur" ]; then
-    echo "→ $nom : rien de saisi, passé"
+    echo "→ $nom : rien posé, passé"
   else
     printf '%s' "$valeur" | poser "$nom"
-    echo "→ $nom posé"
+    if [ "$origine" = environnement ]; then echo "→ $nom repris de l'environnement et posé"; else echo "→ $nom posé"; fi
   fi
   unset valeur
 }

@@ -5,6 +5,9 @@ node_modules
 .next-e2e
 .donnees
 .env*
+**/.env*
+**/*.pem
+.vercel
 agents
 e2e
 tests

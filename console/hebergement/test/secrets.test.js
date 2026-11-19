@@ -49,6 +49,7 @@ test("pose un BETTER_AUTH_SECRET tiré au hasard, et les secrets repris de l'env
   assert.match(r.poses.BETTER_AUTH_SECRET, /^[A-Za-z0-9+/]{43}=$/); // 32 octets en base64, sans retour à la ligne
   assert.equal(r.poses.CONSOLE_BASE_URL, BASE);
   assert.equal(r.poses.ATELIER_JETON, JETON);
+  assert.match(r.sortie, /CONSOLE_BASE_URL repris de l'environnement et posé/);
   assert.ok(!r.journal.includes(BASE) && !r.journal.includes(JETON)); // jamais en argument de commande
   rienAffiche(r);
 });
@@ -57,7 +58,7 @@ test("un champ vide passe son tour", () => {
   const r = lancer({ env: { CONSOLE_BASE_URL: BASE } });
   assert.equal(r.statut, 0, r.sortie);
   assert.deepEqual(Object.keys(r.poses).sort(), ["BETTER_AUTH_SECRET", "CONSOLE_BASE_URL"]);
-  assert.match(r.sortie, /ATELIER_JETON : rien de saisi, passé/);
+  assert.match(r.sortie, /ATELIER_JETON : rien posé, passé/);
 });
 
 test("lit les valeurs sur son entrée, une ligne chacune, sans les afficher", () => {

@@ -23,7 +23,7 @@ export function inscriptionOuverte(env: Env = process.env): boolean {
 }
 
 /** L'en-tête qui porte le jeton du lien d'invitation avec la demande d'inscription (rejoindre.tsx), jamais une adresse. */
-export const ENTETE_INVITATION = "x-megga-invitation";
+export const ENTETE_INVITATION = "x-megga-invitation-token";
 
 /** Le seul chemin qui crée un compte en mode invitation : l'inscription par courriel. */
 const INSCRIPTION_COURRIEL = "/sign-up/email";
