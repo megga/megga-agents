@@ -9,7 +9,7 @@ import { FormTarifs } from "@/app/admin/(espace)/tarifs/tarifs";
 import type { Suivi, Tarifs } from "@/lib/admin/atelier";
 import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // Les coûts et les tarifs à l'écran, sans réseau : l'écran Tarifs, l'onglet Suivi et la vue d'ensemble, appelés comme Next.js
 // les rend (session, base et atelier simulés, un lien est un simple <a>), puis dessinés en HTML. Ce qu'un membre sans
@@ -97,7 +97,7 @@ const suiviDe = (id: string) => PageSuivi({ params: Promise.resolve({ id }), sea
 const vue = () => VueEnsemble({ searchParams: Promise.resolve({}) } as never);
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   simule.appels = [];
   simule.tarifs = TARIFS;
   simule.suivis = { "boulangerie-essai": suivi("boulangerie-essai", LISIBLES), "chalet-essai": suivi("chalet-essai", ILLISIBLES) };

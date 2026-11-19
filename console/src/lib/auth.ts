@@ -6,7 +6,8 @@ import { nextCookies } from "better-auth/next-js";
 import { admin } from "better-auth/plugins/admin";
 import { headers } from "next/headers";
 import { noterConnexion } from "./admin/usage";
-import { base } from "./base";
+import { donnees, pret } from "./base";
+import type { Base } from "./donnees/base";
 import { T } from "./textes";
 
 type Fournisseurs = NonNullable<BetterAuthOptions["socialProviders"]>;
@@ -28,9 +29,9 @@ export function fournisseursActifs(): ("google" | "microsoft")[] {
 }
 
 /** La dernière connexion d'un compte, notée à chaque session créée ; une panne ne refuse jamais la connexion. */
-function noterSansBloquer(db: DatabaseSync, utilisateur: string): void {
+function noterSansBloquer(b: Base, utilisateur: string): void {
   try {
-    noterConnexion(db, utilisateur);
+    if (b.dialecte === "sqlite") noterConnexion(b.pourAuth() as DatabaseSync, utilisateur); // le temps de la conversion
   } catch (e) {
     console.error("dernière connexion :", e);
   }
@@ -47,14 +48,14 @@ export const CHEMINS_ADMIN_FERMES: string[] = Object.values(admin().endpoints).m
  * L'extension admin refuse toute nouvelle session à un compte suspendu (BANNED_USER, T.compteSuspendu) ; nextCookies reste
  * la dernière extension.
  */
-export function optionsAuth(db: DatabaseSync = base()): BetterAuthOptions {
+export function optionsAuth(b: Base = donnees()): BetterAuthOptions {
   return {
     appName: "MEGGA",
-    database: db,
+    database: b.pourAuth() as BetterAuthOptions["database"],
     emailAndPassword: { enabled: true, minPasswordLength: 8, autoSignIn: true },
     socialProviders: fournisseurs(),
     telemetry: { enabled: false },
-    databaseHooks: { session: { create: { after: async (s) => noterSansBloquer(db, s.userId) } } },
+    databaseHooks: { session: { create: { after: async (s) => noterSansBloquer(b, s.userId) } } },
     disabledPaths: CHEMINS_ADMIN_FERMES,
     plugins: [admin({ bannedUserMessage: T.compteSuspendu }), nextCookies()],
   };
@@ -81,11 +82,11 @@ export function migrer(): Promise<void> {
 }
 
 export async function session() {
-  await migrer();
+  await pret();
   return auth().api.getSession({ headers: await headers() });
 }
 
 export async function sessionDe(requete: Request) {
-  await migrer();
+  await pret();
   return auth().api.getSession({ headers: requete.headers });
 }

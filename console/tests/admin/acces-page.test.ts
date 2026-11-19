@@ -7,7 +7,7 @@ import PageAcces from "@/app/admin/(espace)/clients/[id]/acces/page";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // L'onglet Accès, appelé comme Next.js le rend (session, base et atelier simulés) : chaque bloc suit son droit, un externe
 // n'y entre pas, et la liste des clés ne porte que ce que l'écran montre.
@@ -58,7 +58,7 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 }
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   simule.appels = [];
   simule.cles = { client: "garage-essai", cles: [{ id: "d15a76f57ee4", logiciel: "caisse", par_minute: 30, cree: 1_800_000_000, retiree: null,
     empreinte: "ne-doit-pas-sortir" }] };

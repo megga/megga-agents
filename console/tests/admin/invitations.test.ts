@@ -15,11 +15,11 @@ import {
 import { accesDe, membreEnCours } from "@/lib/admin/membres";
 import { creerRole, lireRole, retirerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { baseEssai, compte, membre, refus, T0 } from "./aides";
+import { dbEssai, compte, membre, refus, T0 } from "./aides";
 
 let db: DatabaseSync;
 beforeEach(async () => {
-  db = await baseEssai();
+  db = await dbEssai();
 });
 
 const JOUR = 24 * 3600 * 1000;

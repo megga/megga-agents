@@ -8,7 +8,7 @@ import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { clePersonne } from "@/lib/admin/personnes";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // Les deux pages des conversations, appelées comme Next.js les rend, sans réseau : la session vient de etat.qui, la base
 // est celle de l'essai, l'atelier est simulé, un lien est un simple <a>. Ce que la page montre se lit dans son HTML.
@@ -68,7 +68,7 @@ const HORS_CLOUDFLARE = "les conversations d'une installation hors Cloudflare ne
 
 beforeEach(async () => {
   process.env.BETTER_AUTH_SECRET = SECRET;
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   simule.appels = [];
   simule.client = BOULANGERIE;
   simule.conversations = { conversations: PERSONNES };

@@ -2,11 +2,11 @@ import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { filtresDe, LIGNES_PAR_PAGE, lireJournal, nettoyer, noter } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, T0 } from "./aides";
+import { acces, dbEssai, T0 } from "./aides";
 
 let db: DatabaseSync;
 beforeEach(async () => {
-  db = await baseEssai();
+  db = await dbEssai();
 });
 
 const geste = (qui: string, action: string, cible: string | null, detail: unknown = null) =>

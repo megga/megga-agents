@@ -1,21 +1,19 @@
 import "server-only";
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { creerTablesAdmin } from "./admin/tables";
+import { migrer } from "./auth";
+import { ouvrirBase, type Base } from "./donnees/base";
+
+export { cheminBase } from "./donnees/base";
 
 // La base de la console : les comptes de Better Auth, les agents de chaque compte et les tables de l'admin.
-// SQLite intégré à Node en local ; Postgres (Neon) au déploiement, par l'adaptateur de Better Auth.
+// SQLite (node:sqlite) en local et dans les essais ; Postgres quand CONSOLE_BASE_URL est posée (src/lib/donnees).
 
-const globale = globalThis as unknown as { baseConsole?: DatabaseSync };
-
-export function cheminBase(): string {
-  return process.env.CONSOLE_BASE || resolve(process.cwd(), ".donnees/console.sqlite");
-}
+const globale = globalThis as unknown as { baseConsole?: Base; baseConsolePrete?: Promise<Base> };
 
 /** Les tables de la console sur une base ouverte : les agents de chaque compte, puis celles de l'admin. */
-export function preparer(db: DatabaseSync): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS agent (
+export async function preparer(b: Base): Promise<void> {
+  await b.executer(`CREATE TABLE IF NOT EXISTS agent (
     id TEXT PRIMARY KEY,
     utilisateur TEXT NOT NULL,
     prenom TEXT NOT NULL,
@@ -25,18 +23,33 @@ export function preparer(db: DatabaseSync): void {
     epingle INTEGER NOT NULL DEFAULT 0,
     cree_le TEXT NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS agent_utilisateur ON agent (utilisateur)");
-  creerTablesAdmin(db);
+  await b.executer("CREATE INDEX IF NOT EXISTS agent_utilisateur ON agent (utilisateur)");
+  await creerTablesAdmin(b);
 }
 
-export function base(): DatabaseSync {
-  if (!globale.baseConsole) {
-    const chemin = cheminBase();
-    if (chemin !== ":memory:") mkdirSync(dirname(chemin), { recursive: true });
-    const db = new DatabaseSync(chemin);
-    db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
-    preparer(db);
-    globale.baseConsole = db;
-  }
+/** La base de la console, ouverte une fois ; ses tables sont prêtes après pret(). */
+export function donnees(): Base {
+  globale.baseConsole ??= ouvrirBase();
   return globale.baseConsole;
+}
+
+/** La base de la console, Better Auth migré et ses tables créées : à attendre avant toute requête. */
+export function pret(): Promise<Base> {
+  globale.baseConsolePrete ??= (async () => {
+    const b = donnees();
+    await migrer();
+    await preparer(b);
+    return b;
+  })().catch((e: unknown) => {
+    globale.baseConsolePrete = undefined; // un échec n'est pas gardé : la prochaine requête réessaie
+    throw e;
+  });
+  return globale.baseConsolePrete;
+}
+
+/** Le temps de la conversion : la connexion SQLite de donnees(), pour les modules pas encore passés à Base. */
+export function base(): DatabaseSync {
+  const b = donnees();
+  if (b.dialecte !== "sqlite") throw new Error("base() ne sert que SQLite : ce module n'est pas encore passé à l'interface de base");
+  return b.pourAuth() as DatabaseSync;
 }

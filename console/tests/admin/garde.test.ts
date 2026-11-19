@@ -7,7 +7,7 @@ import { lireJournal } from "@/lib/admin/journal";
 import { Refus } from "@/lib/agents";
 import { TA } from "@/lib/admin/textes";
 import { config, proxy } from "@/proxy";
-import { acces, baseEssai, compte, membre, roleVide } from "./aides";
+import { acces, dbEssai, compte, membre, roleVide } from "./aides";
 
 // La session vient de l'en-tête x-essai-qui (routes) ou de etat.qui (pages) ; la base est celle de l'essai.
 // connection() note seulement son appel : hors de Next.js, la vraie refuse de répondre.
@@ -36,7 +36,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   etat.qui = null;
 });
 afterEach(() => vi.restoreAllMocks());

@@ -14,7 +14,7 @@ import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { compterTour } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
-import { acces, baseEssai, compte, membre } from "./aides";
+import { acces, dbEssai, compte, membre } from "./aides";
 
 // L'écran Comptes, la fiche d'un compte et le bloc Console de la vue d'ensemble, appelés comme Next.js les rend (session, base
 // et atelier simulés, un lien est un simple <a>), puis dessinés en HTML. Sans comptes.voir, ni courriel de client ni total ;
@@ -73,7 +73,7 @@ const fiche = (id: string) => PageCompte({ params: Promise.resolve({ id }) } as 
 const vue = () => VueEnsemble({ searchParams: Promise.resolve({ jours: "7" }) } as never);
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   etat.appels = [];
   const s = acces({ superadmin: true });
   const clientsSeuls = creerRole(etat.db, s, { nom: "Clients seuls", droits: ["clients.voir"] });

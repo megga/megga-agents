@@ -13,17 +13,17 @@ import {
 import { creerRole, lireRole, listerRoles, modifierRole, retirerRole } from "@/lib/admin/roles";
 import { creerTablesAdmin } from "@/lib/admin/tables";
 import { TA } from "@/lib/admin/textes";
-import { baseEssai, compte, membre, refus, T0 } from "./aides";
+import { baseDe, dbEssai, compte, membre, refus, T0 } from "./aides";
 
 let db: DatabaseSync;
 beforeEach(async () => {
-  db = await baseEssai();
+  db = await dbEssai();
 });
 
 describe("les tables de l'admin", () => {
-  it("se créent deux fois de suite sans rien doubler, avec le superadmin et les quatre rôles de départ", () => {
-    creerTablesAdmin(db, T0);
-    creerTablesAdmin(db, T0);
+  it("se créent deux fois de suite sans rien doubler, avec le superadmin et les quatre rôles de départ", async () => {
+    await creerTablesAdmin(baseDe(db), T0);
+    await creerTablesAdmin(baseDe(db), T0);
     const roles = listerRoles(db);
     expect(roles.map((r) => r.id)).toEqual(["superadmin", "administration", "exploitation", "finance", "lecture"]);
     expect(roles[0]).toMatchObject({ nom: TA.roleSuperadmin, systeme: true, membres: 0 });
@@ -31,10 +31,10 @@ describe("les tables de l'admin", () => {
     expect(roles.slice(1).every((r) => !r.systeme)).toBe(true);
   });
 
-  it("ne remettent pas un rôle de départ retiré", () => {
+  it("ne remettent pas un rôle de départ retiré", async () => {
     const s = membre(db, { utilisateur: "s", role: "superadmin" });
     retirerRole(db, s, "finance");
-    creerTablesAdmin(db, T0);
+    await creerTablesAdmin(baseDe(db), T0);
     expect(lireRole(db, "finance")).toBeUndefined();
   });
 });

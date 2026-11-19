@@ -1,21 +1,23 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { Base } from "@/lib/donnees/base";
 import { DROITS, ROLES_DE_DEPART, SUPERADMIN } from "./droits";
 import { TA } from "./textes";
 
 // Les tables de l'admin, dans la base de la console (approche A de la conception).
-// Dates en texte ISO UTC ; listes (droits, périmètre) en JSON ; un périmètre NULL vaut « tous ».
+// Dates en texte ISO UTC ; listes (droits, périmètre) en JSON ; un périmètre NULL vaut « tous ». Le même DDL sous SQLite et
+// sous Postgres, sauf la clé du journal. Le nom d'un rôle est unique sans tenir compte de la casse (admin_role_nom) ; une base
+// SQLite créée avant garde aussi son ancienne contrainte UNIQUE COLLATE NOCASE, qui dit la même chose.
 
-export function creerTablesAdmin(db: DatabaseSync, maintenant = new Date()): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS admin_role (
+export async function creerTablesAdmin(b: Base, maintenant = new Date()): Promise<void> {
+  await b.executer(`CREATE TABLE IF NOT EXISTS admin_role (
     id TEXT PRIMARY KEY,
-    nom TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    nom TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     droits TEXT NOT NULL DEFAULT '[]',
     systeme INTEGER NOT NULL DEFAULT 0,
     cree_le TEXT NOT NULL,
     modifie_le TEXT NOT NULL
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS admin_membre (
+  await b.executer(`CREATE TABLE IF NOT EXISTS admin_membre (
     utilisateur TEXT PRIMARY KEY,
     role TEXT NOT NULL,
     externe INTEGER NOT NULL DEFAULT 0,
@@ -24,7 +26,7 @@ export function creerTablesAdmin(db: DatabaseSync, maintenant = new Date()): voi
     ajoute_par TEXT,
     ajoute_le TEXT NOT NULL
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS admin_invitation (
+  await b.executer(`CREATE TABLE IF NOT EXISTS admin_invitation (
     id TEXT PRIMARY KEY,
     empreinte TEXT NOT NULL UNIQUE,
     courriel TEXT NOT NULL,
@@ -39,8 +41,8 @@ export function creerTablesAdmin(db: DatabaseSync, maintenant = new Date()): voi
     acceptee_par TEXT,
     retiree_le TEXT
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS admin_journal (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+  await b.executer(`CREATE TABLE IF NOT EXISTS admin_journal (
+    id ${b.dialecte === "postgres" ? "BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY" : "INTEGER PRIMARY KEY AUTOINCREMENT"},
     quand TEXT NOT NULL,
     qui TEXT,
     courriel TEXT,
@@ -49,29 +51,35 @@ export function creerTablesAdmin(db: DatabaseSync, maintenant = new Date()): voi
     resultat TEXT NOT NULL,
     detail TEXT
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS usage_agent (
+  await b.executer(`CREATE TABLE IF NOT EXISTS usage_agent (
     agent TEXT NOT NULL,
     jour TEXT NOT NULL,
     messages INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (agent, jour)
   )`);
-  db.exec(`CREATE TABLE IF NOT EXISTS compte_connexion (
+  await b.executer(`CREATE TABLE IF NOT EXISTS compte_connexion (
     utilisateur TEXT PRIMARY KEY,
     derniere TEXT NOT NULL
   )`);
-  db.exec("CREATE INDEX IF NOT EXISTS admin_membre_role ON admin_membre (role)");
-  db.exec("CREATE INDEX IF NOT EXISTS admin_journal_quand ON admin_journal (quand)");
-  semerRoles(db, maintenant);
+  await b.executer("CREATE UNIQUE INDEX IF NOT EXISTS admin_role_nom ON admin_role (lower(nom))");
+  await b.executer("CREATE INDEX IF NOT EXISTS admin_membre_role ON admin_membre (role)");
+  await b.executer("CREATE INDEX IF NOT EXISTS admin_journal_quand ON admin_journal (quand)");
+  await semerRoles(b, maintenant);
 }
 
 /** Le superadmin à chaque démarrage ; les rôles de départ à la création seulement, pour qu'un rôle retiré ne revienne pas. */
-function semerRoles(db: DatabaseSync, maintenant: Date): void {
+async function semerRoles(b: Base, maintenant: Date): Promise<void> {
   const quand = maintenant.toISOString();
-  const premiere = (db.prepare("SELECT COUNT(*) AS n FROM admin_role").get() as { n: number }).n === 0;
-  const inserer = db.prepare(
-    "INSERT OR IGNORE INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  );
-  inserer.run(SUPERADMIN, TA.roleSuperadmin, TA.roleSuperadminDescription, JSON.stringify(DROITS), 1, quand, quand);
-  if (!premiere) return;
-  for (const r of ROLES_DE_DEPART) inserer.run(r.id, r.nom, r.description, JSON.stringify(r.droits), 0, quand, quand);
+  await b.transaction(async (tx) => {
+    const premiere = (await tx.un<{ n: number }>("SELECT COUNT(*) AS n FROM admin_role"))!.n === 0;
+    const inserer = (id: string, nom: string, description: string, droits: readonly string[], systeme: number) =>
+      tx.ecrire(
+        `INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO NOTHING`,
+        id, nom, description, JSON.stringify(droits), systeme, quand, quand,
+      );
+    await inserer(SUPERADMIN, TA.roleSuperadmin, TA.roleSuperadminDescription, DROITS, 1);
+    if (!premiere) return;
+    for (const r of ROLES_DE_DEPART) await inserer(r.id, r.nom, r.description, r.droits, 0);
+  });
 }

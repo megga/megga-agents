@@ -7,7 +7,7 @@ import { TA } from "@/lib/admin/textes";
 import { agentDuTour, compterSansBloquer, compterTour, jourZurich, joursZurich, messagesDepuis, messagesParJour, noterConnexion } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
 import { optionsAuth } from "@/lib/auth";
-import { baseEssai, compte, T0 } from "./aides";
+import { baseDe, dbEssai, compte, T0 } from "./aides";
 
 // Le compteur de messages (usage_agent) et la dernière connexion (compte_connexion). Le compteur s'écrit après la réponse de
 // l'agent (after de Next.js), sans texte, et une panne du compteur ne fait jamais échouer ni attendre une conversation.
@@ -37,7 +37,7 @@ vi.mock("@copilotkit/runtime/v2", () => ({
 
 let db: DatabaseSync;
 beforeEach(async () => {
-  db = await baseEssai();
+  db = await dbEssai();
   etat.db = db;
   etat.qui = null;
   etat.apres = [];
@@ -192,7 +192,7 @@ describe("la dernière connexion", () => {
   });
 
   it("est notée à chaque session créée par Better Auth (inscription, connexion)", async () => {
-    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    const auth = betterAuth({ ...optionsAuth(baseDe(db)), secret: "secret-des-essais-de-la-console-assez-long" });
     const { user } = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
     const premiere = db.prepare("SELECT derniere FROM compte_connexion WHERE utilisateur = ?").get(user.id) as { derniere: string };
     expect(Date.parse(premiere.derniere)).toBeGreaterThan(Date.now() - 60_000);
@@ -203,7 +203,7 @@ describe("la dernière connexion", () => {
 
   it("une panne de la dernière connexion ne refuse pas la connexion", async () => {
     const erreur = vi.spyOn(console, "error").mockImplementation(() => {});
-    const auth = betterAuth({ ...optionsAuth(db), secret: "secret-des-essais-de-la-console-assez-long" });
+    const auth = betterAuth({ ...optionsAuth(baseDe(db)), secret: "secret-des-essais-de-la-console-assez-long" });
     db.exec("DROP TABLE compte_connexion");
     const r = await auth.api.signUpEmail({ body: { name: "Garage", email: "garage@exemple.test", password: "motdepasse" } });
     expect(r.token).toBeTruthy();

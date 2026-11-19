@@ -8,7 +8,7 @@ import { Preparer } from "@/app/admin/(espace)/clients/[id]/versions/preparer";
 import { gesteDe, GestesVersion } from "@/app/admin/(espace)/clients/[id]/versions/versions";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
-import { baseEssai, membre } from "./aides";
+import { dbEssai, membre } from "./aides";
 
 // L'onglet Versions, appelé comme Next.js le rend, sans réseau (session, base et atelier simulés, un lien est un simple <a>),
 // puis dessiné en HTML. Un externe n'y voit ni modèle par métier ni geste de pilotage ; chaque geste dit son effet.
@@ -93,7 +93,7 @@ function deplier(n: unknown): unknown {
 }
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   simule.appels = [];
   simule.config = CONFIG;
   simule.surClient = {};

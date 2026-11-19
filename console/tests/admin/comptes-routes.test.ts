@@ -4,7 +4,7 @@ import { DELETE as deconnecter } from "@/app/api/admin/comptes/[id]/sessions/rou
 import { DELETE as reactiver, POST as suspendre } from "@/app/api/admin/comptes/[id]/suspension/route";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, compte, membre } from "./aides";
+import { acces, dbEssai, compte, membre } from "./aides";
 
 // Les routes des comptes, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle de
 // l'essai, l'adaptateur de Better Auth est simulé. Le journal note le motif d'une suspension (coupé), rien d'autre.
@@ -46,7 +46,7 @@ function appeler<P>(route: Route<P>, methode: string, params: P, qui: string, co
 const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes.map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail]);
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   etat.appels = [];
   etat.sessionsBloquees = false;
   etat.ecritureBloquee = false;

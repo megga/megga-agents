@@ -6,7 +6,7 @@ import { POST as creerClient } from "@/app/api/admin/clients/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // Le nouveau client et les gestes d'une installation hors Cloudflare, appelés comme Next.js les appelle (session par l'en-tête
 // x-essai-qui, base de l'essai, atelier simulé). Le journal ne garde ni la configuration collée, ni la clé publique.
@@ -56,7 +56,7 @@ beforeEach(async () => {
   simule.enregistrerInstallation.mockResolvedValue({ client: "chalet-essai", cle: "263dfa8b264b31a1" });
   simule.revoquerInstallation.mockResolvedValue({ client: "chalet-essai", revoquee: true });
   simule.proposerImage.mockResolvedValue({ client: "chalet-essai", ordre: 3, version: "0.3.0", image: IMAGE });
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   membre(etat.db, { utilisateur: "chef", role: "superadmin" });
   membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai", "chalet-essai"] });
   membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });

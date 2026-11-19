@@ -1,6 +1,6 @@
 // Les aides des essais de l'admin : un accès de membre fabriqué, la capture d'un refus,
 // et une base en mémoire avec les tables de Better Auth et celles de la console.
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { droitsEffectifs, type Acces, type Perimetre } from "@/lib/admin/acces";
 import { SUPERADMIN, type Droit } from "@/lib/admin/droits";
@@ -8,17 +8,39 @@ import { accesDe, ajouterMembre } from "@/lib/admin/membres";
 import { Refus } from "@/lib/agents";
 import { optionsAuth } from "@/lib/auth";
 import { preparer } from "@/lib/base";
+import type { Base } from "@/lib/donnees/base";
+import { baseVide, moteurParDefaut, type Moteur } from "../moteurs";
 
 /** L'instant des essais. */
 export const T0 = new Date("2026-11-18T10:00:00Z");
 
-/** Une base neuve en mémoire : les tables de Better Auth, puis celles de la console et de l'admin. */
-export async function baseEssai(): Promise<DatabaseSync> {
-  const db = new DatabaseSync(":memory:");
-  const { runMigrations } = await getMigrations(optionsAuth(db));
+/**
+ * Une base neuve du moteur des essais (CONSOLE_ESSAI_MOTEUR, SQLite en mémoire par défaut) : les tables de Better Auth,
+ * puis celles de la console et de l'admin.
+ */
+export async function baseEssai(moteur: Moteur = moteurParDefaut()): Promise<Base> {
+  const b = await baseVide(moteur);
+  const { runMigrations } = await getMigrations(optionsAuth(b));
   await runMigrations();
-  preparer(db);
+  await preparer(b);
+  return b;
+}
+
+const basesDe = new WeakMap<DatabaseSync, Base>();
+
+/** Le temps de la conversion : la connexion SQLite d'une base d'essai, pour les modules pas encore passés à Base. */
+export async function dbEssai(): Promise<DatabaseSync> {
+  const b = await baseEssai("sqlite");
+  const db = b.pourAuth() as DatabaseSync;
+  basesDe.set(db, b);
   return db;
+}
+
+/** La Base d'une connexion rendue par dbEssai. */
+export function baseDe(db: DatabaseSync): Base {
+  const b = basesDe.get(db);
+  if (!b) throw new Error("cette connexion ne vient pas de dbEssai");
+  return b;
 }
 
 /** Un compte de la console (une ligne de la table user de Better Auth). */

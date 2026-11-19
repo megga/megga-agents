@@ -11,7 +11,7 @@ import { lireJournal } from "@/lib/admin/journal";
 import { membreEnCours } from "@/lib/admin/membres";
 import { lireRole, creerRole as creerRoleEnBase } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, compte, membre } from "./aides";
+import { acces, dbEssai, compte, membre } from "./aides";
 
 // Les routes de l'équipe et de l'invitation, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui,
 // la base est celle de l'essai. La garde elle-même a ses essais (garde.test.ts) ; ici, ce que chaque route fait et note.
@@ -38,7 +38,7 @@ function appel<P>(f: Route<P>, methode: string, p: { qui: string; courriel?: str
 const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes;
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   membre(etat.db, { utilisateur: "s", role: "superadmin" });
 });
 

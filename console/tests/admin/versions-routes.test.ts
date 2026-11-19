@@ -7,7 +7,7 @@ import { POST as valider } from "@/app/api/admin/clients/[id]/valider/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // Les routes des versions, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle
 // de l'essai, l'atelier est simulé. Un externe ne prépare que les réglages simples, ne met rien en service, et le journal ne
@@ -71,7 +71,7 @@ beforeEach(async () => {
   simule.depuisGabarit.mockResolvedValue({ ...BROUILLON, gabarit: "immobilier" });
   simule.essai.mockResolvedValue({ version: 2, conversation: "1", reponse: REPONSE });
   simule.activer.mockResolvedValue({ client: "boulangerie-essai", version_en_service: 2, retour: false, annuaire: {} });
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
   membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
   membre(etat.db, { utilisateur: "chef", role: "superadmin" });

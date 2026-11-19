@@ -4,7 +4,7 @@ import { PUT } from "@/app/api/admin/tarifs/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // La route des tarifs, appelée comme Next.js l'appelle : la session vient de l'en-tête x-essai-qui, la base est celle de
 // l'essai, l'atelier est simulé. La garde (droit, origine) a ses essais ailleurs (garde.test.ts, routes.test.ts).
@@ -46,7 +46,7 @@ const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 
 
 beforeEach(async () => {
   reglerTarifs.mockReset();
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   membre(etat.db, { utilisateur: "finance", role: "finance" });
 });
 

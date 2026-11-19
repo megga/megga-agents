@@ -5,7 +5,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DROITS, type Droit } from "@/lib/admin/droits";
 import { GARDE } from "@/lib/admin/garde";
-import { baseEssai, compte, membre, roleVide } from "./aides";
+import { dbEssai, compte, membre, roleVide } from "./aides";
 
 // Toutes les routes de /api/admin passent par garde ou gardeSession : la liste ci-dessous est celle de la carte des fichiers
 // du plan ; une route sur le disque qui n'y est pas, une route qui n'est pas gardée ou gardée par un autre droit, fait échouer
@@ -93,7 +93,7 @@ vi.mock("@/lib/admin/atelier", async (original) => {
 
 beforeEach(async () => {
   appelsAtelier.length = 0;
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   compte(etat.db, { id: "inconnu", courriel: "inconnu@megga.test" });
   membre(etat.db, { utilisateur: "vide", role: roleVide(etat.db) });
   membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai"] });

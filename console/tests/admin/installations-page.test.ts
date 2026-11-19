@@ -9,7 +9,7 @@ import PageClients from "@/app/admin/(espace)/clients/page";
 import PageInstallations from "@/app/admin/(espace)/installations/page";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
-import { baseEssai, membre } from "./aides";
+import { dbEssai, membre } from "./aides";
 
 // Les écrans des installations et le nouveau client, appelés comme Next.js les rend (session, base et atelier simulés, un lien
 // est un simple <a>) : le périmètre borne la liste, les gestes suivent installations.gerer, « Nouveau client » suit
@@ -74,7 +74,7 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 }
 
 beforeEach(async () => {
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   simule.appels = [];
   simule.gabarits = null;
   simule.installations = { installations: [{ client: "chalet-essai", ...BREF }], cle_pilotage: true };

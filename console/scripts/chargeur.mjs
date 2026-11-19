@@ -38,11 +38,20 @@ function avecFormat(r) {
   return chemin.endsWith(".ts") && ici(chemin) ? { ...r, format: "module-typescript" } : r;
 }
 
+/** Un sous-chemin de paquet sans extension (« next/headers », pas « ./x » ni « pg »). */
+const sousCheminNu = (s) => !s.startsWith(".") && !s.startsWith("/") && !s.includes(":") && /^(@[^/]+\/)?[^/]+\/[^.]+$/.test(s);
+
 registerHooks({
   resolve(specifier, context, nextResolve) {
     const voulu = cheminVoulu(specifier, context.parentURL);
     const trouve = voulu && fichier(voulu);
     if (trouve) return avecFormat({ url: pathToFileURL(trouve).href, shortCircuit: true });
-    return avecFormat(nextResolve(specifier, context));
+    try {
+      return avecFormat(nextResolve(specifier, context));
+    } catch (e) {
+      // « next/headers » : un sous-chemin d'un paquet sans table d'exports, que Next et Vitest complètent en .js.
+      if (e?.code !== "ERR_MODULE_NOT_FOUND" || !sousCheminNu(specifier)) throw e;
+      return avecFormat(nextResolve(specifier + ".js", context));
+    }
   },
 });

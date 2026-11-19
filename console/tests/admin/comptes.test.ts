@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -20,8 +20,9 @@ import { compterTour, noterConnexion } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
 import { CHEMINS_ADMIN_FERMES, optionsAuth } from "@/lib/auth";
 import { preparer } from "@/lib/base";
+import { baseSqlite } from "@/lib/donnees/sqlite";
 import { T } from "@/lib/textes";
-import { baseEssai, compte, membre, refusAsync, T0 } from "./aides";
+import { baseDe, dbEssai, compte, membre, refusAsync, T0 } from "./aides";
 
 // Les comptes de la console et leur suspension : la liste, la fiche, les totaux de la vue d'ensemble ; suspendre, réactiver,
 // déconnecter partout, par l'adaptateur interne de Better Auth (ses routes HTTP de l'extension admin restent fermées).
@@ -34,7 +35,7 @@ let appels: unknown[][];
 let ad: AdaptateurComptes;
 
 beforeEach(async () => {
-  db = await baseEssai();
+  db = await dbEssai();
   appels = [];
   ad = {
     updateUser: vi.fn(async (...a: unknown[]) => appels.push(["updateUser", ...a])),
@@ -54,7 +55,7 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
     for (const c of ["/admin/ban-user", "/admin/impersonate-user", "/admin/set-role", "/admin/create-user", "/admin/unban-user", "/admin/list-users"]) {
       expect(CHEMINS_ADMIN_FERMES).toContain(c);
     }
-    expect(optionsAuth(db).disabledPaths).toEqual(CHEMINS_ADMIN_FERMES);
+    expect(optionsAuth(baseDe(db)).disabledPaths).toEqual(CHEMINS_ADMIN_FERMES);
   });
 
   it("ne répondent à personne, même à un superadmin qui serait aussi « admin » pour Better Auth", async () => {
@@ -64,8 +65,8 @@ describe("les routes HTTP de l'extension admin de Better Auth", () => {
         headers: { "content-type": "application/json", origin: "http://localhost:3000", cookie },
         body: JSON.stringify(corps),
       }));
-    const ouverte = betterAuth({ ...optionsAuth(db), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
-    const fermee = betterAuth({ ...optionsAuth(db), secret: SECRET, baseURL: "http://localhost:3000" });
+    const ouverte = betterAuth({ ...optionsAuth(baseDe(db)), disabledPaths: [], secret: SECRET, baseURL: "http://localhost:3000" });
+    const fermee = betterAuth({ ...optionsAuth(baseDe(db)), secret: SECRET, baseURL: "http://localhost:3000" });
     const inscrit = await appeler(fermee, "/sign-up/email", { name: "Chef", email: "chef@megga.test", password: "motdepasse" });
     const chef = ((await inscrit.json()) as { user: { id: string } }).user.id;
     db.prepare("UPDATE \"user\" SET role = 'admin' WHERE id = ?").run(chef);
@@ -201,7 +202,7 @@ describe("suspendre un compte", () => {
 
 describe("avec le vrai Better Auth", () => {
   it("un compte suspendu perd ses sessions, ne se reconnecte plus et lit T.compteSuspendu ; réactivé, il revient", async () => {
-    const auth = betterAuth({ ...optionsAuth(db), secret: SECRET });
+    const auth = betterAuth({ ...optionsAuth(baseDe(db)), secret: SECRET });
     const inscrit = await auth.api.signUpEmail({ body: { name: "Fleuriste", email: "fleurs@exemple.test", password: "motdepasse" }, returnHeaders: true });
     const user = inscrit.response.user;
     const cookie = new Headers({ cookie: (inscrit.headers.get("set-cookie") ?? "").split(";")[0] });
@@ -224,14 +225,15 @@ describe("avec le vrai Better Auth", () => {
   });
 
   it("les migrations ajoutent les colonnes de l'extension à une base qui existait avant elle, sans rien perdre", async () => {
-    const ancienne = new DatabaseSync(":memory:");
-    const sansExtension = { ...optionsAuth(ancienne), plugins: [], disabledPaths: [] };
+    const ancienneBase = baseSqlite(":memory:");
+    const ancienne = ancienneBase.pourAuth() as DatabaseSync;
+    const sansExtension = { ...optionsAuth(ancienneBase), plugins: [], disabledPaths: [] };
     await (await getMigrations(sansExtension)).runMigrations();
-    preparer(ancienne);
+    await preparer(ancienneBase);
     compte(ancienne, { id: "ancien", courriel: "ancien@exemple.test", nom: "Ancien" });
     const colonnes = () => (ancienne.prepare('PRAGMA table_info("user")').all() as { name: string }[]).map((c) => c.name);
     expect(colonnes()).not.toContain("banned");
-    await (await getMigrations(optionsAuth(ancienne))).runMigrations();
+    await (await getMigrations(optionsAuth(ancienneBase))).runMigrations();
     expect(colonnes()).toEqual(expect.arrayContaining(["banned", "banReason", "banExpires", "role"]));
     expect(tous(ancienne, T0)).toMatchObject([{ id: "ancien", entreprise: "Ancien", suspendu: false, motif: null }]);
   });

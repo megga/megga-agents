@@ -7,7 +7,7 @@ import { POST as reprise } from "@/app/api/admin/clients/[id]/reprise/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, baseEssai, membre } from "./aides";
+import { acces, dbEssai, membre } from "./aides";
 
 // La main, les jetons et les clés, appelés comme Next.js les appelle (session par l'en-tête x-essai-qui, base de l'essai,
 // atelier simulé). Un jeton ou une clé n'est que dans la réponse du geste qui le crée : ni au journal, ni dans une erreur.
@@ -54,7 +54,7 @@ beforeEach(async () => {
   simule.retirerJetons.mockResolvedValue({ client: "garage-essai", retires: 2 });
   simule.creerCle.mockResolvedValue({ client: "garage-essai", id: "d15a76f57ee4", logiciel: "caisse", par_minute: 60, cle: CLE });
   simule.retirerCle.mockResolvedValue({ client: "garage-essai", id: "d15a76f57ee4", retiree: true });
-  etat.db = await baseEssai();
+  etat.db = await dbEssai();
   membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
   membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
 });
