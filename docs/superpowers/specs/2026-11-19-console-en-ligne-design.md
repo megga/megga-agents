@@ -2,6 +2,9 @@
 
 Le 19.11.2026. Demande de Thomas : « Installe la console sur le site », puis « Seuls Julien et moi sommes admin pour l'instant ». Thomas rapporte l'accord de Julien le même jour. Rien n'est fusionné ni déployé sans « Fusionne et déploie » de Julien.
 
+**Mise à jour du 19.11.2026, plus tard.** Thomas confirme l'adresse `console.megga.ai` et la base chez Neon. Il décide aussi que la console sera déployée depuis son Mac, sur le compte MEGGA Inc., avec l'accord de Julien, sans attendre la fusion des PR. Partout où ce texte demande le « Fusionne et déploie » de Julien pour la mise en ligne, c'est cette décision qui s'applique ; la fusion des PR reste à Julien. Le plan : `docs/superpowers/plans/2026-11-19-console-en-ligne.md`.
+
+
 Ce travail s'empile sur la PR #65 (la section admin, `docs/superpowers/specs/2026-11-18-admin-design.md`), pas encore relue ni fusionnée.
 
 ## L'intention
