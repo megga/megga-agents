@@ -1,19 +1,21 @@
-import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DELETE as deconnecter } from "@/app/api/admin/comptes/[id]/sessions/route";
 import { DELETE as reactiver, POST as suspendre } from "@/app/api/admin/comptes/[id]/suspension/route";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, compte, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, compte, membre } from "./aides";
 
 // Les routes des comptes, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle de
 // l'essai, l'adaptateur de Better Auth est simulé. Le journal note le motif d'une suspension (coupé), rien d'autre.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, appels: [] as unknown[][], sessionsBloquees: false, ecritureBloquee: false }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, appels: [] as unknown[][], sessionsBloquees: false, ecritureBloquee: false }));
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {
@@ -46,17 +48,17 @@ function appeler<P>(route: Route<P>, methode: string, params: P, qui: string, co
   return route(requete, { params: Promise.resolve(params) });
 }
 
-const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes.map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail]);
+const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes.map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail]);
 
 beforeEach(async () => {
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   etat.appels = [];
   etat.sessionsBloquees = false;
   etat.ecritureBloquee = false;
-  compte(etat.db, { id: "c", courriel: "garage@exemple.test" });
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  await compte(etat.db, { id: "c", courriel: "garage@exemple.test" });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
 });
 
 describe("suspendre un compte", () => {
@@ -64,7 +66,7 @@ describe("suspendre un compte", () => {
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus répétés", autre: "rien" });
     expect([r.status, await r.json()]).toEqual([200, { ok: true }]);
     expect(etat.appels).toEqual([["updateUser", "c", { banned: true, banReason: "Abus répétés", banExpires: null }], ["deleteUserSessions", "c"]]);
-    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus répétés" }]]);
+    expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus répétés" }]]);
   });
 
   it("des sessions qui restent après deux essais : 200, le compte suspendu, l'avertissement, la ligne ok et son détail", async () => {
@@ -73,7 +75,7 @@ describe("suspendre un compte", () => {
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
     expect([r.status, await r.json()]).toEqual([200, { sessionsRestent: true, avertissement: TA.sessionsRestent }]);
     expect(etat.appels.map((x) => x[0])).toEqual(["updateUser", "deleteUserSessions", "deleteUserSessions"]);
-    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus", sessions: "restent" }]]);
+    expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "ok", { motif: "Abus", sessions: "restent" }]]);
     erreur.mockRestore();
   });
 
@@ -83,7 +85,7 @@ describe("suspendre un compte", () => {
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "Abus" });
     expect([r.status, await r.json()]).toEqual([500, { erreur: TA.erreurInterne }]);
     expect(etat.appels).toEqual([]);
-    expect(journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "erreur", { motif: "Abus" }]]);
+    expect(await journal()).toEqual([["exploitant", "comptes.suspendu", "compte:c", "erreur", { motif: "Abus" }]]);
     erreur.mockRestore();
   });
 
@@ -96,13 +98,13 @@ describe("suspendre un compte", () => {
     }
     expect((await appeler(suspendre, "POST", { id: "chef" }, "chef", { motif: "Abus" })).status).toBe(403);
     expect(etat.appels).toEqual([]);
-    expect(journal().at(-1)).toEqual(["exploitant", "comptes.suspendu", "compte:lecteur", "refuse 403", { motif: "Abus" }]);
+    expect((await journal()).at(-1)).toEqual(["exploitant", "comptes.suspendu", "compte:lecteur", "refuse 403", { motif: "Abus" }]);
   });
 
   it("un motif trop long : 400 ; le journal n'en garde qu'un texte court", async () => {
     const r = await appeler(suspendre, "POST", { id: "c" }, "exploitant", { motif: "x".repeat(5000) });
     expect([r.status, await r.json()]).toEqual([400, { erreur: TA.motifManquant }]);
-    const [ligne] = journal();
+    const [ligne] = (await journal());
     expect(ligne[3]).toBe("refuse 400");
     expect((ligne[4] as { motif: string }).motif.length).toBeLessThanOrEqual(200);
   });
@@ -120,14 +122,14 @@ describe("réactiver et déconnecter partout", () => {
     const r = await appeler(reactiver, "DELETE", { id: "c" }, "exploitant", { motif: "à ne pas noter" });
     expect([r.status, await r.json()]).toEqual([200, { ok: true }]);
     expect(etat.appels).toEqual([["updateUser", "c", { banned: false, banReason: null, banExpires: null }]]);
-    expect(journal()).toEqual([["exploitant", "comptes.reactive", "compte:c", "ok", null]]);
+    expect(await journal()).toEqual([["exploitant", "comptes.reactive", "compte:c", "ok", null]]);
   });
 
   it("DELETE sessions appelle deleteUserSessions ; rien du corps au journal", async () => {
     const r = await appeler(deconnecter, "DELETE", { id: "c" }, "exploitant", { secret: "à ne pas noter" });
     expect([r.status, await r.json()]).toEqual([200, { ok: true }]);
     expect(etat.appels).toEqual([["deleteUserSessions", "c"]]);
-    expect(journal()).toEqual([["exploitant", "comptes.deconnecte", "compte:c", "ok", null]]);
+    expect(await journal()).toEqual([["exploitant", "comptes.deconnecte", "compte:c", "ok", null]]);
   });
 
   it("le compte d'un membre, par un superadmin : permis", async () => {

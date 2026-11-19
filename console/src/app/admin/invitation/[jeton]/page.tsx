@@ -1,7 +1,7 @@
 import { connection } from "next/server";
 import { etatInvitation, lireInvitation } from "@/lib/admin/invitations";
 import { session } from "@/lib/auth";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 import { Rejoindre } from "./rejoindre";
 
 // La page d'un lien d'invitation, ouverte à qui n'est pas encore membre (hors de la coquille et de sa garde).
@@ -10,7 +10,7 @@ export default async function PageInvitation({ params }: PageProps<"/admin/invit
   await connection(); // à la requête seulement : une invitation expire à l'heure du moment
   const { jeton } = await params;
   const s = await session();
-  const invitation = lireInvitation(base(), jeton);
+  const invitation = await lireInvitation(await pret(), jeton);
   const etat = etatInvitation(invitation, s?.user.email ?? null);
   return <Rejoindre etat={etat} jeton={jeton} courriel={invitation?.courriel ?? ""} />;
 }

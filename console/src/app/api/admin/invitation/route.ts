@@ -7,5 +7,5 @@ const jetonDe = (corps: unknown) => (corps as { jeton?: unknown } | null)?.jeton
 
 export const POST = gardeSession({ action: "invitations.accepter", detail: (corps) => ({ jeton: jetonDe(corps) }) }, async ({ compte, corps, db }) => {
   const jeton = jetonDe(corps);
-  return { membre: accepterInvitation(db, typeof jeton === "string" ? jeton : "", compte) };
+  return { membre: await accepterInvitation(db, typeof jeton === "string" ? jeton : "", compte) };
 });

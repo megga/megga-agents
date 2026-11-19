@@ -4,7 +4,7 @@ import { Tableau } from "@/components/admin/tableau";
 import { filtresComptesDe, listerComptes, type FiltresComptes } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 
 // Les comptes de la console (comptes.voir, jamais un externe) : entreprise et courriel, inscription, dernière connexion, agents,
 // messages sur 30 jours, état, membre de l'admin ou non. Lu ici, côté serveur, par pages de 50 ; la recherche (?q=) et la page
@@ -25,7 +25,7 @@ const lien = "font-semibold text-ink hover:underline";
 export default async function PageComptes({ searchParams }: PageProps<"/admin/comptes">) {
   await gardePage("comptes.voir");
   const f = filtresComptesDe(await searchParams);
-  const { comptes, pages, page } = listerComptes(base(), f); // page : ramenée à la dernière si l'adresse va trop loin
+  const { comptes, pages, page } = await listerComptes(await pret(), f); // page : ramenée à la dernière si l'adresse va trop loin
   return (
     <>
       <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.comptes}</h1>

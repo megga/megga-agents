@@ -5,7 +5,7 @@ import { Tete } from "@/components/console/tete";
 import { ficheCompte, peutAgirSur } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
 import { TA } from "@/lib/admin/textes";
-import { base, pret } from "@/lib/base";
+import { pret } from "@/lib/base";
 import { metier } from "@/lib/metiers";
 import { GestesCompte } from "./compte";
 
@@ -15,8 +15,8 @@ import { GestesCompte } from "./compte";
 export default async function PageCompte({ params }: PageProps<"/admin/comptes/[id]">) {
   const { id } = await params;
   const a = await gardePage("comptes.voir");
-  const db = base();
-  const f = await ficheCompte(await pret(), id);
+  const db = await pret();
+  const f = await ficheCompte(db, id);
   if (!f) notFound();
   const { compte: c } = f;
   const nom = c.entreprise || c.courriel;
@@ -36,7 +36,7 @@ export default async function PageCompte({ params }: PageProps<"/admin/comptes/[
         </span>
         {c.suspendu && c.motif && <p className="m-0 text-[14px] wrap-anywhere">{TA.motifSuspension(c.motif)}</p>}
       </header>
-      {peutAgirSur(db, a, id) && <GestesCompte id={id} nom={nom} suspendu={c.suspendu} sessions={f.sessions.length} />}
+      {(await peutAgirSur(db, a, id)) && <GestesCompte id={id} nom={nom} suspendu={c.suspendu} sessions={f.sessions.length} />}
       <h2 className="m-0 text-[17px] font-extrabold">{TA.sesAgents}</h2>
       <Tableau
         colonnes={[TA.prenom, TA.metier, TA.creeLe, TA.messages30j]}

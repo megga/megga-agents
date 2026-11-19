@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { Base, Valeur } from "@/lib/donnees/base";
 import type { Acces } from "./acces";
 import { estJour } from "./membres";
 
@@ -58,11 +58,11 @@ function nettoyerCible(cible: string | null): string | null {
 }
 
 /** Nettoie lui-même la cible et le détail ; le détail sérialisé est coupé à DETAIL_MAX caractères. */
-export function noter(db: DatabaseSync, e: Omit<LigneJournal, "id" | "quand">, maintenant = new Date()): void {
+export async function noter(b: Base, e: Omit<LigneJournal, "id" | "quand">, maintenant = new Date()): Promise<void> {
   const detail = nettoyer(e.detail);
   const texte = detail === undefined || detail === null ? null : (JSON.stringify(detail)?.slice(0, DETAIL_MAX) ?? null);
-  db.prepare("INSERT INTO admin_journal (quand, qui, courriel, action, cible, resultat, detail) VALUES (?, ?, ?, ?, ?, ?, ?)")
-    .run(maintenant.toISOString(), e.qui, e.courriel, e.action, nettoyerCible(e.cible), e.resultat, texte);
+  await b.ecrire("INSERT INTO admin_journal (quand, qui, courriel, action, cible, resultat, detail) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    maintenant.toISOString(), e.qui, e.courriel, e.action, nettoyerCible(e.cible), e.resultat, texte);
 }
 
 type Ligne = Omit<LigneJournal, "detail"> & { detail: string | null };
@@ -93,14 +93,18 @@ function debutJour(jour: string): string {
 const lendemain = (jour: string) => new Date(Date.parse(`${jour}T00:00:00Z`) + 24 * 3600 * 1000).toISOString().slice(0, 10);
 
 /** Ce que le membre voit, puis ses filtres. Limité à une liste : ses propres gestes et ceux qui touchent ses clients. */
-function conditions(a: Acces, f: FiltresJournal): { sql: string; valeurs: SQLInputValue[] } {
+function conditions(a: Acces, f: FiltresJournal): { sql: string; valeurs: Valeur[] } {
   const c: string[] = [];
-  const valeurs: SQLInputValue[] = [];
-  const et = (sql: string, ...v: SQLInputValue[]) => {
+  const valeurs: Valeur[] = [];
+  const et = (sql: string, ...v: Valeur[]) => {
     c.push(sql);
     valeurs.push(...v);
   };
-  if (a.perimetre !== "tous") et("(qui = ? OR cible IN (SELECT 'client:' || value FROM json_each(?)))", a.utilisateur, JSON.stringify(a.perimetre));
+  if (a.perimetre !== "tous") {
+    const cibles = a.perimetre.map((client) => `client:${client}`);
+    if (cibles.length) et(`(qui = ? OR cible IN (${cibles.map(() => "?").join(", ")}))`, a.utilisateur, ...cibles);
+    else et("qui = ?", a.utilisateur);
+  }
   if (f.membre) et("qui = ?", f.membre);
   if (f.action) et("action = ?", f.action);
   if (f.client) et("cible = ?", `client:${f.client}`);
@@ -121,14 +125,13 @@ function detailLu(json: string | null): unknown {
 }
 
 /** Le plus récent d'abord, par pages de LIGNES_PAR_PAGE ; une page demandée trop loin est ramenée à la dernière (page). */
-export function lireJournal(db: DatabaseSync, a: Acces, f: FiltresJournal): { lignes: LigneJournal[]; pages: number; page: number } {
+export async function lireJournal(b: Base, a: Acces, f: FiltresJournal): Promise<{ lignes: LigneJournal[]; pages: number; page: number }> {
   const { sql, valeurs } = conditions(a, f);
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM admin_journal ${sql}`).get(...valeurs) as { n: number }).n;
+  const total = (await b.un<{ n: number }>(`SELECT COUNT(*) AS n FROM admin_journal ${sql}`, ...valeurs))!.n;
   const pages = Math.max(1, Math.ceil(total / LIGNES_PAR_PAGE));
   const page = Math.min(f.page, pages);
-  const lignes = db
-    .prepare(`SELECT * FROM admin_journal ${sql} ORDER BY quand DESC, id DESC LIMIT ? OFFSET ?`)
-    .all(...valeurs, LIGNES_PAR_PAGE, (page - 1) * LIGNES_PAR_PAGE) as Ligne[];
+  const lignes = await b.tous<Ligne>(`SELECT * FROM admin_journal ${sql} ORDER BY quand DESC, id DESC LIMIT ? OFFSET ?`,
+    ...valeurs, LIGNES_PAR_PAGE, (page - 1) * LIGNES_PAR_PAGE);
   return { lignes: lignes.map((l) => ({ ...l, detail: detailLu(l.detail) })), pages, page };
 }
 

@@ -3,17 +3,17 @@ import { gardePage } from "@/lib/admin/garde";
 import { invitationsEnAttente } from "@/lib/admin/invitations";
 import { listerRoles } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 import { OngletsEquipe } from "../onglets";
 import { Invitations, type InvitationVue } from "./invitations";
 
 // Les invitations : en créer une (son lien n'est montré qu'une fois), voir celles en attente, en retirer.
 export default async function PageInvitations() {
   const a = await gardePage("equipe.gerer");
-  const db = base();
-  const roles = listerRoles(db);
+  const db = await pret();
+  const roles = await listerRoles(db);
   const donnables = roles.filter((r) => peutDonnerRole(a, r));
-  const invitations: InvitationVue[] = invitationsEnAttente(db).map((i) => {
+  const invitations: InvitationVue[] = (await invitationsEnAttente(db)).map((i) => {
     const role = roles.find((r) => r.id === i.role);
     return {
       id: i.id,

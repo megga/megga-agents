@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as proposerImage } from "@/app/api/admin/clients/[id]/installation/image/route";
 import { DELETE as revoquer, PUT as enregistrer } from "@/app/api/admin/clients/[id]/installation/route";
@@ -6,16 +5,19 @@ import { POST as creerClient } from "@/app/api/admin/clients/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, membre } from "./aides";
 
 // Le nouveau client et les gestes d'une installation hors Cloudflare, appelés comme Next.js les appelle (session par l'en-tête
 // x-essai-qui, base de l'essai, atelier simulé). Le journal ne garde ni la configuration collée, ni la clé publique.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base }));
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {
@@ -49,8 +51,8 @@ function appeler<P>(route: Route<P>, methode: string, params: P, qui: string, co
 }
 
 const CHALET = { id: "chalet-essai" };
-const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes;
-const tableJournal = () => JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all());
+const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes;
+const tableJournal = async () => JSON.stringify((await etat.db.tous("SELECT * FROM admin_journal")));
 
 beforeEach(async () => {
   for (const f of Object.values(simule)) f.mockReset();
@@ -59,11 +61,11 @@ beforeEach(async () => {
   simule.enregistrerInstallation.mockResolvedValue({ client: "chalet-essai", cle: "263dfa8b264b31a1" });
   simule.revoquerInstallation.mockResolvedValue({ client: "chalet-essai", revoquee: true });
   simule.proposerImage.mockResolvedValue({ client: "chalet-essai", ordre: 3, version: "0.3.0", image: IMAGE });
-  etat.db = await dbEssai();
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
-  membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai", "chalet-essai"] });
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["chalet-essai"] });
+  etat.db = await baseEssai();
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  await membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai", "chalet-essai"] });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["chalet-essai"] });
 });
 
 describe("créer un client", () => {
@@ -71,14 +73,14 @@ describe("créer un client", () => {
     const r = await appeler(creerClient, "POST", {}, "limite", NOUVEAU);
     expect([r.status, await r.json()]).toEqual([403, { erreur: TA.creationPerimetre }]);
     expect(simule.creerClient).not.toHaveBeenCalled();
-    expect(journal().map((l) => [l.qui, l.action, l.cible, l.resultat])).toEqual([["limite", "clients.creer", "client:nouveau-essai", "refuse 403"]]);
+    expect((await journal()).map((l) => [l.qui, l.action, l.cible, l.resultat])).toEqual([["limite", "clients.creer", "client:nouveau-essai", "refuse 403"]]);
   });
 
   it("un superadmin, d'après un modèle par métier : 201, la ligne clients.creer de cible client:nouveau-essai", async () => {
     const r = await appeler(creerClient, "POST", {}, "chef", { ...NOUVEAU, autre: "x" });
     expect([r.status, await r.json()]).toEqual([201, { client: "nouveau-essai", version: 1, etat: "brouillon" }]);
     expect(simule.creerClient.mock.calls).toEqual([[NOUVEAU]]);
-    expect(journal().map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect((await journal()).map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["clients.creer", "client:nouveau-essai", "ok", { id: "nouveau-essai", entreprise: "Nouveau des Essais", zone: "europe", gabarit: "generaliste" }],
     ]);
   });
@@ -87,8 +89,8 @@ describe("créer un client", () => {
     const r = await appeler(creerClient, "POST", {}, "exploitant", { config: CONFIG });
     expect(r.status).toBe(201);
     expect(simule.creerClient.mock.calls).toEqual([[{ config: CONFIG }]]);
-    expect(journal().map((l) => [l.cible, l.detail])).toEqual([["client:colle-essai", { id: "colle-essai", entreprise: "Collé des Essais", zone: "client", gabarit: null }]]);
-    expect(tableJournal()).not.toContain("consignes collées");
+    expect((await journal()).map((l) => [l.cible, l.detail])).toEqual([["client:colle-essai", { id: "colle-essai", entreprise: "Collé des Essais", zone: "client", gabarit: null }]]);
+    expect(await tableJournal()).not.toContain("consignes collées");
   });
 
   it("un refus de l'atelier rend ses messages champ par champ ; un corps qui n'est pas un objet : 400 avant lui", async () => {
@@ -102,7 +104,7 @@ describe("créer un client", () => {
 
   it("une cible mal formée n'entre pas au journal telle quelle", async () => {
     await appeler(creerClient, "POST", {}, "chef", { ...NOUVEAU, client: { ...NOUVEAU.client, id: "../Mauvais" } });
-    expect(journal()[0].cible).toBeNull();
+    expect((await journal())[0].cible).toBeNull();
   });
 });
 
@@ -111,21 +113,21 @@ describe("l'installation d'un client", () => {
     const r = await appeler(enregistrer, "PUT", CHALET, "exploitant", { cle_publique: CLE_PUBLIQUE, autre: 1 });
     expect([r.status, await r.json()]).toEqual([200, { client: "chalet-essai", cle: "263dfa8b264b31a1" }]);
     expect(simule.enregistrerInstallation.mock.calls).toEqual([["chalet-essai", { cle_publique: CLE_PUBLIQUE }]]);
-    expect(journal().map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([["installation.enregistree", "client:chalet-essai", "ok", null]]);
-    expect(tableJournal()).not.toContain("cleDePilotage");
+    expect((await journal()).map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([["installation.enregistree", "client:chalet-essai", "ok", null]]);
+    expect(await tableJournal()).not.toContain("cleDePilotage");
   });
 
   it("révoquer la clé ; la réponse de l'atelier", async () => {
     const r = await appeler(revoquer, "DELETE", CHALET, "exploitant");
     expect([r.status, await r.json()]).toEqual([200, { client: "chalet-essai", revoquee: true }]);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["installation.revoquee", "ok", null]]);
+    expect((await journal()).map((l) => [l.action, l.resultat, l.detail])).toEqual([["installation.revoquee", "ok", null]]);
   });
 
   it("proposer une image : la version et l'image partent, et se notent", async () => {
     const r = await appeler(proposerImage, "POST", CHALET, "exploitant", { version: "0.3.0", image: IMAGE, ordre: 9 });
     expect([r.status, await r.json()]).toEqual([201, { client: "chalet-essai", ordre: 3, version: "0.3.0", image: IMAGE }]);
     expect(simule.proposerImage.mock.calls).toEqual([["chalet-essai", { version: "0.3.0", image: IMAGE }]]);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["installation.image", "ok", { version: "0.3.0", image: IMAGE }]]);
+    expect((await journal()).map((l) => [l.action, l.resultat, l.detail])).toEqual([["installation.image", "ok", { version: "0.3.0", image: IMAGE }]]);
   });
 
   it("une image de mauvaise forme : la console ne juge pas, l'atelier le fait et sa phrase est rendue", async () => {
@@ -134,7 +136,7 @@ describe("l'installation d'un client", () => {
     const r = await appeler(proposerImage, "POST", CHALET, "exploitant", { version: "v3", image: "docker.io/autre:latest" });
     expect([r.status, await r.json()]).toEqual([400, { erreur: phrase }]);
     expect(simule.proposerImage.mock.calls).toEqual([["chalet-essai", { version: "v3", image: "docker.io/autre:latest" }]]);
-    expect(journal().map((l) => [l.resultat, l.detail])).toEqual([["refuse 400", { version: "v3", image: "docker.io/autre:latest" }]]);
+    expect((await journal()).map((l) => [l.resultat, l.detail])).toEqual([["refuse 400", { version: "v3", image: "docker.io/autre:latest" }]]);
   });
 
   it("un externe n'enregistre, ne révoque ni ne propose rien, même d'un corps écrit à la main : 403", async () => {

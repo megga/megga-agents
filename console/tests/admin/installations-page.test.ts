@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,18 +8,21 @@ import PageClients from "@/app/admin/(espace)/clients/page";
 import PageInstallations from "@/app/admin/(espace)/installations/page";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
-import { dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { baseEssai, membre } from "./aides";
 
 // Les écrans des installations et le nouveau client, appelés comme Next.js les rend (session, base et atelier simulés, un lien
 // est un simple <a>) : le périmètre borne la liste, les gestes suivent installations.gerer, « Nouveau client » suit
 // peutCreerClient.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as string | null }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -77,16 +79,16 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 }
 
 beforeEach(async () => {
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   simule.appels = [];
   simule.gabarits = null;
   simule.installations = { installations: [{ client: "chalet-essai", ...BREF }], cle_pilotage: true };
   simule.installation = { client: "chalet-essai", version_en_service: 2, installation: BREF,
     ordres: [{ numero: 2, genre: "config", version: 2, etat: "applique", detail: "", cree: 1_800_000_000, expire: 1_800_600_000, maj: 1_800_000_100 }],
     journal: [{ quand: 1_800_000_100, numero: 2, evenement: "applique", detail: "selon l'installation" }] };
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
-  membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai"] });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  await membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai"] });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
   etat.qui = "chef";
 });
 

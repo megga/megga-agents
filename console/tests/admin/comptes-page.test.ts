@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { cloneElement, createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,18 +13,21 @@ import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
 import { compterTour } from "@/lib/admin/usage";
 import { creer } from "@/lib/agents";
-import { acces, baseDe, compte, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, compte, membre } from "./aides";
 
 // L'écran Comptes, la fiche d'un compte et le bloc Console de la vue d'ensemble, appelés comme Next.js les rend (session, base
 // et atelier simulés, un lien est un simple <a>), puis dessinés en HTML. Sans comptes.voir, ni courriel de client ni total ;
 // les gestes seulement là où la bibliothèque les laissera passer.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null, appels: [] as string[] }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as string | null, appels: [] as string[] }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -76,24 +78,23 @@ const fiche = (id: string) => PageCompte({ params: Promise.resolve({ id }) } as 
 const vue = () => VueEnsemble({ searchParams: Promise.resolve({ jours: "7" }) } as never);
 
 beforeEach(async () => {
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   etat.appels = [];
   const s = acces({ superadmin: true });
-  const clientsSeuls = creerRole(etat.db, s, { nom: "Clients seuls", droits: ["clients.voir"] });
-  const comptesSeuls = creerRole(etat.db, s, { nom: "Comptes seuls", droits: ["comptes.voir"] });
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
-  membre(etat.db, { utilisateur: "suiveur", role: clientsSeuls.id });
-  membre(etat.db, { utilisateur: "compteur", role: comptesSeuls.id });
-  membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
-  compte(etat.db, { id: "c", courriel: "garage@exemple.test", nom: "Garage du Lac" });
-  const a = await creer(baseDe(etat.db), "c", { prenom: "Lou", metier: "garage" });
-  await compterTour(baseDe(etat.db), a.id);
-  await compterTour(baseDe(etat.db), a.id);
-  etat.db.prepare("INSERT INTO session (id, expiresAt, token, createdAt, updatedAt, ipAddress, userAgent, userId) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-    .run("s1", new Date(Date.now() + 86_400_000).toISOString(), "jeton-de-session", new Date().toISOString(), new Date().toISOString(),
-      "203.0.113.42", "Mozilla/5.0 Essai", "c");
+  const clientsSeuls = await creerRole(etat.db, s, { nom: "Clients seuls", droits: ["clients.voir"] });
+  const comptesSeuls = await creerRole(etat.db, s, { nom: "Comptes seuls", droits: ["comptes.voir"] });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  await membre(etat.db, { utilisateur: "suiveur", role: clientsSeuls.id });
+  await membre(etat.db, { utilisateur: "compteur", role: comptesSeuls.id });
+  await membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
+  await compte(etat.db, { id: "c", courriel: "garage@exemple.test", nom: "Garage du Lac" });
+  const a = await creer(etat.db, "c", { prenom: "Lou", metier: "garage" });
+  await compterTour(etat.db, a.id);
+  await compterTour(etat.db, a.id);
+  (await etat.db.ecrire("INSERT INTO session (id, \"expiresAt\", token, \"createdAt\", \"updatedAt\", \"ipAddress\", \"userAgent\", \"userId\") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", "s1", new Date(Date.now() + 86_400_000).toISOString(), "jeton-de-session", new Date().toISOString(), new Date().toISOString(),
+      "203.0.113.42", "Mozilla/5.0 Essai", "c"));
 });
 
 describe("l'écran Comptes", () => {
@@ -110,7 +111,7 @@ describe("l'écran Comptes", () => {
 
   it("la recherche (?q=) et les pages (?page=) passent par l'adresse ; une page trop loin montre la dernière", async () => {
     etat.qui = "lecteur";
-    for (let i = 0; i < 55; i++) compte(etat.db, { id: `n${i}`, courriel: `client${i}@exemple.test`, nom: `Fleuriste ${i}` });
+    for (let i = 0; i < 55; i++) (await compte(etat.db, { id: `n${i}`, courriel: `client${i}@exemple.test`, nom: `Fleuriste ${i}` }));
     const h = await html(await liste({ q: "lac" }));
     expect(h).toContain("Garage du Lac");
     expect(h).not.toContain("Fleuriste");
@@ -157,7 +158,7 @@ describe("la fiche d'un compte", () => {
   });
 
   it("un compte suspendu : son état et son motif ; réactiver plutôt que suspendre", async () => {
-    etat.db.prepare("UPDATE \"user\" SET banned = 1, banReason = 'Abus' WHERE id = 'c'").run();
+    await etat.db.ecrire("UPDATE \"user\" SET banned = 1, \"banReason\" = 'Abus' WHERE id = 'c'");
     etat.qui = "exploitant";
     const arbre = await fiche("c");
     expect(elements(arbre, GestesCompte)[0].props).toMatchObject({ suspendu: true });
@@ -171,13 +172,13 @@ describe("les gestes sur un compte", () => {
   /** Le bouton qui porte ce libellé, tel que le navigateur le reçoit. */
   const bouton = (h: string, texte: string) => new RegExp(`<button[^>]*>${texte}</button>`).exec(h)?.[0] ?? "";
 
-  it("« Suspendre » est inactif tant que le motif est vide ; « Déconnecter partout » ne l'est pas", () => {
+  it("« Suspendre » est inactif tant que le motif est vide ; « Déconnecter partout » ne l'est pas", async () => {
     const h = renderToStaticMarkup(createElement(GestesCompte, { id: "c", nom: "Garage du Lac", suspendu: false, sessions: 1 }));
     expect(bouton(h, TA.suspendre)).toMatch(/\sdisabled=""/);
     expect(bouton(h, TA.deconnecterPartout)).not.toMatch(/\sdisabled=""/);
   });
 
-  it("un compte suspendu : « Réactiver », actif, sans motif", () => {
+  it("un compte suspendu : « Réactiver », actif, sans motif", async () => {
     const h = renderToStaticMarkup(createElement(GestesCompte, { id: "c", nom: "Garage du Lac", suspendu: true, sessions: 0 }));
     expect(bouton(h, TA.reactiver)).not.toMatch(/\sdisabled=""/);
     expect(h).not.toContain(TA.motif + "<");
@@ -225,7 +226,7 @@ describe("le bloc Console de la vue d'ensemble", () => {
 describe("le Journal, qui note les gestes sur les comptes", () => {
   it("replie toutes ses colonnes sauf la première dans un cadre étroit, Détail compris, sans largeur fixe", async () => {
     etat.qui = "chef";
-    noter(etat.db, { qui: "chef", courriel: "chef@megga.test", action: "comptes.suspendu", cible: "compte:c", resultat: "ok",
+    await noter(etat.db, { qui: "chef", courriel: "chef@megga.test", action: "comptes.suspendu", cible: "compte:c", resultat: "ok",
       detail: { motif: "Un motif assez long pour remplir la colonne du détail du journal" } });
     const arbre = await PageJournal({ searchParams: Promise.resolve({}) } as never);
     const [tableau] = elements(arbre, Tableau);
@@ -236,7 +237,7 @@ describe("le Journal, qui note les gestes sur les comptes", () => {
 });
 
 describe("les barres", () => {
-  it("une barre par jour et par légende, à l'échelle de sa légende, le nombre exact lisible", () => {
+  it("une barre par jour et par légende, à l'échelle de sa légende, le nombre exact lisible", async () => {
     const h = renderToStaticMarkup(createElement(Barres, {
       jours: [{ jour: "2026-11-17", valeurs: [0, 4] }, { jour: "2026-11-18", valeurs: [2, 8] }],
       legendes: ["Inscriptions", "Messages"],

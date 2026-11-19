@@ -5,7 +5,7 @@ import { gardePage } from "@/lib/admin/garde";
 import { noter } from "@/lib/admin/journal";
 import { CLE_PERSONNE, clePersonne } from "@/lib/admin/personnes";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 
 // Le fil d'une personne (conversations.lire), en lecture seule : ses derniers messages en bulles, comme la console, reçus à
 // gauche, envoyés par l'agent à droite. L'adresse porte la clé opaque de la personne (personnes.ts), jamais son numéro :
@@ -51,7 +51,7 @@ export default async function PageFil({ params }: PageProps<"/admin/clients/[id]
   const personne = liste.conversations.find((p) => clePersonne(id, p.personne) === cle)?.personne;
   if (personne === undefined) notFound();
   const r = await ouRefus(atelier.echanges(id, personne));
-  noter(base(), { qui: a.utilisateur, courriel: a.courriel, action: "conversations.lire", cible: `client:${id}`,
+  await noter(await pret(), { qui: a.utilisateur, courriel: a.courriel, action: "conversations.lire", cible: `client:${id}`,
     resultat: r instanceof RefusChamps ? `refuse ${r.statut}` : "ok", detail: { personne } });
   return (
     <>

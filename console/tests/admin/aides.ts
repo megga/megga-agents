@@ -26,23 +26,6 @@ export async function baseEssai(moteur: Moteur = moteurParDefaut()): Promise<Bas
   return b;
 }
 
-const basesDe = new WeakMap<DatabaseSync, Base>();
-
-/** Le temps de la conversion : la connexion SQLite d'une base d'essai, pour les modules pas encore passés à Base. */
-export async function dbEssai(): Promise<DatabaseSync> {
-  const b = await baseEssai("sqlite");
-  const db = b.pourAuth() as DatabaseSync;
-  basesDe.set(db, b);
-  return db;
-}
-
-/** La Base d'une connexion rendue par dbEssai. */
-export function baseDe(db: DatabaseSync): Base {
-  const b = basesDe.get(db);
-  if (!b) throw new Error("cette connexion ne vient pas de dbEssai");
-  return b;
-}
-
 /** Les colonnes d'une table, dans leur ordre, sous chaque moteur. */
 export async function colonnes(b: Base, table: string): Promise<string[]> {
   const lignes = b.dialecte === "postgres"
@@ -55,29 +38,35 @@ export async function colonnes(b: Base, table: string): Promise<string[]> {
 }
 
 /** Un compte de la console (une ligne de la table user de Better Auth). */
-export function compte(db: DatabaseSync, c: { id: string; courriel: string; nom?: string; creeLe?: string }): void {
+export async function compte(b: Base, c: { id: string; courriel: string; nom?: string; creeLe?: string }): Promise<void> {
   const quand = c.creeLe ?? T0.toISOString();
-  db.prepare('INSERT INTO "user" (id, name, email, emailVerified, createdAt, updatedAt) VALUES (?, ?, ?, 0, ?, ?)')
-    .run(c.id, c.nom ?? c.id.toUpperCase(), c.courriel, quand, quand);
+  await b.ecrire('INSERT INTO "user" (id, name, email, "emailVerified", "createdAt", "updatedAt") VALUES (?, ?, ?, ?, ?, ?)',
+    c.id, c.nom ?? c.id.toUpperCase(), c.courriel, false, quand, quand);
 }
 
 /** Un membre de l'admin et son compte (créé s'il manque) ; rend son accès à T0. */
-export function membre(db: DatabaseSync, m: { utilisateur: string; role: string; externe?: boolean; perimetre?: Perimetre; finAcces?: string | null }): Acces {
+export async function membre(
+  b: Base,
+  m: { utilisateur: string; role: string; externe?: boolean; perimetre?: Perimetre; finAcces?: string | null },
+): Promise<Acces> {
   const courriel = `${m.utilisateur}@megga.test`;
-  if (!db.prepare('SELECT 1 FROM "user" WHERE id = ?').get(m.utilisateur)) compte(db, { id: m.utilisateur, courriel });
-  ajouterMembre(db, { utilisateur: m.utilisateur, role: m.role, externe: m.externe ?? false, perimetre: m.perimetre ?? "tous",
+  if (!(await b.un('SELECT 1 AS n FROM "user" WHERE id = ?', m.utilisateur))) await compte(b, { id: m.utilisateur, courriel });
+  await ajouterMembre(b, { utilisateur: m.utilisateur, role: m.role, externe: m.externe ?? false, perimetre: m.perimetre ?? "tous",
     finAcces: m.finAcces ?? null, ajoutePar: null }, T0);
-  const a = accesDe(db, { id: m.utilisateur, email: courriel, name: m.utilisateur.toUpperCase() }, T0);
+  const a = await accesDe(b, { id: m.utilisateur, email: courriel, name: m.utilisateur.toUpperCase() }, T0);
   if (!a) throw new Error(`le membre ${m.utilisateur} n'est pas en cours à T0`);
   return a;
 }
 
 /** Un rôle sans aucun droit ; rend son identifiant. */
-export function roleVide(db: DatabaseSync): string {
-  db.prepare("INSERT OR IGNORE INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES ('vide', 'Vide', '', '[]', 0, ?, ?)")
-    .run(T0.toISOString(), T0.toISOString());
+export async function roleVide(b: Base): Promise<string> {
+  await b.ecrire("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES ('vide', 'Vide', '', '[]', 0, ?, ?) ON CONFLICT DO NOTHING",
+    T0.toISOString(), T0.toISOString());
   return "vide";
 }
+
+/** Le temps de la conversion : la connexion SQLite d'une base d'essai, pour les modules pas encore passés à Base. */
+export const sqlite = (b: Base) => b.pourAuth() as DatabaseSync;
 
 /** Un accès de membre, sans base : les droits passent par droitsEffectifs (plafond d'un externe compris). */
 export function acces(p: { utilisateur?: string; role?: string; droits?: readonly Droit[]; externe?: boolean; superadmin?: boolean; perimetre?: Perimetre } = {}): Acces {

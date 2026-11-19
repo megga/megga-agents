@@ -5,6 +5,6 @@ import { retirerInvitation } from "@/lib/admin/invitations";
 export const DELETE = garde(
   { droit: "equipe.gerer", action: "invitations.retirer", cible: (p: { id: string }) => `invitation:${p.id}` },
   async ({ acces, params, db }) => {
-    retirerInvitation(db, acces, params.id);
+    await retirerInvitation(db, acces, params.id);
   },
 );

@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,17 +6,20 @@ import PageAcces from "@/app/admin/(espace)/clients/[id]/acces/page";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { creerRole } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, membre } from "./aides";
 
 // L'onglet Accès, appelé comme Next.js le rend (session, base et atelier simulés) : chaque bloc suit son droit, un externe
 // n'y entre pas, et la liste des clés ne porte que ce que l'écran montre.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as string | null }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -61,15 +63,15 @@ function elements(n: unknown, type: unknown): ReactElement<Record<string, unknow
 }
 
 beforeEach(async () => {
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   simule.appels = [];
   simule.cles = { client: "garage-essai", cles: [{ id: "d15a76f57ee4", logiciel: "caisse", par_minute: 30, cree: 1_800_000_000, retiree: null,
     empreinte: "ne-doit-pas-sortir" }] };
-  const pilote = creerRole(etat.db, acces({ superadmin: true }), { nom: "Pilote", droits: ["clients.voir", "clients.piloter"] });
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "pilote", role: pilote.id });
-  membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  const pilote = await creerRole(etat.db, acces({ superadmin: true }), { nom: "Pilote", droits: ["clients.voir", "clients.piloter"] });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "pilote", role: pilote.id });
+  await membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
   etat.qui = "exploitant";
 });
 

@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as activer } from "@/app/api/admin/clients/[id]/versions/[numero]/activer/route";
 import { POST as essayer } from "@/app/api/admin/clients/[id]/versions/[numero]/essai/route";
@@ -7,17 +6,20 @@ import { POST as valider } from "@/app/api/admin/clients/[id]/valider/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, membre } from "./aides";
 
 // Les routes des versions, appelées comme Next.js les appelle : la session vient de l'en-tête x-essai-qui, la base est celle
 // de l'essai, l'atelier est simulé. Un externe ne prépare que les réglages simples, ne met rien en service, et le journal ne
 // garde ni la configuration, ni les consignes, ni le texte d'un essai.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base }));
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {
@@ -60,8 +62,8 @@ function appeler<P>(route: Route<P>, params: P, qui: string, corps?: unknown) {
   return route(requete, { params: Promise.resolve(params) });
 }
 
-const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes;
-const tableJournal = () => JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all());
+const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes;
+const tableJournal = async () => JSON.stringify((await etat.db.tous("SELECT * FROM admin_journal")));
 const ecritures = () => [simule.valider, simule.ajouterVersion, simule.depuisGabarit, simule.essai, simule.activer].filter((f) => f.mock.calls.length);
 
 beforeEach(async () => {
@@ -74,10 +76,10 @@ beforeEach(async () => {
   simule.depuisGabarit.mockResolvedValue({ ...BROUILLON, gabarit: "immobilier" });
   simule.essai.mockResolvedValue({ version: 2, conversation: "1", reponse: REPONSE });
   simule.activer.mockResolvedValue({ client: "boulangerie-essai", version_en_service: 2, retour: false, annuaire: {} });
-  etat.db = await dbEssai();
-  membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  etat.db = await baseEssai();
+  await membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
 });
 
 describe("préparer une version", () => {
@@ -85,10 +87,10 @@ describe("préparer une version", () => {
     const r = await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { consignes: "Mes consignes à moi" } });
     expect([r.status, await r.json()]).toEqual([403, { erreur: TA.reglagesReserves("consignes") }]);
     expect(ecritures()).toEqual([]);
-    expect(journal().map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect((await journal()).map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["invite", "versions.preparer", "client:garage-essai", "refuse 403", { base: null, changements: ["consignes"] }],
     ]);
-    expect(tableJournal()).not.toContain("Mes consignes");
+    expect(await tableJournal()).not.toContain("Mes consignes");
   });
 
   it("un externe ne prépare pas d'après un modèle par métier, ne force rien, ne règle ni le numéro ni les modèles", async () => {
@@ -104,7 +106,7 @@ describe("préparer une version", () => {
     expect([r.status, await r.json()]).toEqual([201, BROUILLON]);
     expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 2, changements: { voix: { voix: "v1" } } }]]);
     expect(simule.version.mock.calls).toEqual([["garage-essai", 2]]);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["versions.preparer", "ok", { base: 2, changements: ["voix"] }]]);
+    expect((await journal()).map((l) => [l.action, l.resultat, l.detail])).toEqual([["versions.preparer", "ok", { base: 2, changements: ["voix"] }]]);
   });
 
   it("un externe qui nomme une base ancienne (d'autres consignes de MEGGA) : 403, l'atelier n'est pas appelé", async () => {
@@ -148,9 +150,9 @@ describe("préparer une version", () => {
     await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
     expect(simule.ajouterVersion.mock.calls).toEqual([["garage-essai", { base: 1, changements }], ["garage-essai", { base: 3, changements: { ton: "x" } }]]);
     expect([simule.version.mock.calls, simule.catalogue.mock.calls]).toEqual([[], []]);
-    expect(journal().map((l) => l.detail)).toEqual([{ base: 3, changements: ["ton"] }, { base: 1, changements: ["consignes", "whatsapp"] },
+    expect((await journal()).map((l) => l.detail)).toEqual([{ base: 3, changements: ["ton"] }, { base: 1, changements: ["consignes", "whatsapp"] },
       { base: 3, gabarit: "immobilier" }]);
-    expect(tableJournal()).not.toContain("Consignes sur mesure");
+    expect(await tableJournal()).not.toContain("Consignes sur mesure");
   });
 
   it("un membre interne qui nomme une base qui n'est pas un numéro : 400, rien ne part", async () => {
@@ -166,7 +168,7 @@ describe("préparer une version", () => {
     await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
     await appeler(preparer, { id: "garage-essai" }, "invite", { base: null, changements: { ton: "y" } });
     await appeler(preparer, { id: "garage-essai" }, "invite", { base: 1, changements: { ton: "z" } });
-    expect(journal().map((l) => [l.qui, l.resultat, l.detail]).reverse()).toEqual([
+    expect((await journal()).map((l) => [l.qui, l.resultat, l.detail]).reverse()).toEqual([
       ["exploitant", "refuse 422", { base: 3, changements: ["ton"] }],
       ["invite", "ok", { base: 2, changements: ["ton"] }],
       ["invite", "refuse 403", { base: 1, changements: ["ton"] }],
@@ -176,7 +178,7 @@ describe("préparer une version", () => {
   it("dans la table admin_journal, sans base nommée : la base réellement envoyée (la dernière pour un interne, celle en service pour un externe)", async () => {
     await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { ton: "x" } });
     await appeler(preparer, { id: "garage-essai" }, "invite", { changements: { ton: "y" } });
-    const lignes = (etat.db.prepare("SELECT qui, action, resultat, detail FROM admin_journal ORDER BY id").all() as
+    const lignes = ((await etat.db.tous("SELECT qui, action, resultat, detail FROM admin_journal ORDER BY id")) as
       { qui: string; action: string; resultat: string; detail: string }[]).map((l) => ({ ...l, detail: JSON.parse(l.detail) }));
     expect(lignes).toEqual([
       { qui: "exploitant", action: "versions.preparer", resultat: "ok", detail: { base: 3, changements: ["ton"] } },
@@ -190,7 +192,7 @@ describe("préparer une version", () => {
     simule.ajouterVersion.mockRejectedValue(new RefusChamps(422, "configuration invalide", champs));
     const r = await appeler(preparer, { id: "garage-essai" }, "exploitant", { changements: { nom_agent: "x".repeat(41) } });
     expect([r.status, await r.json()]).toEqual([422, { erreur: "configuration invalide", champs }]);
-    expect(journal().map((l) => l.resultat)).toEqual(["refuse 422"]);
+    expect((await journal()).map((l) => l.resultat)).toEqual(["refuse 422"]);
   });
 });
 
@@ -204,7 +206,7 @@ describe("valider des changements", () => {
     await appeler(valider, { id: "garage-essai" }, "exploitant", { changements: { consignes: CONSIGNES } });
     expect(simule.valider.mock.calls[1]).toEqual(["garage-essai", { base: 3, changements: { consignes: CONSIGNES } }]);
     expect(simule.valider).toHaveBeenCalledTimes(2);
-    expect(journal()).toEqual([]);
+    expect(await journal()).toEqual([]);
   });
 });
 
@@ -213,11 +215,11 @@ describe("essayer une version", () => {
     const r = await appeler(essayer, { id: "garage-essai", numero: "2" }, "invite", { message: MESSAGE, role: "visiteur", conversation: "abc", forcer: true });
     expect([r.status, await r.json()]).toEqual([200, { version: 2, conversation: "1", reponse: REPONSE }]);
     expect(simule.essai.mock.calls).toEqual([["garage-essai", 2, { message: MESSAGE, conversation: "abc", role: "visiteur" }]]);
-    expect(journal().map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect((await journal()).map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["invite", "versions.essayer", "client:garage-essai", "ok", { version: 2, role: "visiteur" }],
     ]);
-    expect(tableJournal()).not.toContain("message d'essai");
-    expect(tableJournal()).not.toContain("réponse d'essai");
+    expect(await tableJournal()).not.toContain("message d'essai");
+    expect(await tableJournal()).not.toContain("réponse d'essai");
   });
 
   it("un numéro qui n'est pas un entier positif : 400, avant tout appel", async () => {
@@ -234,7 +236,7 @@ describe("mettre en service", () => {
     const r = await appeler(activer, { id: "boulangerie-essai", numero: "2" }, "chef", {});
     expect(r.status).toBe(200);
     expect(simule.activer.mock.calls).toEqual([["boulangerie-essai", 2, {}]]);
-    expect(journal().map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect((await journal()).map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["chef", "clients.activer", "client:boulangerie-essai", "ok", { version: 2, forcer: false }],
     ]);
   });
@@ -243,7 +245,7 @@ describe("mettre en service", () => {
     await appeler(activer, { id: "boulangerie-essai", numero: "4" }, "exploitant", { forcer: true, autre: 1 });
     await appeler(activer, { id: "boulangerie-essai", numero: "3" }, "exploitant");
     expect(simule.activer.mock.calls).toEqual([["boulangerie-essai", 4, { forcer: true }], ["boulangerie-essai", 3, {}]]);
-    expect(journal().map((l) => l.detail)).toEqual([{ version: 3, forcer: false }, { version: 4, forcer: true }]);
+    expect((await journal()).map((l) => l.detail)).toEqual([{ version: 3, forcer: false }, { version: 4, forcer: true }]);
   });
 
   it("un externe ne met rien en service, même d'un corps écrit à la main : 403, l'atelier jamais appelé", async () => {
@@ -251,7 +253,7 @@ describe("mettre en service", () => {
       expect((await appeler(activer, { id: "garage-essai", numero: "2" }, "invite", corps)).status).toBe(403);
     }
     expect(simule.activer).not.toHaveBeenCalled();
-    expect(journal().map((l) => [l.qui, l.action, l.resultat])).toEqual([["invite", "clients.activer", "refuse 403"], ["invite", "clients.activer", "refuse 403"]]);
+    expect((await journal()).map((l) => [l.qui, l.action, l.resultat])).toEqual([["invite", "clients.activer", "refuse 403"], ["invite", "clients.activer", "refuse 403"]]);
   });
 
   it("un numéro qui n'est pas un entier positif : 400, avant tout appel", async () => {

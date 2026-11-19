@@ -3,7 +3,7 @@ import { gardePage } from "@/lib/admin/garde";
 import { listerMembres } from "@/lib/admin/membres";
 import { listerRoles } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 import { Membres, type MembreVu } from "./membres";
 import { OngletsEquipe } from "./onglets";
 
@@ -11,9 +11,9 @@ import { OngletsEquipe } from "./onglets";
 // que ce que le membre en voit (perimetreVu), et ne propose que les gestes que la bibliothèque laissera passer.
 export default async function PageMembres() {
   const a = await gardePage("equipe.gerer");
-  const db = base();
-  const roles = listerRoles(db);
-  const membres: MembreVu[] = listerMembres(db).map((m) => {
+  const db = await pret();
+  const roles = await listerRoles(db);
+  const membres: MembreVu[] = (await listerMembres(db)).map((m) => {
     const role = roles.find((r) => r.id === m.role);
     return {
       utilisateur: m.utilisateur,

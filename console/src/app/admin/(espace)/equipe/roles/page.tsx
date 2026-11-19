@@ -4,16 +4,16 @@ import { gardePage } from "@/lib/admin/garde";
 import { invitationsEnAttente } from "@/lib/admin/invitations";
 import { listerRoles } from "@/lib/admin/roles";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 import { OngletsEquipe } from "../onglets";
 import { Roles, type RoleVu } from "./roles";
 
 // Les rôles : les droits cochés par groupe, le nombre de membres ; créer, modifier, retirer ce que la non-escalade permet.
 export default async function PageRoles() {
   const a = await gardePage("equipe.gerer");
-  const db = base();
-  const nommes = new Set(invitationsEnAttente(db).map((i) => i.role));
-  const roles: RoleVu[] = listerRoles(db).map((r) => {
+  const db = await pret();
+  const nommes = new Set((await invitationsEnAttente(db)).map((i) => i.role));
+  const roles: RoleVu[] = (await listerRoles(db)).map((r) => {
     const modifiable = !r.systeme && peutEcrireRole(a, r.droits, r.id);
     return {
       id: r.id,

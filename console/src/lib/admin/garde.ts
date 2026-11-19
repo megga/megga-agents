@@ -1,10 +1,10 @@
 import "server-only";
-import type { DatabaseSync } from "node:sqlite";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
 import { Refus } from "@/lib/agents";
 import { session, sessionDe } from "@/lib/auth";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
+import type { Base } from "@/lib/donnees/base";
 import { exiger, exigerClient, peut, voitClient, type Acces } from "./acces";
 import { RefusChamps } from "./atelier";
 import type { Droit } from "./droits";
@@ -33,7 +33,7 @@ export type Regle<P> = {
  * preciser : ce que le journal garde de ce geste, quand le traitement le sait mieux que la règle (la base réellement envoyée
  * à l'atelier) ; appelé, il remplace regle.detail pour l'issue du geste, réussie ou refusée ensuite. Nettoyé et coupé comme lui.
  */
-export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: DatabaseSync; preciser: (detail: unknown) => void };
+export type Contexte<P> = { acces: Acces; params: P; corps: unknown; requete: Request; db: Base; preciser: (detail: unknown) => void };
 export type Gestionnaire<P> = ((requete: Request, ctx: { params: Promise<P> }) => Promise<Response>) & { [GARDE]: true };
 
 type Compte = { id: string; email: string; name: string };
@@ -67,29 +67,29 @@ function reponseRefus(e: Refus): Response {
  * traiter rend une Response (rendue telle quelle), une valeur (en JSON) ou rien (204, comme un retrait) ;
  * un Refus, son statut ; le reste, 500 sans détail.
  */
-async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: string) => void): Promise<Response> {
+async function issue(faire: () => Promise<unknown>, noterIssue: (resultat: string) => Promise<void>): Promise<Response> {
   try {
     const r = await faire();
     const reponse = r instanceof Response ? r : r === undefined ? new Response(null, { status: 204 }) : Response.json(r);
-    noterIssue(reponse.ok ? "ok" : `refuse ${reponse.status}`);
+    await noterIssue(reponse.ok ? "ok" : `refuse ${reponse.status}`);
     return reponse;
   } catch (e) {
     if (e instanceof Refus) {
-      noterIssue(`refuse ${e.statut}`);
+      await noterIssue(`refuse ${e.statut}`);
       return reponseRefus(e);
     }
     console.error("admin :", e);
-    noterIssue("erreur");
+    await noterIssue("erreur");
     return Response.json({ erreur: TA.erreurInterne }, { status: 500 });
   }
 }
 
 /** Note une issue ; une panne du journal part à console.error et ne change jamais la réponse du geste. */
-function journaliste(db: DatabaseSync, compte: Compte, action: string | undefined, cible: string | null, detail: () => unknown) {
-  return (resultat: string) => {
+function journaliste(db: Base, compte: Compte, action: string | undefined, cible: string | null, detail: () => unknown) {
+  return async (resultat: string): Promise<void> => {
     if (!action) return;
     try {
-      noter(db, { qui: compte.id, courriel: compte.email, action, cible, resultat, detail: detail() });
+      await noter(db, { qui: compte.id, courriel: compte.email, action, cible, resultat, detail: detail() });
     } catch (e) {
       console.error("journal de l'admin :", e);
     }
@@ -113,18 +113,18 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
   return marquer<P>(async (requete, ctx) => {
     const s = await sessionDe(requete);
     if (!s) return Response.json({ erreur: TA.connectezVous }, { status: 401 });
-    const db = base();
+    const db = await pret();
     const params = await ctx.params;
     const corps = await lireCorps(requete);
     let membre = false; // un non-membre (404) ne laisse rien au journal : l'inscription est ouverte, le journal ne doit pas grossir de ses appels
     let precis: { detail: unknown } | null = null;
     const detail = () => (precis ? precis.detail : regle.detail ? regle.detail(corps, params) : corps);
     const noterMembre = journaliste(db, s.user, regle.action, cibleDe(regle, params, corps), detail);
-    const noterIssue = (resultat: string) => {
-      if (membre) noterMembre(resultat);
+    const noterIssue = async (resultat: string) => {
+      if (membre) await noterMembre(resultat);
     };
     return issue(async () => {
-      const acces = accesDe(db, s.user);
+      const acces = await accesDe(db, s.user);
       if (!acces) throw new Refus(404, TA.introuvable);
       membre = true;
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
@@ -144,12 +144,12 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
  */
 export function gardeSession<P extends Record<string, string>>(
   regle: { action: string; detail: (corps: unknown) => unknown },
-  traiter: (c: { compte: Compte; params: P; corps: unknown; db: DatabaseSync }) => Promise<unknown>,
+  traiter: (c: { compte: Compte; params: P; corps: unknown; db: Base }) => Promise<unknown>,
 ): Gestionnaire<P> {
   return marquer<P>(async (requete, ctx) => {
     const s = await sessionDe(requete);
     if (!s) return Response.json({ erreur: TA.connectezVous }, { status: 401 });
-    const db = base();
+    const db = await pret();
     const params = await ctx.params;
     const corps = await lireCorps(requete);
     const compte = { id: s.user.id, email: s.user.email, name: s.user.name };
@@ -169,7 +169,7 @@ export async function gardePage(droit?: Droit, client?: string): Promise<Acces> 
   await connection();
   const s = await session();
   if (!s) redirect("/connexion?retour=/admin");
-  const a = accesDe(base(), s.user);
+  const a = await accesDe(await pret(), s.user);
   if (!a || (droit && !peut(a, droit)) || (client !== undefined && !voitClient(a, client))) notFound();
   return a;
 }

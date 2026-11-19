@@ -5,9 +5,9 @@ import { modifierRole, retirerRole } from "@/lib/admin/roles";
 const cible = (p: { id: string }) => `role:${p.id}`;
 
 export const PATCH = garde({ droit: "equipe.gerer", action: "roles.modifier", cible }, async ({ acces, params, corps, db }) => ({
-  role: modifierRole(db, acces, params.id, corps),
+  role: await modifierRole(db, acces, params.id, corps),
 }));
 
 export const DELETE = garde({ droit: "equipe.gerer", action: "roles.retirer", cible }, async ({ acces, params, db }) => {
-  retirerRole(db, acces, params.id);
+  await retirerRole(db, acces, params.id);
 });

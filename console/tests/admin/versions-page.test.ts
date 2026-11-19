@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,17 +7,20 @@ import { Preparer } from "@/app/admin/(espace)/clients/[id]/versions/preparer";
 import { gesteDe, GestesVersion } from "@/app/admin/(espace)/clients/[id]/versions/versions";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
-import { dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { baseEssai, membre } from "./aides";
 
 // L'onglet Versions, appelé comme Next.js le rend, sans réseau (session, base et atelier simulés, un lien est un simple <a>),
 // puis dessiné en HTML. Un externe n'y voit ni modèle par métier ni geste de pilotage ; chaque geste dit son effet.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as string | null }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -96,14 +98,14 @@ function deplier(n: unknown): unknown {
 }
 
 beforeEach(async () => {
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   simule.appels = [];
   simule.config = CONFIG;
   simule.surClient = {};
   simule.catalogue = null;
-  membre(etat.db, { utilisateur: "chef", role: "superadmin" });
-  membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  await membre(etat.db, { utilisateur: "chef", role: "superadmin" });
+  await membre(etat.db, { utilisateur: "invite", role: "exploitation", externe: true, perimetre: ["garage-essai"] });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
   etat.qui = "chef";
 });
 
@@ -183,7 +185,7 @@ describe("l'effet annoncé par la page", () => {
 describe("le geste de pilotage d'une version", () => {
   const v = (numero: number, etat: "brouillon" | "publiee", essais: number) => ({ numero, etat, essais });
 
-  it("forcer un brouillon jamais essayé ; mettre en service un brouillon essayé ; revenir à une publiée plus ancienne", () => {
+  it("forcer un brouillon jamais essayé ; mettre en service un brouillon essayé ; revenir à une publiée plus ancienne", async () => {
     expect(gesteDe(v(4, "brouillon", 0), 2, false, false)).toEqual({ titre: TA.forcerTitre(4), bouton: TA.forcer,
       effet: `${TA.jamaisEssayee} ${TA.effetActiver(4)}`, forcer: true });
     expect(gesteDe(v(3, "brouillon", 2), 2, false, false)).toEqual({ titre: TA.mettreEnServiceTitre(3), bouton: TA.mettreEnService,
@@ -192,7 +194,7 @@ describe("le geste de pilotage d'une version", () => {
     expect(gesteDe(v(2, "brouillon", 3), null, false, false)?.titre).toBe(TA.mettreEnServiceTitre(2));
   });
 
-  it("la version en service : rien, sauf un écart à relancer ; hors Cloudflare, l'effet dit l'ordre signé", () => {
+  it("la version en service : rien, sauf un écart à relancer ; hors Cloudflare, l'effet dit l'ordre signé", async () => {
     expect(gesteDe(v(2, "publiee", 1), 2, false, false)).toBeNull();
     expect(gesteDe(v(2, "publiee", 1), 2, true, false)).toEqual({ titre: TA.relancerTitre(2), bouton: TA.mettreEnService,
       effet: `${TA.ecartARelancer} ${TA.effetActiver(2)}`, forcer: false });
@@ -200,7 +202,7 @@ describe("le geste de pilotage d'une version", () => {
     expect(gesteDe(v(4, "brouillon", 0), 2, false, true)?.effet).toBe(`${TA.jamaisEssayee} ${TA.effetOrdre(4)}`);
   });
 
-  it("la zone inconnue (catalogue illisible) : l'effet dit les deux cas, jamais un redémarrage annoncé à tort", () => {
+  it("la zone inconnue (catalogue illisible) : l'effet dit les deux cas, jamais un redémarrage annoncé à tort", async () => {
     expect(gesteDe(v(3, "brouillon", 1), 2, false, null)?.effet).toBe(TA.effetSelonZone(3));
     expect(gesteDe(v(1, "publiee", 0), 2, false, null)?.effet).toBe(TA.effetSelonZone(1));
   });

@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
 import { Refus } from "@/lib/agents";
+import type { Base } from "@/lib/donnees/base";
 import { peutEcrireRole, type Acces } from "./acces";
 import { DROITS, estDroit, type Droit } from "./droits";
 import { TA } from "./textes";
 
 // Les rôles de l'équipe : un nom, une description, des droits cochés parmi les treize.
-// Le superadmin (systeme) est fixe ; un rôle encore porté par un membre ne se retire pas.
+// Le superadmin (systeme) est fixe ; un rôle encore porté par un membre ne se retire pas. Chaque écriture lit puis écrit
+// dans une même transaction : deux requêtes à la fois ne passent pas entre la vérification et l'écriture.
 
 export type Role = { id: string; nom: string; description: string; droits: Droit[]; systeme: boolean; membres: number };
 
@@ -30,12 +31,12 @@ function versRole(l: Ligne): Role {
   return { id: l.id, nom: l.nom, description: l.description, droits: droitsLus(l.droits), systeme: !!l.systeme, membres: l.membres };
 }
 
-export function listerRoles(db: DatabaseSync): Role[] {
-  return (db.prepare(`${CHOIX} ORDER BY r.systeme DESC, r.cree_le, r.rowid`).all() as Ligne[]).map(versRole);
+export async function listerRoles(b: Base): Promise<Role[]> {
+  return (await b.tous<Ligne>(`${CHOIX} ORDER BY r.systeme DESC, r.cree_le, r.id`)).map(versRole);
 }
 
-export function lireRole(db: DatabaseSync, id: string): Role | undefined {
-  const l = db.prepare(`${CHOIX} WHERE r.id = ?`).get(id) as Ligne | undefined;
+export async function lireRole(b: Base, id: string): Promise<Role | undefined> {
+  const l = await b.un<Ligne>(`${CHOIX} WHERE r.id = ?`, id);
   return l && versRole(l);
 }
 
@@ -56,53 +57,60 @@ function lireDroits(v: unknown): Droit[] {
   return DROITS.filter((d) => v.includes(d));
 }
 
-function exigerNomLibre(db: DatabaseSync, nom: string, sauf: string | null): void {
-  const l = db.prepare("SELECT id FROM admin_role WHERE nom = ? COLLATE NOCASE").get(nom) as { id: string } | undefined;
+async function exigerNomLibre(b: Base, nom: string, sauf: string | null): Promise<void> {
+  const l = await b.un<{ id: string }>("SELECT id FROM admin_role WHERE lower(nom) = lower(?)", nom);
   if (l && l.id !== sauf) throw new Refus(409, TA.nomPris);
 }
 
 /** Un rôle fixe ou inconnu ne se change pas ; sans être superadmin, on ne touche qu'à un rôle dont on a déjà tous les droits. */
-function roleAEcrire(db: DatabaseSync, a: Acces, id: string): Role {
-  const role = lireRole(db, id);
+async function roleAEcrire(b: Base, a: Acces, id: string): Promise<Role> {
+  const role = await lireRole(b, id);
   if (role?.systeme) throw new Refus(403, TA.roleFixe);
   if (!role) throw new Refus(404, TA.roleInconnu);
   if (!peutEcrireRole(a, role.droits, id)) throw new Refus(403, TA.escalade);
   return role;
 }
 
-export function creerRole(db: DatabaseSync, a: Acces, corps: unknown, maintenant = new Date()): Role {
+export function creerRole(b: Base, a: Acces, corps: unknown, maintenant = new Date()): Promise<Role> {
   const c = objet(corps);
-  const nom = lireNom(c.nom);
-  const droits = lireDroits(c.droits);
-  if (!peutEcrireRole(a, droits, null)) throw new Refus(403, TA.escalade);
-  exigerNomLibre(db, nom, null);
-  const id = "ro_" + randomUUID().replace(/-/g, "").slice(0, 20);
-  const quand = maintenant.toISOString();
-  db.prepare("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, ?, ?, 0, ?, ?)")
-    .run(id, nom, lireDescription(c.description), JSON.stringify(droits), quand, quand);
-  return lireRole(db, id)!;
+  return b.transaction(async (tx) => {
+    const nom = lireNom(c.nom);
+    const droits = lireDroits(c.droits);
+    if (!peutEcrireRole(a, droits, null)) throw new Refus(403, TA.escalade);
+    await exigerNomLibre(tx, nom, null);
+    const id = "ro_" + randomUUID().replace(/-/g, "").slice(0, 20);
+    const quand = maintenant.toISOString();
+    await tx.ecrire("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, ?, ?, 0, ?, ?)",
+      id, nom, lireDescription(c.description), JSON.stringify(droits), quand, quand);
+    return (await lireRole(tx, id))!;
+  });
 }
 
 /** Corps : { nom?, description?, droits? } ; ce qui manque reste tel quel. */
-export function modifierRole(db: DatabaseSync, a: Acces, id: string, corps: unknown, maintenant = new Date()): Role {
-  const role = roleAEcrire(db, a, id);
+export function modifierRole(b: Base, a: Acces, id: string, corps: unknown, maintenant = new Date()): Promise<Role> {
   const c = objet(corps);
-  const nom = c.nom === undefined ? role.nom : lireNom(c.nom);
-  const description = c.description === undefined ? role.description : lireDescription(c.description);
-  const droits = c.droits === undefined ? role.droits : lireDroits(c.droits);
-  if (!peutEcrireRole(a, droits, id)) throw new Refus(403, TA.escalade);
-  exigerNomLibre(db, nom, id);
-  db.prepare("UPDATE admin_role SET nom = ?, description = ?, droits = ?, modifie_le = ? WHERE id = ?")
-    .run(nom, description, JSON.stringify(droits), maintenant.toISOString(), id);
-  return lireRole(db, id)!;
+  return b.transaction(async (tx) => {
+    const role = await roleAEcrire(tx, a, id);
+    const nom = c.nom === undefined ? role.nom : lireNom(c.nom);
+    const description = c.description === undefined ? role.description : lireDescription(c.description);
+    const droits = c.droits === undefined ? role.droits : lireDroits(c.droits);
+    if (!peutEcrireRole(a, droits, id)) throw new Refus(403, TA.escalade);
+    await exigerNomLibre(tx, nom, id);
+    await tx.ecrire("UPDATE admin_role SET nom = ?, description = ?, droits = ?, modifie_le = ? WHERE id = ?",
+      nom, description, JSON.stringify(droits), maintenant.toISOString(), id);
+    return (await lireRole(tx, id))!;
+  });
 }
 
 /** Un rôle porté par un membre, ou nommé par une invitation en attente (ni acceptée, ni retirée, ni expirée), reste. */
-export function retirerRole(db: DatabaseSync, a: Acces, id: string, maintenant = new Date()): void {
-  const role = roleAEcrire(db, a, id);
-  const invite = db
-    .prepare("SELECT 1 FROM admin_invitation WHERE role = ? AND acceptee_le IS NULL AND retiree_le IS NULL AND valable_jusqua >= ?")
-    .get(id, maintenant.toISOString());
-  if (role.membres > 0 || invite) throw new Refus(409, TA.rolePorte);
-  db.prepare("DELETE FROM admin_role WHERE id = ?").run(id);
+export function retirerRole(b: Base, a: Acces, id: string, maintenant = new Date()): Promise<void> {
+  return b.transaction(async (tx) => {
+    const role = await roleAEcrire(tx, a, id);
+    const invite = await tx.un(
+      "SELECT 1 AS n FROM admin_invitation WHERE role = ? AND acceptee_le IS NULL AND retiree_le IS NULL AND valable_jusqua >= ?",
+      id, maintenant.toISOString(),
+    );
+    if (role.membres > 0 || invite) throw new Refus(409, TA.rolePorte);
+    await tx.ecrire("DELETE FROM admin_role WHERE id = ?", id);
+  });
 }

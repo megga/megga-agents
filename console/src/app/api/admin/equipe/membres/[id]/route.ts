@@ -5,9 +5,9 @@ import { modifierMembre, retirerMembre } from "@/lib/admin/membres";
 const cible = (p: { id: string }) => `membre:${p.id}`;
 
 export const PATCH = garde({ droit: "equipe.gerer", action: "membres.modifier", cible }, async ({ acces, params, corps, db }) => ({
-  membre: modifierMembre(db, acces, params.id, corps),
+  membre: await modifierMembre(db, acces, params.id, corps),
 }));
 
 export const DELETE = garde({ droit: "equipe.gerer", action: "membres.retirer", cible }, async ({ acces, params, db }) => {
-  retirerMembre(db, acces, params.id);
+  await retirerMembre(db, acces, params.id);
 });

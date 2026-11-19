@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { Base } from "@/lib/donnees/base";
 import { lister, Refus, type Agent } from "@/lib/agents";
 import { auth } from "@/lib/auth";
@@ -51,13 +50,8 @@ type Ligne = {
 /** Le premier des 30 derniers jours de Zurich (aujourd'hui compris) : la période des messages d'un compte. */
 const depuis30j = (maintenant: Date) => joursZurich(30, maintenant)[0];
 
-const CHOIX = `SELECT u.id, u.name, u.email, u.createdAt, u.banned, u.banReason, c.derniere, m.role AS role_membre, m.fin_acces,
-  (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
-  (SELECT COALESCE(SUM(ua.messages), 0) FROM usage_agent ua JOIN agent a ON a.id = ua.agent WHERE a.utilisateur = u.id AND ua.jour >= ?) AS messages
-  FROM "user" u LEFT JOIN compte_connexion c ON c.utilisateur = u.id LEFT JOIN admin_membre m ON m.utilisateur = u.id`;
-
-/** CHOIX, les colonnes de Better Auth citées : ce que Postgres lit aussi. */
-const CHOIX_B = `SELECT u.id, u.name, u.email, u."createdAt", u.banned, u."banReason", c.derniere, m.role AS role_membre, m.fin_acces,
+/** Les colonnes de Better Auth en casse mixte se citent : Postgres les lit ainsi. */
+const CHOIX = `SELECT u.id, u.name, u.email, u."createdAt", u.banned, u."banReason", c.derniere, m.role AS role_membre, m.fin_acces,
   (SELECT COUNT(*) FROM agent a WHERE a.utilisateur = u.id) AS agents,
   (SELECT COALESCE(SUM(ua.messages), 0) FROM usage_agent ua JOIN agent a ON a.id = ua.agent WHERE a.utilisateur = u.id AND ua.jour >= ?) AS messages
   FROM "user" u LEFT JOIN compte_connexion c ON c.utilisateur = u.id LEFT JOIN admin_membre m ON m.utilisateur = u.id`;
@@ -98,22 +92,22 @@ export function filtresComptesDe(p: Record<string, string | string[] | undefined
 const enLike = (q: string) => `%${q.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
 
 /**
- * Les comptes de la console, l'inscription la plus récente d'abord, par pages de COMPTES_PAR_PAGE ; la recherche et la page
- * se font dans le SQL. Une page demandée trop loin est ramenée à la dernière (page).
+ * Les comptes de la console, l'inscription la plus récente d'abord, par pages de COMPTES_PAR_PAGE ; la recherche (sans tenir
+ * compte de la casse, sous les deux moteurs) et la page se font dans le SQL. Une page demandée trop loin est ramenée à la
+ * dernière (page).
  */
-export function listerComptes(db: DatabaseSync, f: FiltresComptes = { page: 1 }, maintenant = new Date()): {
+export async function listerComptes(b: Base, f: FiltresComptes = { page: 1 }, maintenant = new Date()): Promise<{
   comptes: CompteConsole[];
   pages: number;
   page: number;
-} {
-  const ou = f.q ? `WHERE (u.name LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\')` : "";
+}> {
+  const ou = f.q ? `WHERE (lower(u.name) LIKE lower(?) ESCAPE '\\' OR lower(u.email) LIKE lower(?) ESCAPE '\\')` : "";
   const valeurs = f.q ? [enLike(f.q), enLike(f.q)] : [];
-  const total = (db.prepare(`SELECT COUNT(*) AS n FROM "user" u ${ou}`).get(...valeurs) as { n: number }).n;
+  const total = (await b.un<{ n: number }>(`SELECT COUNT(*) AS n FROM "user" u ${ou}`, ...valeurs))!.n;
   const pages = Math.max(1, Math.ceil(total / COMPTES_PAR_PAGE));
   const page = Math.min(f.page, pages);
-  const lignes = db
-    .prepare(`${CHOIX} ${ou} ORDER BY u.createdAt DESC, u.rowid DESC LIMIT ? OFFSET ?`)
-    .all(depuis30j(maintenant), ...valeurs, COMPTES_PAR_PAGE, (page - 1) * COMPTES_PAR_PAGE) as Ligne[];
+  const lignes = await b.tous<Ligne>(`${CHOIX} ${ou} ORDER BY u."createdAt" DESC, u.id DESC LIMIT ? OFFSET ?`,
+    depuis30j(maintenant), ...valeurs, COMPTES_PAR_PAGE, (page - 1) * COMPTES_PAR_PAGE);
   return { comptes: lignes.map((l) => versCompte(l, maintenant)), pages, page };
 }
 
@@ -123,7 +117,7 @@ export async function ficheCompte(b: Base, id: string, maintenant = new Date()):
   agents: (Agent & { messages30j: number })[];
   sessions: { creeLe: string; expireLe: string; appareil: string | null }[];
 } | undefined> {
-  const l = await b.un<Ligne>(`${CHOIX_B} WHERE u.id = ?`, depuis30j(maintenant), id);
+  const l = await b.un<Ligne>(`${CHOIX} WHERE u.id = ?`, depuis30j(maintenant), id);
   if (!l) return undefined;
   const agents = await lister(b, id);
   const messages = await messagesDepuis(b, agents.map((a) => a.id), depuis30j(maintenant));
@@ -142,15 +136,15 @@ export async function ficheCompte(b: Base, id: string, maintenant = new Date()):
  * Le membre a-t-il la main sur ce compte (suspendre, réactiver, déconnecter) ? La seule écriture de la règle pour les gestes
  * et pour l'écran : peutSuspendre, d'après le membre en cours que ce compte est peut-être.
  */
-export function peutAgirSur(db: DatabaseSync, a: Acces, id: string, maintenant = new Date()): boolean {
-  const m = membreEnCours(db, id, maintenant);
+export async function peutAgirSur(b: Base, a: Acces, id: string, maintenant = new Date()): Promise<boolean> {
+  const m = await membreEnCours(b, id, maintenant);
   return peutSuspendre(a, { id, membre: m ? { role: m.role } : null });
 }
 
 /** Le compte visé : inconnu, 404 ; hors de la main du membre, 403. */
-function exigerCompte(db: DatabaseSync, a: Acces, id: string): void {
-  if (!db.prepare('SELECT 1 FROM "user" WHERE id = ?').get(id)) throw new Refus(404, TA.compteInconnu);
-  if (!peutAgirSur(db, a, id)) throw new Refus(403, TA.suspensionInterdite);
+async function exigerCompte(b: Base, a: Acces, id: string): Promise<void> {
+  if (!(await b.un('SELECT 1 AS n FROM "user" WHERE id = ?', id))) throw new Refus(404, TA.compteInconnu);
+  if (!(await peutAgirSur(b, a, id))) throw new Refus(403, TA.suspensionInterdite);
 }
 
 /** Le motif d'une suspension : un texte, sans les espaces autour, de 1 à 200 caractères. */
@@ -175,11 +169,15 @@ export async function adaptateurComptes(): Promise<AdaptateurComptes> {
  * Corps : { motif }. Le compte ne se connecte plus (l'extension refuse toute nouvelle session) et perd ses sessions. Le
  * bannissement écrit (s'il échoue, l'erreur remonte : rien n'est fait), un effacement des sessions en échec est réessayé une
  * fois. sessionsRestent : le compte est suspendu, mais ses sessions restent après ces deux essais (« Déconnecter partout »).
+ * La vérification du compte et le bannissement passent dans une même transaction : un compte qu'on vient de nommer
+ * superadmin n'est pas suspendu d'après ce qu'il était avant.
  */
-export async function suspendre(db: DatabaseSync, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<{ sessionsRestent: boolean }> {
-  exigerCompte(db, a, id);
-  const motif = lireMotif(corps);
-  await ad.updateUser(id, { banned: true, banReason: motif, banExpires: null });
+export async function suspendre(b: Base, a: Acces, id: string, corps: unknown, ad: AdaptateurComptes): Promise<{ sessionsRestent: boolean }> {
+  await b.transaction(async (tx) => {
+    await exigerCompte(tx, a, id);
+    const motif = lireMotif(corps);
+    await ad.updateUser(id, { banned: true, banReason: motif, banExpires: null });
+  });
   for (let essai = 1; essai <= 2; essai++) {
     try {
       await ad.deleteUserSessions(id);
@@ -191,14 +189,14 @@ export async function suspendre(db: DatabaseSync, a: Acces, id: string, corps: u
   return { sessionsRestent: true };
 }
 
-export async function reactiver(db: DatabaseSync, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {
-  exigerCompte(db, a, id);
+export async function reactiver(b: Base, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {
+  await exigerCompte(b, a, id);
   await ad.updateUser(id, { banned: false, banReason: null, banExpires: null });
 }
 
 /** Ferme toutes ses sessions, tout de suite ; il peut se reconnecter. */
-export async function deconnecter(db: DatabaseSync, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {
-  exigerCompte(db, a, id);
+export async function deconnecter(b: Base, a: Acces, id: string, ad: AdaptateurComptes): Promise<void> {
+  await exigerCompte(b, a, id);
   await ad.deleteUserSessions(id);
 }
 

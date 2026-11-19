@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DROITS, type Droit } from "@/lib/admin/droits";
 import { GARDE } from "@/lib/admin/garde";
-import { dbEssai, compte, membre, roleVide } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { baseEssai, compte, membre, roleVide } from "./aides";
 
 // Toutes les routes de /api/admin passent par garde ou gardeSession : la liste ci-dessous est celle de la carte des fichiers
 // du plan ; une route sur le disque qui n'y est pas, une route qui n'est pas gardée ou gardée par un autre droit, fait échouer
@@ -63,18 +63,20 @@ function fichiersAvecUseServer(dossier: string): string[] {
 }
 
 /** Un rôle qui a les treize droits sauf un ; rend son identifiant. */
-function roleSauf(db: DatabaseSync, droit: Droit): string {
+async function roleSauf(db: Base, droit: Droit): Promise<string> {
   const id = `sauf-${droit}`;
-  db.prepare("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, '', ?, 0, '', '')")
-    .run(id, id, JSON.stringify(DROITS.filter((d) => d !== droit)));
+  await db.ecrire("INSERT INTO admin_role (id, nom, description, droits, systeme, cree_le, modifie_le) VALUES (?, ?, '', ?, 0, '', '')",
+    id, id, JSON.stringify(DROITS.filter((d) => d !== droit)));
   return id;
 }
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base }));
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {
@@ -96,10 +98,10 @@ vi.mock("@/lib/admin/atelier", async (original) => {
 
 beforeEach(async () => {
   appelsAtelier.length = 0;
-  etat.db = await dbEssai();
-  compte(etat.db, { id: "inconnu", courriel: "inconnu@megga.test" });
-  membre(etat.db, { utilisateur: "vide", role: roleVide(etat.db) });
-  membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai"] });
+  etat.db = await baseEssai();
+  await compte(etat.db, { id: "inconnu", courriel: "inconnu@megga.test" });
+  (await membre(etat.db, { utilisateur: "vide", role: (await roleVide(etat.db)) }));
+  await membre(etat.db, { utilisateur: "limite", role: "administration", perimetre: ["garage-essai"] });
 });
 
 type Gestionnaire = ((r: Request, ctx: { params: Promise<Record<string, string>> }) => Promise<Response>) & { [GARDE]?: true };
@@ -113,13 +115,13 @@ function appeler(f: Gestionnaire, fichier: string, methode: Methode, params: Rec
 }
 
 describe("les routes de /api/admin", () => {
-  it("sont toutes dans la liste", () => {
+  it("sont toutes dans la liste", async () => {
     // Avant la première route, le dossier n'existe pas encore : la liste doit alors être vide.
     const surDisque = existsSync(API_ADMIN) ? routesSurDisque(API_ADMIN) : [];
     expect(surDisque).toEqual(ROUTES.map((r) => r.fichier).sort());
   });
 
-  it("se trouvent sur le disque, à toute profondeur, en .ts, .tsx, .js ou .mjs, sans les pages ; un dossier absent est une erreur", () => {
+  it("se trouvent sur le disque, à toute profondeur, en .ts, .tsx, .js ou .mjs, sans les pages ; un dossier absent est une erreur", async () => {
     const d = mkdtempSync(join(tmpdir(), "routes-admin-"));
     try {
       const fichiers = { "a/route.ts": "", "b/c/route.ts": "", "b/page.tsx": "", "d/route.js": "", "e/route.tsx": "", "f/route.mjs": "",
@@ -137,7 +139,7 @@ describe("les routes de /api/admin", () => {
     }
   });
 
-  it("n'ont pas d'écriture hors des routes : aucun « use server » sous l'admin", () => {
+  it("n'ont pas d'écriture hors des routes : aucun « use server » sous l'admin", async () => {
     for (const d of ["src/app/admin", "src/components/admin", "src/app/api/admin"]) {
       const dossier = join(CONSOLE, d);
       if (!existsSync(dossier)) continue; // pas encore écrit : rien à craindre
@@ -148,7 +150,7 @@ describe("les routes de /api/admin", () => {
   for (const r of ROUTES) {
     it(`${r.fichier} : gardée, 401 sans session, 404 sans être membre, 403 sans son droit, 404 hors périmètre`, async () => {
       const route = (await import(/* @vite-ignore */ join(API_ADMIN, r.fichier))) as Record<string, unknown>;
-      if (r.droit !== "session") membre(etat.db, { utilisateur: "presque", role: roleSauf(etat.db, r.droit) });
+      if (r.droit !== "session") await membre(etat.db, { utilisateur: "presque", role: await roleSauf(etat.db, r.droit) });
       const exportees = Object.keys(route).filter((k) => ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(k));
       expect(exportees.sort()).toEqual([...r.methodes].sort());
       for (const m of r.methodes) {

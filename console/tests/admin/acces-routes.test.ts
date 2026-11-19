@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DELETE as retirerCle } from "@/app/api/admin/clients/[id]/cles/[cle]/route";
 import { POST as creerCle } from "@/app/api/admin/clients/[id]/cles/route";
@@ -7,16 +6,19 @@ import { POST as reprise } from "@/app/api/admin/clients/[id]/reprise/route";
 import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, membre } from "./aides";
 
 // La main, les jetons et les clés, appelés comme Next.js les appelle (session par l'en-tête x-essai-qui, base de l'essai,
 // atelier simulé). Un jeton ou une clé n'est que dans la réponse du geste qui le crée : ni au journal, ni dans une erreur.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base }));
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   sessionDe: async (r: Request) => {
@@ -47,8 +49,8 @@ function appeler<P>(route: Route<P>, methode: string, params: P, qui: string, co
 }
 
 const GARAGE = { id: "garage-essai" };
-const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes;
-const tableJournal = () => JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all());
+const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes;
+const tableJournal = async () => JSON.stringify((await etat.db.tous("SELECT * FROM admin_journal")));
 
 beforeEach(async () => {
   for (const f of Object.values(simule)) f.mockReset();
@@ -57,9 +59,9 @@ beforeEach(async () => {
   simule.retirerJetons.mockResolvedValue({ client: "garage-essai", retires: 2 });
   simule.creerCle.mockResolvedValue({ client: "garage-essai", id: "d15a76f57ee4", logiciel: "caisse", par_minute: 60, cle: CLE });
   simule.retirerCle.mockResolvedValue({ client: "garage-essai", id: "d15a76f57ee4", retiree: true });
-  etat.db = await dbEssai();
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
+  etat.db = await baseEssai();
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "invite", role: "administration", externe: true, perimetre: ["garage-essai"] });
 });
 
 describe("les jetons d'un client", () => {
@@ -67,9 +69,9 @@ describe("les jetons d'un client", () => {
     const r = await appeler(creerJeton, "POST", GARAGE, "exploitant");
     expect([r.status, await r.json()]).toEqual([201, { client: "garage-essai", jeton: JETON }]);
     expect(simule.creerJeton.mock.calls).toEqual([["garage-essai"]]);
-    expect(JSON.stringify(lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }))).not.toContain(JETON);
-    expect(tableJournal()).not.toContain(JETON);
-    expect(journal().map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect(JSON.stringify((await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })))).not.toContain(JETON);
+    expect(await tableJournal()).not.toContain(JETON);
+    expect((await journal()).map((l) => [l.qui, l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["exploitant", "acces.jeton_cree", "client:garage-essai", "ok", null],
     ]);
   });
@@ -77,7 +79,7 @@ describe("les jetons d'un client", () => {
   it("retirer les jetons rend le nombre retiré, noté sans détail", async () => {
     const r = await appeler(retirerJetons, "DELETE", GARAGE, "exploitant");
     expect([r.status, await r.json()]).toEqual([200, { client: "garage-essai", retires: 2 }]);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail])).toEqual([["acces.jetons_retires", "ok", null]]);
+    expect((await journal()).map((l) => [l.action, l.resultat, l.detail])).toEqual([["acces.jetons_retires", "ok", null]]);
   });
 });
 
@@ -86,9 +88,9 @@ describe("les clés des logiciels", () => {
     const r = await appeler(creerCle, "POST", GARAGE, "exploitant", { logiciel: "caisse", par_minute: 60, cle: "une-autre", id: "x" });
     expect([r.status, await r.json()]).toEqual([201, { client: "garage-essai", id: "d15a76f57ee4", logiciel: "caisse", par_minute: 60, cle: CLE }]);
     expect(simule.creerCle.mock.calls).toEqual([["garage-essai", { logiciel: "caisse", par_minute: 60 }]]);
-    expect(JSON.stringify(lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }))).not.toContain(CLE);
-    expect(tableJournal()).not.toContain(CLE);
-    expect(journal().map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([
+    expect(JSON.stringify((await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })))).not.toContain(CLE);
+    expect(await tableJournal()).not.toContain(CLE);
+    expect((await journal()).map((l) => [l.action, l.cible, l.resultat, l.detail])).toEqual([
       ["acces.cle_creee", "client:garage-essai", "ok", { logiciel: "caisse", par_minute: 60 }],
     ]);
   });
@@ -97,7 +99,7 @@ describe("les clés des logiciels", () => {
     simule.creerCle.mockRejectedValue(new RefusChamps(409, HORS_CLOUDFLARE));
     const r = await appeler(creerCle, "POST", GARAGE, "exploitant", { logiciel: "caisse" });
     expect([r.status, await r.json()]).toEqual([409, { erreur: HORS_CLOUDFLARE }]);
-    expect(journal().map((l) => [l.resultat, l.detail])).toEqual([["refuse 409", { logiciel: "caisse", par_minute: null }]]);
+    expect((await journal()).map((l) => [l.resultat, l.detail])).toEqual([["refuse 409", { logiciel: "caisse", par_minute: null }]]);
   });
 
   it("retirer une clé par son identifiant ; un identifiant mal formé : 400, rien ne part", async () => {
@@ -109,7 +111,7 @@ describe("les clés des logiciels", () => {
       expect([refus.status, await refus.json()], cle).toEqual([400, { erreur: TA.cleInvalide }]);
     }
     expect(simule.retirerCle).toHaveBeenCalledTimes(1);
-    expect(journal().map((l) => [l.action, l.resultat, l.detail]).reverse()).toEqual([
+    expect((await journal()).map((l) => [l.action, l.resultat, l.detail]).reverse()).toEqual([
       ["acces.cle_retiree", "ok", { id: "d15a76f57ee4" }],
       ...["xyz", "D15A76F57EE4", "d15a76f57ee4a", "..%2Fx"].map(() => ["acces.cle_retiree", "refuse 400", { id: null }]),
     ]);
@@ -122,7 +124,7 @@ describe("reprendre ou rendre la main", () => {
     expect([r.status, await r.json()]).toEqual([200, { client: "garage-essai", gere_par_megga: true }]);
     await appeler(reprise, "POST", GARAGE, "exploitant", { gere_par_megga: false, autre: 1 });
     expect(simule.reprise.mock.calls).toEqual([["garage-essai", { gere_par_megga: true }], ["garage-essai", { gere_par_megga: false }]]);
-    expect(journal().map((l) => [l.action, l.cible, l.detail])).toEqual([
+    expect((await journal()).map((l) => [l.action, l.cible, l.detail])).toEqual([
       ["clients.reprise", "client:garage-essai", { gere_par_megga: false }],
       ["clients.reprise", "client:garage-essai", { gere_par_megga: true }],
     ]);

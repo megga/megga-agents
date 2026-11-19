@@ -1,4 +1,3 @@
-import type { DatabaseSync } from "node:sqlite";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,17 +7,20 @@ import { RefusChamps } from "@/lib/admin/atelier";
 import { lireJournal } from "@/lib/admin/journal";
 import { clePersonne } from "@/lib/admin/personnes";
 import { TA } from "@/lib/admin/textes";
-import { acces, dbEssai, membre } from "./aides";
+import type { Base } from "@/lib/donnees/base";
+import { acces, baseEssai, membre } from "./aides";
 
 // Les deux pages des conversations, appelées comme Next.js les rend, sans réseau : la session vient de etat.qui, la base
 // est celle de l'essai, l'atelier est simulé, un lien est un simple <a>. Ce que la page montre se lit dans son HTML.
 
-const etat = vi.hoisted(() => ({ db: undefined as unknown as DatabaseSync, qui: null as string | null }));
+const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as string | null }));
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
-vi.mock("@/lib/base", async (original) => {
-  const { baseDe } = await import("./aides");
-  return { ...(await original<typeof import("@/lib/base")>()), base: () => etat.db, pret: async () => baseDe(etat.db), donnees: () => baseDe(etat.db) };
-});
+vi.mock("@/lib/base", async (original) => ({
+  ...(await original<typeof import("@/lib/base")>()),
+  base: () => etat.db.pourAuth(), // le temps de la conversion
+  pret: async () => etat.db,
+  donnees: () => etat.db,
+}));
 vi.mock("@/lib/auth", async (original) => ({
   ...(await original<typeof import("@/lib/auth")>()),
   session: async () => (etat.qui ? { user: { id: etat.qui, email: `${etat.qui}@megga.test`, name: etat.qui } } : null),
@@ -52,7 +54,7 @@ const SECRET = "secret-des-essais-des-conversations";
 const html = (n: unknown) => renderToStaticMarkup(n as ReactNode);
 /** Un texte tel que le HTML l'écrit (l'apostrophe échappée). */
 const enHtml = (t: string) => t.replaceAll("'", "&#x27;");
-const journal = () => lireJournal(etat.db, acces({ superadmin: true }), { page: 1 }).lignes;
+const journal = async () => (await lireJournal(etat.db, acces({ superadmin: true }), { page: 1 })).lignes;
 const fil = (id: string, cle: string) => PageFil({ params: Promise.resolve({ id, cle }) } as never);
 const liste = (id: string) => PageConversations({ params: Promise.resolve({ id }) } as never);
 const cle = (personne: string, client = "boulangerie-essai") => clePersonne(client, personne, SECRET);
@@ -71,14 +73,14 @@ const HORS_CLOUDFLARE = "les conversations d'une installation hors Cloudflare ne
 
 beforeEach(async () => {
   process.env.BETTER_AUTH_SECRET = SECRET;
-  etat.db = await dbEssai();
+  etat.db = await baseEssai();
   simule.appels = [];
   simule.client = BOULANGERIE;
   simule.conversations = { conversations: PERSONNES };
   simule.echanges = { personne: "+41790000001", messages: MESSAGES };
-  membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
-  membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
-  membre(etat.db, { utilisateur: "ailleurs", role: "exploitation", perimetre: ["garage-essai"] });
+  await membre(etat.db, { utilisateur: "exploitant", role: "exploitation" });
+  await membre(etat.db, { utilisateur: "lecteur", role: "lecture" });
+  await membre(etat.db, { utilisateur: "ailleurs", role: "exploitation", perimetre: ["garage-essai"] });
   etat.qui = "exploitant";
 });
 afterEach(() => {
@@ -86,7 +88,7 @@ afterEach(() => {
 });
 
 describe("la clé d'une personne", () => {
-  it("est stable, 16 caractères hexadécimaux, dépend du client et du secret, et ne contient pas le numéro", () => {
+  it("est stable, 16 caractères hexadécimaux, dépend du client et du secret, et ne contient pas le numéro", async () => {
     const k = cle("+41790000001");
     expect(k).toMatch(/^[0-9a-f]{16}$/);
     expect(cle("+41790000001")).toBe(k);
@@ -96,7 +98,7 @@ describe("la clé d'une personne", () => {
     expect(k).not.toMatch(/41790000001|0000001/);
   });
 
-  it("ne se calcule pas sans secret", () => {
+  it("ne se calcule pas sans secret", async () => {
     delete process.env.BETTER_AUTH_SECRET;
     expect(() => clePersonne("boulangerie-essai", "+41790000001")).toThrow();
   });
@@ -112,15 +114,15 @@ describe("le fil d'une personne", () => {
     const envoye = vu.indexOf(enHtml(`${TA.envoye} </span>${MESSAGES[1].texte}`));
     expect([recu > 0, envoye > recu]).toEqual([true, true]);
     expect(vu).not.toMatch(/<(input|textarea|button|form)\b/);
-    expect(journal()).toEqual([expect.objectContaining({ qui: "exploitant", courriel: "exploitant@megga.test", action: "conversations.lire",
+    expect(await journal()).toEqual([expect.objectContaining({ qui: "exploitant", courriel: "exploitant@megga.test", action: "conversations.lire",
       cible: "client:boulangerie-essai", resultat: "ok", detail: { personne: "…0001" } })]);
-    expect(JSON.stringify(etat.db.prepare("SELECT * FROM admin_journal").all())).not.toContain("41790000001");
+    expect(JSON.stringify((await etat.db.tous("SELECT * FROM admin_journal")))).not.toContain("41790000001");
   });
 
   it("une personne venue par API s'ouvre aussi, et reste entière au journal", async () => {
     await fil("boulangerie-essai", cle("api:caisse:client-42"));
     expect(simule.appels.at(-1)).toBe("echanges boulangerie-essai api:caisse:client-42");
-    expect(journal().map((l) => l.detail)).toEqual([{ personne: "api:caisse:client-42" }]);
+    expect((await journal()).map((l) => l.detail)).toEqual([{ personne: "api:caisse:client-42" }]);
   });
 
   it("une clé mal formée : 404, sans aucun appel à l'atelier ni ligne au journal", async () => {
@@ -128,7 +130,7 @@ describe("le fil d'une personne", () => {
       cle("+41790000001") + "0", "0123456789abcdeg"]) {
       await expect(fil("boulangerie-essai", k), k).rejects.toThrow("404");
     }
-    expect([simule.appels, journal()]).toEqual([[], []]);
+    expect([simule.appels, (await journal())]).toEqual([[], []]);
   });
 
   it("une clé bien formée mais inconnue (une autre personne, un autre client, un autre secret) : 404, aucun fil lu ni noté", async () => {
@@ -136,19 +138,19 @@ describe("le fil d'une personne", () => {
       clePersonne("boulangerie-essai", "+41790000001", "un-autre-secret")]) {
       await expect(fil("boulangerie-essai", k), k).rejects.toThrow("404");
     }
-    expect([simule.appels.filter((x) => x.startsWith("echanges")), journal()]).toEqual([[], []]);
+    expect([simule.appels.filter((x) => x.startsWith("echanges")), (await journal())]).toEqual([[], []]);
   });
 
   it("un fil que l'atelier refuse : sa phrase, la tentative notée refusée", async () => {
     simule.echanges = new RefusChamps(502, TA.atelierInjoignable);
     expect(html(await fil("boulangerie-essai", cle("+41790000001")))).toContain(enHtml(TA.atelierInjoignable));
-    expect(journal().map((l) => [l.cible, l.resultat, l.detail])).toEqual([["client:boulangerie-essai", "refuse 502", { personne: "…0001" }]]);
+    expect((await journal()).map((l) => [l.cible, l.resultat, l.detail])).toEqual([["client:boulangerie-essai", "refuse 502", { personne: "…0001" }]]);
   });
 
   it("chez le client (hors Cloudflare) : la phrase de l'atelier ; aucune personne n'est connue, rien n'est noté", async () => {
     simule.conversations = new RefusChamps(409, HORS_CLOUDFLARE);
     expect(html(await fil("boulangerie-essai", cle("+41790000001")))).toContain(enHtml(HORS_CLOUDFLARE));
-    expect([simule.appels.filter((x) => x.startsWith("echanges")), journal()]).toEqual([[], []]);
+    expect([simule.appels.filter((x) => x.startsWith("echanges")), (await journal())]).toEqual([[], []]);
   });
 
   it("sans conversations.lire, ou hors du périmètre : 404, sans appel à l'atelier ni ligne au journal", async () => {
@@ -157,14 +159,14 @@ describe("le fil d'une personne", () => {
       await expect(fil("boulangerie-essai", cle("+41790000001")), qui).rejects.toThrow("404");
       await expect(liste("boulangerie-essai"), qui).rejects.toThrow("404");
     }
-    expect([simule.appels, journal()]).toEqual([[], []]);
+    expect([simule.appels, (await journal())]).toEqual([[], []]);
   });
 
   it("un client jamais mis en service : un bandeau, rien de lu ni de noté", async () => {
     simule.client = { ...BOULANGERIE, version_en_service: null };
     expect(html(await fil("boulangerie-essai", cle("+41790000001")))).toContain(enHtml(TA.jamaisSansConversation));
     expect(html(await liste("boulangerie-essai"))).toContain(enHtml(TA.jamaisSansConversation));
-    expect([simule.appels.filter((x) => !x.startsWith("client")), journal()]).toEqual([[], []]);
+    expect([simule.appels.filter((x) => !x.startsWith("client")), (await journal())]).toEqual([[], []]);
   });
 });
 
@@ -175,7 +177,7 @@ describe("la liste des conversations", () => {
     expect(liens).toEqual(PERSONNES.map((p) => `/admin/clients/boulangerie-essai/conversations/${cle(p.personne)}`));
     for (const l of liens) expect(l).not.toMatch(/4179|%2B|\+|api|caisse/);
     expect([...vu.matchAll(/>(\+41\d+)</g)].map((m) => m[1])).toEqual(["+41790000002", "+41790000001"]);
-    expect(journal()).toEqual([]);
+    expect(await journal()).toEqual([]);
   });
 
   it("chez le client (hors Cloudflare) : la phrase de l'atelier", async () => {

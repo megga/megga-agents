@@ -5,7 +5,7 @@ import { Tableau } from "@/components/admin/tableau";
 import { gardePage } from "@/lib/admin/garde";
 import { filtresDe, lireJournal, type FiltresJournal, type LigneJournal } from "@/lib/admin/journal";
 import { TA } from "@/lib/admin/textes";
-import { base } from "@/lib/base";
+import { pret } from "@/lib/base";
 
 // Le journal : quand, qui, quoi, sur quoi, le résultat. Les filtres et la page passent par l'adresse (filtresDe) ;
 // un membre limité à une liste n'y lit que ses gestes et ceux qui touchent ses clients (lireJournal). Dans un cadre étroit,
@@ -41,7 +41,7 @@ const cibleRepliee = "whitespace-nowrap @max-5xl:whitespace-normal @max-5xl:wrap
 export default async function PageJournal({ searchParams }: PageProps<"/admin/journal">) {
   const a = await gardePage("journal.voir");
   const f = filtresDe(await searchParams);
-  const { lignes, pages, page } = lireJournal(base(), a, f); // page : ramenée à la dernière si l'adresse va trop loin
+  const { lignes, pages, page } = await lireJournal(await pret(), a, f); // page : ramenée à la dernière si l'adresse va trop loin
   const avec = (changer: Partial<FiltresJournal>) => adresse({ ...f, page: 1, ...changer });
   const qui = (l: LigneJournal) =>
     l.qui ? (
