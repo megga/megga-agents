@@ -12,7 +12,7 @@ import { noter } from "./journal";
 import { accesDe } from "./membres";
 import { TA } from "./textes";
 
-// Le seul point de contrôle de l'admin : chaque route de /api/admin est exportée par garde ou gardeSession,
+// Le seul point de contrôle de l'admin : chaque route de /api/admin est exportée par garde, gardeMembre ou gardeSession,
 // chaque page appelle gardePage. Rien n'est décidé par l'écran seul ; un droit retiré vaut à la requête suivante.
 
 /** La marque d'une route gardée (tests/admin/routes.test.ts vérifie que chaque route la porte). */
@@ -96,7 +96,7 @@ function journaliste(db: Base, compte: Compte, action: string | undefined, cible
   };
 }
 
-function cibleDe<P>(regle: Regle<P>, params: P, corps: unknown): string | null {
+function cibleDe<P>(regle: Pick<Regle<P>, "cible" | "client">, params: P, corps: unknown): string | null {
   try {
     if (regle.cible) return regle.cible(params, corps);
     return regle.client ? `client:${regle.client(params)}` : null;
@@ -110,6 +110,25 @@ const marquer = <P>(f: (requete: Request, ctx: { params: Promise<P> }) => Promis
 
 /** Ordre : session (401), membre en cours (404), hors GET l'origine (403), le droit (403), le client (404), puis traiter. */
 export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter: (c: Contexte<P>) => Promise<unknown>): Gestionnaire<P> {
+  return gardeDe(regle, traiter);
+}
+
+/**
+ * Pour les gestes d'un membre sur son propre compte (Mon compte) : le même ordre que garde (session 401, membre en cours 404
+ * sans rien au journal, hors GET l'origine 403), sans exiger de droit ni de client.
+ */
+export function gardeMembre<P extends Record<string, string>>(
+  regle: Omit<Regle<P>, "droit" | "client">,
+  traiter: (c: Contexte<P>) => Promise<unknown>,
+): Gestionnaire<P> {
+  return gardeDe(regle, traiter);
+}
+
+/** garde et gardeMembre : le droit et le client ne sont vérifiés que si la règle les nomme. */
+function gardeDe<P extends Record<string, string>>(
+  regle: Omit<Regle<P>, "droit"> & { droit?: Droit },
+  traiter: (c: Contexte<P>) => Promise<unknown>,
+): Gestionnaire<P> {
   return marquer<P>(async (requete, ctx) => {
     const s = await sessionDe(requete);
     if (!s) return Response.json({ erreur: TA.connectezVous }, { status: 401 });
@@ -128,7 +147,7 @@ export function garde<P extends Record<string, string>>(regle: Regle<P>, traiter
       if (!acces) throw new Refus(404, TA.introuvable);
       membre = true;
       if (!lecture(requete) && !origineAdmise(requete)) throw new Refus(403, TA.origineRefusee);
-      exiger(acces, regle.droit);
+      if (regle.droit) exiger(acces, regle.droit);
       if (regle.client) exigerClient(acces, regle.client(params));
       const preciser = (d: unknown) => {
         precis = { detail: d };

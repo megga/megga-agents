@@ -186,6 +186,11 @@ export const TA = {
     "comptes.suspendu": "Suspendre un compte",
     "comptes.reactive": "Réactiver un compte",
     "comptes.deconnecte": "Déconnecter partout",
+    "compte.photo": "Changer sa photo",
+    "compte.photoRetiree": "Retirer sa photo",
+    "compte.nom": "Changer son nom",
+    "compte.motDePasse": "Changer son mot de passe",
+    "compte.autresAppareils": "Déconnecter ses autres appareils",
   } as Record<string, string>,
 
   // Les onglets d'un client
@@ -634,6 +639,11 @@ export const TA = {
   // Mon compte (la photo, le nom, le mot de passe, les appareils connectés)
   photoInvalide: "Cette photo n'est pas une image WebP, JPEG ou PNG.",
   photoTropLourde: "Cette photo dépasse 200 Ko.",
+  nomCompteManquant: "Donnez un nom, en 80 caractères au plus.",
+  ancienMotDePasseManquant: "Donnez votre mot de passe actuel.",
+  ancienMotDePasseFaux: "Le mot de passe actuel ne correspond pas.",
+  motDePasseLong: "Le mot de passe fait 128 caractères au plus.",
+  sansMotDePasse: "Ce compte se connecte par Google ou Microsoft : il n'a pas de mot de passe ici.",
 
   // L'atelier (le moteur)
   moteurNonBranche: "Le moteur n'est pas branché à cette console.",

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RefusChamps } from "@/lib/admin/atelier";
-import { GARDE, garde, gardePage, gardeSession, origineAdmise } from "@/lib/admin/garde";
+import { GARDE, garde, gardeMembre, gardePage, gardeSession, origineAdmise } from "@/lib/admin/garde";
 import { lireJournal } from "@/lib/admin/journal";
 import { Refus } from "@/lib/agents";
 import { TA } from "@/lib/admin/textes";
@@ -223,6 +223,23 @@ describe("la garde des routes", () => {
     expect((await appelSession("c", "https://ailleurs.example")).status).toBe(403);
     expect((await lignes()).map((l) => `${l.qui} ${l.action} ${l.resultat} ${JSON.stringify(l.detail)}`))
       .toEqual(['c essai.session refuse 403 {"jeton":"[masqué]"}', 'c essai.session ok {"jeton":"[masqué]"}']);
+  });
+
+  it("gardeMembre : session, membre en cours, origine, sans exiger aucun droit", async () => {
+    await compte(etat.db, { id: "c", courriel: "c@megga.test" });
+    await membre(etat.db, { utilisateur: "v", role: await roleVide(etat.db) });
+    const soi = gardeMembre({ action: "essai.soi", detail: () => null }, async ({ acces }) => ({ qui: acces.utilisateur }));
+    expect(soi[GARDE]).toBe(true);
+    const appelSoi = (qui?: string, origine = "http://localhost") =>
+      soi(new Request("http://localhost/api/admin/compte", { method: "PATCH",
+        headers: { ...(qui ? { "x-essai-qui": qui } : {}), origin: origine }, body: "{}" }), { params: Promise.resolve({}) });
+    expect((await appelSoi()).status).toBe(401);
+    expect((await appelSoi("c")).status).toBe(404);
+    expect(await etat.db.un("SELECT COUNT(*) AS n FROM admin_journal")).toEqual({ n: 0 });
+    expect((await appelSoi("v", "https://ailleurs.example")).status).toBe(403);
+    const ok = await appelSoi("v");
+    expect([ok.status, await ok.json()]).toEqual([200, { qui: "v" }]);
+    expect((await lignes()).map((l) => `${l.qui} ${l.action} ${l.resultat}`)).toEqual(["v essai.soi ok", "v essai.soi refuse 403"]);
   });
 
   it("n'admet que l'origine de la requête ou celle de BETTER_AUTH_URL", async () => {

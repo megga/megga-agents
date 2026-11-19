@@ -7,7 +7,7 @@ import { GARDE } from "@/lib/admin/garde";
 import type { Base } from "@/lib/donnees/base";
 import { baseEssai, compte, membre, roleVide } from "./aides";
 
-// Toutes les routes de /api/admin passent par garde ou gardeSession : la liste ci-dessous est celle de la carte des fichiers
+// Toutes les routes de /api/admin passent par garde, gardeMembre ou gardeSession : la liste ci-dessous est celle de la carte des fichiers
 // du plan ; une route sur le disque qui n'y est pas, une route qui n'est pas gardée ou gardée par un autre droit, fait échouer
 // l'essai. Aucune Server Action (« use server ») sous l'admin : elle échapperait à la garde.
 
@@ -15,7 +15,7 @@ const CONSOLE = join(__dirname, "../..");
 const API_ADMIN = join(CONSOLE, "src/app/api/admin");
 
 type Methode = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "session"; params: Record<string, string>; client: boolean }[] = [
+export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "membre" | "session"; params: Record<string, string>; client: boolean }[] = [
   { fichier: "equipe/membres/[id]/route.ts", methodes: ["PATCH", "DELETE"], droit: "equipe.gerer", params: { id: "limite" }, client: false },
   { fichier: "equipe/invitations/route.ts", methodes: ["POST"], droit: "equipe.gerer", params: {}, client: false },
   { fichier: "equipe/invitations/[id]/route.ts", methodes: ["DELETE"], droit: "equipe.gerer", params: { id: "in_x" }, client: false },
@@ -39,6 +39,10 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "ses
   { fichier: "clients/[id]/installation/image/route.ts", methodes: ["POST"], droit: "installations.gerer", params: { id: "garage-essai" }, client: true },
   { fichier: "comptes/[id]/suspension/route.ts", methodes: ["POST", "DELETE"], droit: "comptes.gerer", params: { id: "inconnu" }, client: false },
   { fichier: "comptes/[id]/sessions/route.ts", methodes: ["DELETE"], droit: "comptes.gerer", params: { id: "inconnu" }, client: false },
+  { fichier: "compte/route.ts", methodes: ["PATCH"], droit: "membre", params: {}, client: false },
+  { fichier: "compte/photo/route.ts", methodes: ["PUT", "DELETE"], droit: "membre", params: {}, client: false },
+  { fichier: "compte/mot-de-passe/route.ts", methodes: ["POST"], droit: "membre", params: {}, client: false },
+  { fichier: "compte/sessions/route.ts", methodes: ["DELETE"], droit: "membre", params: {}, client: false },
 ];
 
 /** Les fichiers d'un dossier, à toute profondeur, qui passent le filtre ; chemins relatifs (séparés par /) triés. Dossier absent : erreur. */
@@ -149,7 +153,7 @@ describe("les routes de /api/admin", () => {
   for (const r of ROUTES) {
     it(`${r.fichier} : gardée, 401 sans session, 404 sans être membre, 403 sans son droit, 404 hors périmètre`, async () => {
       const route = (await import(/* @vite-ignore */ join(API_ADMIN, r.fichier))) as Record<string, unknown>;
-      if (r.droit !== "session") await membre(etat.db, { utilisateur: "presque", role: await roleSauf(etat.db, r.droit) });
+      if (r.droit !== "session" && r.droit !== "membre") await membre(etat.db, { utilisateur: "presque", role: await roleSauf(etat.db, r.droit) });
       const exportees = Object.keys(route).filter((k) => ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"].includes(k));
       expect(exportees.sort()).toEqual([...r.methodes].sort());
       for (const m of r.methodes) {
@@ -158,6 +162,7 @@ describe("les routes de /api/admin", () => {
         expect((await appeler(f, r.fichier, m, r.params, null)).status, `${m} sans session`).toBe(401);
         if (r.droit === "session") continue;
         expect((await appeler(f, r.fichier, m, r.params, "inconnu")).status, `${m} sans être membre`).toBe(404);
+        if (r.droit === "membre") continue; // ses propres gestes : aucun droit exigé (gardeMembre)
         expect((await appeler(f, r.fichier, m, r.params, "vide")).status, `${m} sans aucun droit`).toBe(403);
         expect((await appeler(f, r.fichier, m, r.params, "presque")).status, `${m} avec tous les droits sauf ${r.droit}`).toBe(403);
         if (r.client) {
