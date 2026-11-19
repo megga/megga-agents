@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { atelier, atelierBranche, ATTENTE_ACTIVER_MS, ATTENTE_ESSAI_MS, ATTENTE_MS, GARDE_MS, lireErreur, oublier, ouRefus, RefusChamps, tailleGarde }
   from "@/lib/admin/atelier";
 import { TA } from "@/lib/admin/textes";
@@ -19,7 +19,7 @@ function fichiers(dossier: string): string[] {
 
 const reponse = (corps: unknown, statut = 200) => new Response(JSON.stringify(corps), { status: statut, headers: { "content-type": "application/json" } });
 
-let fetchSimule: ReturnType<typeof vi.fn>;
+let fetchSimule: Mock<(url: string, init: RequestInit) => Promise<Response>>;
 let erreurs: ReturnType<typeof vi.spyOn>;
 
 /** Les imports de valeurs (pas « import type ») du client de l'atelier, même écrits sur plusieurs lignes. */

@@ -75,7 +75,7 @@ export function Fil({
   useEffect(() => {
     if (isReady && enAttente.current) {
       enAttente.current = false;
-      envoyer();
+      void envoyer();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady]);
@@ -139,7 +139,7 @@ export function Fil({
           className="trait relative mx-auto flex max-w-[760px] items-end gap-1.5 rounded-[30px] bg-bg py-[7px] pr-[7px] pl-[18px] shadow-doux"
           onSubmit={(e) => {
             e.preventDefault();
-            envoyer();
+            void envoyer();
           }}
         >
           <textarea
@@ -156,7 +156,7 @@ export function Fil({
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
-                envoyer();
+                void envoyer();
               }
             }}
           />

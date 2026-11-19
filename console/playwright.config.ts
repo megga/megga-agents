@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 // Bout en bout : la console, le serveur d'agents (modèle d'essai, sans réseau) et l'atelier d'essai (le vrai atelier sur une
 // porte simulée, pour l'admin), chacun sur une base jetable et sur ses propres ports (ni 8100 ni 8198 du développement).
+// La console prend un fichier SQLite neuf, ou Postgres quand CONSOLE_BASE_URL est posée (la CI : une base neuve à chaque fois).
 const PYTHON = process.env.AGENTS_PYTHON || "../.venv/bin/python";
 const JETON = "jeton-des-essais-e2e";
 const JETON_ATELIER = "jeton-atelier-e2e";
@@ -43,6 +44,7 @@ export default defineConfig({
         ATELIER_URL: `http://127.0.0.1:${PORT_ATELIER}`,
         ATELIER_JETON: JETON_ATELIER,
         NEXT_DIST_DIR: ".next-e2e",
+        ...(process.env.CONSOLE_BASE_URL ? { CONSOLE_BASE_URL: process.env.CONSOLE_BASE_URL } : {}),
       },
       reuseExistingServer: false,
       timeout: 240_000,

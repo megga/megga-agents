@@ -15,6 +15,15 @@ permissions:
 jobs:
   console:
     runs-on: ubuntu-latest
+    # Postgres, le moteur de la production : les essais y rejouent toute la suite, les parcours y tournent.
+    services:
+      postgres:
+        image: postgres:18@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     defaults:
       run:
         working-directory: console
@@ -34,9 +43,17 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      # Les essais sur SQLite, puis les mêmes sur Postgres (chaque essai y crée sa base, puis la supprime).
       - run: npm test
+      - run: npm test
+        env:
+          CONSOLE_ESSAI_MOTEUR: postgres
+          CONSOLE_BASE_ESSAI_URL: postgres://postgres:postgres@localhost:5432/postgres
       - run: npx playwright install --with-deps chromium
+      # Les parcours sur Postgres : la console et la commande admin:inviter lisent CONSOLE_BASE_URL.
       - run: npm run test:e2e
+        env:
+          CONSOLE_BASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # À l'échec d'un parcours : ce que l'écran montrait (l'instantané de Playwright), pour ne pas deviner.
       - if: failure()
         run: find test-results -name error-context.md -exec sh -c 'echo "=== $1"; sed -n "/^# Page snapshot/,/^# Test source/p" "$1"' _ {} \; 2>/dev/null || true
