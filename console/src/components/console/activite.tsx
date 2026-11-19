@@ -2,7 +2,19 @@
 
 import { useEffect, useState } from "react";
 import { T } from "@/lib/textes";
-import { debut, parJour, PERIODES, souci, tempsForts, type EchangeVu, type Mesures, type Periode } from "./activite-donnees";
+import {
+  actions,
+  debut,
+  parJour,
+  PERIODES,
+  souci,
+  tempsForts,
+  type Action,
+  type ConversationVu,
+  type EchangeVu,
+  type Mesures,
+  type Periode,
+} from "./activite-donnees";
 import { reponseLisible } from "./bulles";
 import { Chevron, Triangle } from "./icones";
 import { Tete } from "./tete";
@@ -35,7 +47,7 @@ function nomDuJour(cle: string): string {
 /** Ce que les agents ont fait, en phrases ; aujourd'hui, les questions qu'ils se sont posées (maquette « Temps forts »). */
 export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinuer: (id: string) => void }) {
   const [periode, setPeriode] = useState<Periode>("semaine");
-  const [echanges, setEchanges] = useState<EchangeVu[] | null>(null);
+  const [liste, setListe] = useState<Action[] | null>(null);
   const [mesures, setMesures] = useState<Mesures | null>(null);
   const [souciReseau, setSouciReseau] = useState(false);
   const [reste, setReste] = useState(false);
@@ -45,9 +57,9 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
     fetch(`/api/activite?depuis=${Math.floor(debut(periode))}`)
       .then(async (r) => {
         if (!r.ok) throw new Error(String(r.status));
-        return (await r.json()) as { echanges: EchangeVu[]; mesures: Mesures };
+        return (await r.json()) as { echanges: EchangeVu[]; conversations: ConversationVu[]; mesures: Mesures };
       })
-      .then((d) => vivant && (setEchanges(d.echanges), setMesures(d.mesures), setSouciReseau(false)))
+      .then((d) => vivant && (setListe(actions(d.conversations, d.echanges)), setMesures(d.mesures), setSouciReseau(false)))
       .catch(() => vivant && setSouciReseau(true));
     return () => {
       vivant = false;
@@ -55,7 +67,7 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
   }, [periode]);
 
   const agent = (id: string) => agents.find((a) => a.id === id);
-  const { forts, reste: autres } = tempsForts(echanges ?? []);
+  const { forts, reste: autres } = tempsForts(liste ?? []);
   const dormeur = agents[0];
 
   return (
@@ -100,7 +112,7 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
 
         {souciReseau && <div className="text-center text-[13px] text-muted-ink">{T.serviceIndisponible}</div>}
 
-        {echanges && !echanges.length && dormeur && (
+        {liste && !liste.length && dormeur && (
           <div className="flex justify-center py-14" role="img" aria-label={T.aucuneAction}>
             <Tete couleur={dormeur.couleur} yeux={dormeur.yeux} endormie className="w-[160px]" />
           </div>
@@ -109,7 +121,7 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
         {forts.length > 0 && (
           <div className="grid grid-cols-2 gap-3 [grid-auto-flow:dense] max-[760px]:grid-cols-1">
             {forts.map((e) => (
-              <Fort key={e.id} echange={e} agent={agent} onContinuer={onContinuer} />
+              <Fort key={e.id} action={e} agent={agent} onContinuer={onContinuer} />
             ))}
           </div>
         )}
@@ -130,7 +142,7 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
                   <div key={jour}>
                     <div className="mx-3 mt-4 mb-1.5 text-[11.5px] font-bold tracking-[.06em] text-faint uppercase">{nomDuJour(jour)}</div>
                     {liste.map((e) => (
-                      <Ligne key={e.id} echange={e} agent={agent} onContinuer={onContinuer} />
+                      <Ligne key={e.id} action={e} agent={agent} onContinuer={onContinuer} />
                     ))}
                   </div>
                 ))}
@@ -143,10 +155,39 @@ export function Activite({ agents, onContinuer }: { agents: AgentVu[]; onContinu
   );
 }
 
-type Props = { echange: EchangeVu; agent: (id: string) => AgentVu | undefined; onContinuer: (id: string) => void };
+type Props = { action: Action; agent: (id: string) => AgentVu | undefined; onContinuer: (id: string) => void };
 
-/** La phrase d'un échange, les prénoms en gras. */
-function Phrase({ echange: e, agent }: Omit<Props, "onContinuer">) {
+/** L'agent qu'on voit sur la ligne : celui de la conversation ; pour une question restée sans réponse, celui qui n'a pas
+ * répondu ; sinon celui qui a demandé. */
+function quiDe(a: Action): string {
+  if (a.genre === "conversation") return a.agent;
+  return souci(a) ? a.a : a.de;
+}
+
+/** Le résumé d'Agno, le prénom de l'agent en gras quand la phrase commence par lui. */
+function Resume({ texte, prenom }: { texte: string; prenom: string }) {
+  if (!texte.startsWith(prenom + " ")) return <>{texte}</>;
+  return (
+    <>
+      <b>{prenom}</b>
+      {texte.slice(prenom.length)}
+    </>
+  );
+}
+
+/** La phrase d'une ligne, les prénoms en gras. */
+function Phrase({ action: e, agent }: Omit<Props, "onContinuer">) {
+  if (e.genre === "conversation") {
+    const prenom = agent(e.agent)?.prenom ?? T.unCollegue;
+    return e.resume ? (
+      <Resume texte={e.resume} prenom={prenom} />
+    ) : (
+      <>
+        <b>{prenom}</b>
+        {T.aRepondu}
+      </>
+    );
+  }
   const de = agent(e.de)?.prenom ?? T.unCollegue;
   const a = agent(e.a)?.prenom ?? T.unCollegue;
   return souci(e) ? (
@@ -164,22 +205,49 @@ function Phrase({ echange: e, agent }: Omit<Props, "onContinuer">) {
   );
 }
 
-function Detail({ echange: e, agent, onContinuer }: Props) {
-  const de = agent(e.de);
+/** La question à un collègue et ce qu'il a répondu. */
+function Question({ question, etat, reponse }: { question: string; etat: string | null; reponse: string | null }) {
+  return (
+    <div className="flex flex-col gap-1 whitespace-pre-wrap">
+      <div className="text-muted-ink">{T.citation(question)}</div>
+      {etat === "repondu" && reponse && <div>{reponseLisible(reponse)}</div>}
+      {etat === "passe" && <div className="text-muted-ink">{T.rienAAjouter}</div>}
+    </div>
+  );
+}
+
+function Detail({ action: e, agent, onContinuer }: Props) {
+  const qui = agent(e.genre === "conversation" ? e.agent : e.de);
   return (
     <div className="flex flex-col gap-3 text-[14px]">
-      <div className="flex flex-col gap-1 whitespace-pre-wrap">
-        <div className="text-muted-ink">{T.citation(e.question)}</div>
-        {e.etat === "repondu" && e.reponse && <div>{reponseLisible(e.reponse)}</div>}
-        {e.etat === "passe" && <div className="text-muted-ink">{T.rienAAjouter}</div>}
-      </div>
-      {de && (
+      {e.genre === "echange" && <Question question={e.question} etat={e.etat} reponse={e.reponse} />}
+      {e.genre === "conversation" && e.etapes.length > 0 && (
+        <ol className="m-0 flex list-none flex-col gap-3 p-0">
+          {e.etapes.map((t, i) => (
+            <li key={i} className="flex flex-col gap-1">
+              <div className="font-semibold">
+                {t.etat === "hors_delai" || t.etat === "echec" ? (
+                  <>
+                    <b>{agent(t.collegue)?.prenom ?? T.unCollegue}</b>
+                    {T.pasRepondu}
+                    <b>{qui?.prenom ?? T.unCollegue}</b>
+                  </>
+                ) : (
+                  T.aDemandeAEtape(agent(t.collegue)?.prenom ?? T.unCollegue)
+                )}
+              </div>
+              <Question question={t.question} etat={t.etat} reponse={t.reponse} />
+            </li>
+          ))}
+        </ol>
+      )}
+      {qui && (
         <button
           type="button"
-          onClick={() => onContinuer(de.id)}
+          onClick={() => onContinuer(qui.id)}
           className="w-fit rounded-full bg-bg px-4 py-2 text-[14px] font-semibold text-ink hover:bg-hover"
         >
-          {T.continuerAvec(de.prenom)}
+          {T.continuerAvec(qui.prenom)}
         </button>
       )}
     </div>
@@ -187,10 +255,10 @@ function Detail({ echange: e, agent, onContinuer }: Props) {
 }
 
 function Fort(p: Props) {
-  const e = p.echange;
+  const e = p.action;
   const alerte = souci(e);
   const [ouvert, setOuvert] = useState(alerte);
-  const qui = p.agent(alerte ? e.a : e.de);
+  const qui = p.agent(quiDe(e));
   return (
     <div
       data-testid="temps-fort"
@@ -212,7 +280,7 @@ function Fort(p: Props) {
         </span>
         <span className="flex min-w-0 flex-col gap-1">
           <span className="text-[18px] leading-[1.35] tracking-[-0.01em] [&_b]:font-extrabold">
-            <Phrase echange={e} agent={p.agent} />
+            <Phrase action={e} agent={p.agent} />
           </span>
           <time className="text-[13px] text-muted-ink">{quand(e.quand)}</time>
         </span>
@@ -227,9 +295,9 @@ function Fort(p: Props) {
 }
 
 function Ligne(p: Props) {
-  const e = p.echange;
+  const e = p.action;
   const [ouvert, setOuvert] = useState(false);
-  const qui = p.agent(souci(e) ? e.a : e.de);
+  const qui = p.agent(quiDe(e));
   return (
     <div className={"rounded-2xl " + (ouvert ? "bg-side" : "")} data-testid="ligne-activite">
       <button
@@ -243,7 +311,7 @@ function Ligne(p: Props) {
           {souci(e) && <Triangle className="absolute right-[-6px] bottom-[-6px] size-[18px] text-[var(--warn)]" />}
         </span>
         <span className={"min-w-0 flex-1 text-[15px] leading-[1.4] [&_b]:font-bold " + (souci(e) ? "font-semibold" : "")}>
-          <Phrase echange={e} agent={p.agent} />
+          <Phrase action={e} agent={p.agent} />
         </span>
         <time className="flex-none text-[13px] text-muted-ink tabular-nums">{heure(e.quand)}</time>
         <Chevron className={"size-3.5 flex-none text-muted-ink transition-transform " + (ouvert ? "rotate-90" : "")} />

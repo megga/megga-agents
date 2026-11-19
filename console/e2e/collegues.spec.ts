@@ -38,13 +38,15 @@ test("Alix a demandé à Léa", async ({ page }) => {
   await page.getByRole("button", { name: "Activité" }).click();
   const fort = page.getByTestId("temps-fort");
   await expect(fort).toHaveCount(1);
-  await expect(fort.getByRole("button").first()).toContainText("Alix a demandé à Léa");
+  // La conversation d'Alix, résumée en une phrase ; sa question à Léa en est une étape, pas une ligne de plus
+  await expect(fort.getByRole("button").first()).toContainText("Alix a répondu à «\u00a0Le dossier Martin est-il complet ?\u00a0»");
   const chiffres = page.getByTestId("chiffres");
   // Une conversation (avec Alix) et sa réponse ; la question à Léa est un échange, pas une conversation de plus
   await expect(chiffres).toHaveText("1Conversations1Réponses1Questions entre agents");
   await page.screenshot({ path: "captures/activite.png" });
   await fort.getByRole("button").first().click();
-  await expect(fort.getByText("«\u00a0Le dossier Martin est-il complet ?\u00a0»")).toBeVisible();
+  await expect(fort.getByText("A demandé à Léa")).toBeVisible();
+  await expect(fort.getByText(/^Bien reçu.*Le dossier Martin est-il complet/)).toBeVisible();
   await page.screenshot({ path: "captures/activite-deplie.png" });
   await fort.getByRole("button", { name: "Continuer avec Alix" }).click();
   await expect(page.getByLabel("Écrivez à Alix")).toBeVisible();

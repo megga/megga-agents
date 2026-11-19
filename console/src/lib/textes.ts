@@ -62,6 +62,8 @@ export const T = {
   periodeAn: "12 mois",
   aDemandeAMilieu: " a demandé à ",
   pasRepondu: " n'a pas répondu à ", // nouveau
+  aRepondu: " a répondu", // nouveau, tant que le résumé n'est pas fait
+  aDemandeAEtape: (collegue: string) => `A demandé à ${collegue}`, // nouveau
   rienAAjouter: "Rien à ajouter", // nouveau
   continuerAvec: (prenom: string) => `Continuer avec ${prenom}`,
   voirLeReste: "Voir tout le reste",

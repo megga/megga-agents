@@ -25,6 +25,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.response import ModelResponse
+from agno.session.summary import SessionSummaryManager
 from agno.os.interfaces.agui.router import run_entity
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -62,6 +63,15 @@ QUI = {
     "fiduciaire": "à l'accueil de la fiduciaire",
     "garage": "à l'accueil du garage",
 }
+# Le résumé d'une conversation, en une phrase : la ligne de la page Activité (maquette « Temps forts »).
+RESUME = (
+    "Prénom de l'agent : {prenom}.\n"
+    "Résume en une seule phrase courte, au passé composé et à la troisième personne, ce que {prenom} a fait dans cette "
+    "conversation, en commençant par « {prenom} ». Exemples : « {prenom} a confirmé la visite de jeudi à 14 h », "
+    "« {prenom} a transmis la demande de devis à l'équipe ». Écris en français, sans tiret long ni point médian. "
+    "N'invente rien : seulement ce que la conversation montre. Pas de numéro de téléphone, de courriel ni de donnée "
+    "de santé ou bancaire.\n"
+)
 IDENT = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 
 DOSSIER = Path(os.environ.get("AGENTS_DONNEES") or Path(__file__).resolve().parent.parent / ".donnees")
@@ -83,6 +93,14 @@ class ModeleEssai(Model):
         texte = str(getattr(des_gens[-1], "content", "") or "") if des_gens else ""
         if texte == "ESSAI-PANNE":  # les essais de bout en bout simulent ainsi une panne du modèle
             raise RuntimeError("panne simulée du modèle d'essai")
+        # Le résumé d'une conversation (RESUME) : la première demande, telle quelle.
+        systeme = str(getattr(messages[0], "content", "") or "") if messages else ""
+        if "<conversation>" in systeme:
+            prenom = re.search(r"Prénom de l'agent : (.+?)\.", systeme)
+            demande = re.search(r"User: (.+)", systeme)
+            debut = (demande.group(1).removeprefix("ESSAI-COLLEGUE ") if demande else "")[:80]
+            return ModelResponse(role="assistant", content=json.dumps(
+                {"summary": f"{prenom.group(1) if prenom else 'L agent'} a répondu à «\u00a0{debut}\u00a0»"}))
         # « ESSAI-COLLEGUE <question> » : il pose la question à son premier collègue, puis redit sa réponse.
         if texte.startswith("ESSAI-COLLEGUE "):
             retour = next((m for m in reversed(messages) if getattr(m, "role", "") == "tool"), None)
@@ -191,12 +209,17 @@ def construire(ident: str, fiche: dict, registre: dict | None = None) -> Agent:
     })
     cle = os.environ.get("ANTHROPIC_API_KEY")
     m = modele(config.modeles.principal, {"ANTHROPIC_API_KEY": cle}) if cle else ModeleEssai()
+    # Le résumé de chaque conversation, par le petit modèle : un appel court de plus par tour.
+    petit = modele(config.modeles.petit(), {"ANTHROPIC_API_KEY": cle}, jetons=300) if cle else ModeleEssai()
+    resumes = SessionSummaryManager(model=petit, session_summary_prompt=RESUME.format(prenom=fiche["prenom"]), last_n_runs=6)
     return Agent(
         id=ident,
         name=fiche["prenom"],
         model=m,
         instructions=[*consignes(config), ESSAI_COLLEGUES if relais else ESSAI, *([relais.consigne(ident)] if relais else [])],
         tools=relais.outils(ident) if relais else [],
+        session_summary_manager=resumes,
+        add_session_summary_to_context=False,  # le résumé sert la page Activité, pas les réponses
         db=SqliteDb(db_file=str(DOSSIER / "sessions.sqlite")),
         add_history_to_context=True,
         num_history_runs=12,
@@ -268,6 +291,59 @@ def tours(depuis: float, agents: set[str]) -> tuple[int, int]:
         except sqlite3.OperationalError:  # aucune conversation encore : Agno n'a pas créé sa table
             return 0, 0
     return int(n_conv or 0), int(n_rep or 0)
+
+
+def _json(v):
+    if isinstance(v, (dict, list)) or v is None:
+        return v
+    try:
+        return json.loads(v)
+    except (TypeError, ValueError):
+        return None
+
+
+@app.get("/comptes/{compte}/conversations", dependencies=[Depends(jeton)])
+def conversations(compte: str, depuis: float = 0, limite: int = 100):
+    """Les conversations des agents de ce compte actives depuis cette date, la plus récente d'abord : le résumé d'Agno en
+    une phrase, et les étapes (aujourd'hui, les questions posées à un collègue, avec l'échange qui leur correspond).
+    Sans les conversations entre agents eux-mêmes."""
+    import sqlite3
+
+    if not 1 <= len(compte) <= 100:
+        raise HTTPException(400, "compte invalide")
+    registre = lire_registre()
+    agents = sorted(i for i, f in registre.items() if f.get("compte") == compte)
+    fichier = DOSSIER / "sessions.sqlite"
+    if not agents or not fichier.exists():
+        return {"conversations": []}
+    marques = ",".join("?" * len(agents))
+    with sqlite3.connect(f"file:{fichier}?mode=ro", uri=True) as c:
+        try:
+            sessions = c.execute(
+                f"SELECT session_id, agent_id, summary, updated_at FROM agno_sessions WHERE updated_at >= ? AND agent_id IN ({marques}) "
+                f"AND (user_id IS NULL OR user_id NOT LIKE 'collegue:%') ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+                (int(depuis), *agents, max(1, min(limite, 500)))).fetchall()
+            ids = [s[0] for s in sessions]
+            runs = c.execute(f"SELECT session_id, run_data FROM agno_runs WHERE session_id IN ({','.join('?' * len(ids))}) "
+                             "ORDER BY created_at", ids).fetchall() if ids else []
+        except sqlite3.OperationalError:
+            return {"conversations": []}
+    depot = stockage.Echanges(f"sqlite:///{DOSSIER / 'echanges.sqlite'}")
+    recents = depot.recents(depuis, set(agents), 500)
+    etapes: dict[str, list] = {}
+    for sid, brut in runs:
+        for t in (_json(brut) or {}).get("tools") or []:
+            if t.get("tool_name") != "demander_a_un_collegue":
+                continue
+            args = t.get("tool_args") or {}
+            echange = next((e for e in recents if e["a"] == args.get("collegue") and e["texte"] == args.get("question")), None)
+            etapes.setdefault(sid, []).append({"collegue": args.get("collegue", ""), "question": args.get("question", ""),
+                                               "echange": echange["id"] if echange else None,
+                                               "reponse": echange["reponse"] if echange else None,
+                                               "etat": echange["etat"] if echange else None})
+    return {"conversations": [{"id": sid, "agent": agent, "quand": quand, "resume": (_json(resume) or {}).get("summary"),
+                               "etapes": etapes.get(sid, [])}
+                              for sid, agent, resume, quand in sessions]}
 
 
 @app.get("/comptes/{compte}/mesures", dependencies=[Depends(jeton)])

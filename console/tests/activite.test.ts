@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { debut, parJour, tempsForts, type EchangeVu } from "@/components/console/activite-donnees";
+import { actions, debut, parJour, souci, tempsForts, type ConversationVu, type EchangeVu } from "@/components/console/activite-donnees";
 
 const e = (id: string, quand: number, etat: EchangeVu["etat"] = "repondu"): EchangeVu => ({
   id, quand, de: "ag_alix", a: "ag_lea", question: "?", etat, reponse: etat === "repondu" ? "Oui." : null,
@@ -14,6 +14,18 @@ describe("la page Activité", () => {
     expect(tempsForts([e("a", 3), e("b", 2), e("c", 1)]).forts.map((x) => x.id)).toEqual(["a", "b"]);
     expect(tempsForts([e("a", 3)]).forts.map((x) => x.id)).toEqual(["a"]);
     expect(tempsForts([])).toEqual({ forts: [], reste: [] });
+  });
+
+  it("range une question posée pendant une conversation dans ses étapes, pas à part", () => {
+    const conv: ConversationVu = {
+      id: "s1", agent: "ag_alix", quand: 10, resume: "Alix a confirmé la visite",
+      etapes: [{ collegue: "ag_lea", question: "?", echange: "a", reponse: "Oui.", etat: "repondu" }],
+    };
+    const l = actions([conv], [e("a", 9), e("b", 12)]);
+    expect(l.map((x) => [x.genre, x.id])).toEqual([["echange", "b"], ["conversation", "s1"]]);
+    const enPanne = { ...conv, etapes: [{ ...conv.etapes[0], etat: "hors_delai" as const, reponse: null }] };
+    expect(souci(actions([enPanne], [])[0])).toBe(true);
+    expect(souci(actions([conv], [])[0])).toBe(false);
   });
 
   it("range le reste par jour, à l'heure locale", () => {

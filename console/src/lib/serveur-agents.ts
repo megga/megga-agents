@@ -1,5 +1,5 @@
 import "server-only";
-import type { EchangeVu, Mesures } from "@/components/console/activite-donnees";
+import type { ConversationVu, EchangeVu, Mesures } from "@/components/console/activite-donnees";
 
 // Le serveur d'agents (console/agents/serveur.py en local ; l'atelier plus tard).
 // Le navigateur ne lui parle jamais : seule la console, avec le jeton partagé.
@@ -49,6 +49,17 @@ export async function lireEchanges(compte: string, depuis: number): Promise<Echa
   });
   if (!r.ok) throw new Error(`le serveur d'agents refuse la lecture des échanges (${r.status})`);
   return ((await r.json()) as { echanges: EchangeVu[] }).echanges;
+}
+
+/** Les conversations des agents de ce compte actives depuis cette date (en secondes), avec leur résumé et leurs étapes. */
+export async function lireConversations(compte: string, depuis: number): Promise<ConversationVu[]> {
+  const r = await fetch(`${adresseAgents()}/comptes/${encodeURIComponent(compte)}/conversations?depuis=${depuis}`, {
+    headers: enteteAgents(),
+    signal: AbortSignal.timeout(10_000),
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error(`le serveur d'agents refuse la lecture des conversations (${r.status})`);
+  return ((await r.json()) as { conversations: ConversationVu[] }).conversations;
 }
 
 /** Les trois chiffres de la page Activité pour ce compte depuis cette date (en secondes). */

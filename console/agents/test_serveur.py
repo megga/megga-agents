@@ -140,6 +140,30 @@ def test_les_mesures_d_un_compte(client):
     assert client.get("/comptes/c1/mesures").status_code == 401
 
 
+def test_les_conversations_resumees_d_un_compte(client):
+    for ident, prenom, compte in (("agent-alix", "Alix", "c1"), ("agent-lea", "Léa", "c1"), ("agent-sam", "Sam", "c2")):
+        client.put(f"/agents/{ident}", json={"prenom": prenom, "metier": "garage", "entreprise": "E", "compte": compte}, headers=ENTETE)
+    assert client.get("/comptes/c1/conversations", headers=ENTETE).json() == {"conversations": []}
+
+    def tour(agent, texte, fil, run):
+        with client.stream("POST", f"/agents/{agent}/agui", json={**entree(texte), "threadId": fil, "runId": run}, headers=ENTETE) as f:
+            list(f.iter_lines())
+
+    tour("agent-lea", "Ma facture est-elle réglée ?", "fil-b", "r1")
+    tour("agent-alix", "ESSAI-COLLEGUE Le dossier Martin est-il complet ?", "fil-a", "r2")
+    tour("agent-sam", "Autre compte", "fil-c", "r3")
+    r = client.get("/comptes/c1/conversations", headers=ENTETE).json()["conversations"]
+    assert [(c["agent"], c["resume"]) for c in r] == [
+        ("agent-alix", "Alix a répondu à «\u00a0Le dossier Martin est-il complet ?\u00a0»"),
+        ("agent-lea", "Léa a répondu à «\u00a0Ma facture est-elle réglée ?\u00a0»"),
+    ]  # pas la conversation de Léa avec Alix, ni celle de Sam
+    (etape,) = r[0]["etapes"]
+    assert etape["collegue"] == "agent-lea" and etape["question"] == "Le dossier Martin est-il complet ?"
+    assert etape["etat"] == "repondu" and etape["reponse"].startswith("Bien reçu") and etape["echange"]
+    assert r[1]["etapes"] == []
+    assert client.get("/comptes/c1/conversations").status_code == 401
+
+
 def test_le_compte_est_borne(client):
     corps = {"prenom": "Lou", "metier": "garage", "entreprise": "E", "compte": "x" * 101}
     assert client.put("/agents/agent-borne", json=corps, headers=ENTETE).status_code == 422
