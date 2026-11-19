@@ -227,7 +227,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   // Son rail : la vue d'ensemble et les clients, ni Comptes, ni Tarifs, ni Équipe, ni Journal. Aucun coût nulle part.
   await expect(rail(externe).getByRole("link")).toHaveText([TA.vueEnsemble, TA.clients, TA.alertes, TA.installations]);
   await expect(externe.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(externe.locator("main")).not.toContainText(TA.cout);
+  await expect(externe.getByRole("main")).not.toContainText(TA.cout);
   await expect(externe.getByRole("heading", { name: TA.console, exact: true })).toHaveCount(0);
   await externe.screenshot({ path: "captures/admin-externe.png", fullPage: true });
 
@@ -238,7 +238,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await externe.getByRole("link", { name: GARAGE.entreprise, exact: true }).click();
   await expect(titre(externe, GARAGE.entreprise)).toBeVisible();
   await expect(externe.getByRole("heading", { name: TA.parModele, level: 2 })).toBeVisible();
-  await expect(externe.locator("main")).not.toContainText(TA.cout);
+  await expect(externe.getByRole("main")).not.toContainText(TA.cout);
 
   // Un autre client, l'équipe : la page introuvable, comme si l'admin n'existait pas.
   for (const adresse of [`/admin/clients/${BOULANGERIE.id}`, "/admin/equipe"]) {

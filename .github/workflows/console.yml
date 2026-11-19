@@ -37,3 +37,6 @@ jobs:
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      # À l'échec d'un parcours : ce que l'écran montrait (l'instantané de Playwright), pour ne pas deviner.
+      - if: failure()
+        run: find test-results -name error-context.md -exec sh -c 'echo "=== $1"; sed -n "/^# Page snapshot/,/^# Test source/p" "$1"' _ {} \; 2>/dev/null || true
