@@ -28,6 +28,13 @@ def entree_hors_cache(m: dict) -> int:
     return max(0, entree - int(m.get("cache_read_tokens") or 0))
 
 
+def delai(journal: dict[str, dict], genre: str) -> dict:
+    """Le temps moyen (secondes) noté au journal sous ce genre, depuis l'envoi du message de la personne."""
+    e = journal.get(genre) or {}
+    n = int(e.get("nombre", 0))
+    return {"nombre": n, "moyenne": round(float(e.get("quantite", 0)) / n, 1) if n else None}
+
+
 def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_en_attente: int, depuis: float) -> dict:
     modeles: dict[str, dict] = {}
     secours = 0
@@ -58,6 +65,9 @@ def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_e
         "derniere_activite": max((t["quand"] for t in tours), default=None),
         "modeles": modeles,
         "journal": journal,
+        # Ce que la personne a attendu (19.11.2026) : jusqu'aux coches bleues, jusqu'à la réponse, et les réponses lentes.
+        "delais": {"lecture": delai(journal, "delai_lecture"), "reponse": delai(journal, "delai_reponse"),
+                   "lentes": int((journal.get("reponse_lente") or {}).get("nombre", 0))},
         "rappels_en_attente": rappels_en_attente,
     }
 

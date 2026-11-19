@@ -1215,8 +1215,9 @@ class Journal:
     # mise_a_jour_bloquee : le pilote ne peut plus avancer seul une mise à jour de l'image (retour non fait, ligne retouchée)
     # envoi_refuse : Meta a refusé un envoi après l'avoir accepté ; message_ancien : un message reçu trop tard pour une réponse ;
     # plafond : le plafond de tours du jour atteint (noyau/garde.py, Plafond)
+    # reponse_lente : une réponse partie trop tard (lecture ou réponse, noyau/tour.py) ; delai_lecture et delai_reponse en gardent les secondes
     ALERTES = ("tour_echec", "envoi_echec", "vocal_illisible", "voix_echec", "rappel_echec", "mise_a_jour_bloquee", "envoi_refuse",
-               "message_ancien", "plafond")
+               "message_ancien", "plafond", "reponse_lente")
 
     def __init__(self, url: str):
         self._e, self._t = _table(
