@@ -117,3 +117,118 @@ def test_un_collegue_n_a_que_les_outils_de_sa_fiche(tmp_path):
     assert noms["lea"] == {"chercher_biens", "voir_bien", "demander_a_un_collegue"} and noms["sam"] == {"demander_a_un_collegue"}
     assert agents["lea"].id.endswith("-collegue-lea") and agents["lea"].name == "Léa"
     assert not agents["lea"].enable_agentic_memory and not agents["lea"].add_memories_to_context
+
+
+# Le coût et le suivi
+
+
+def tours_d_un_echange(tmp_path):
+    """Un échange réel : l'agent pose une question à Léa, qui répond par un vrai tour d'agent (faux modèle qui compte ses jetons)."""
+    from test_suivi import ModeleCompte
+
+    url = f"sqlite:///{tmp_path}/a.db"
+    c = conf(**avec())
+    relais = relais_des_collegues(c, stockage.base_agno(url), {"ANTHROPIC_API_KEY": "essai"}, url,
+                                  modele_des_collegues=ModeleCompte(id="claude-sonnet-5-5", provider="Anthropic"))
+    (outil,) = relais.outils(PRINCIPAL)
+    assert "Réponse de Léa" in asyncio.run(outil("lea", "La villa de Cologny est-elle toujours à vendre ?"))
+    return c, url
+
+
+def test_le_suivi_separe_les_reponses_d_un_collegue(tmp_path):
+    from noyau.suivi import resumer
+
+    c, url = tours_d_un_echange(tmp_path)
+    tours = stockage.Suivi(url).tours(0)
+    assert [(t["personne"], t["collegue"]) for t in tours] == [(None, "lea")]
+    r = resumer(c, tours, {}, 0, 0)
+    assert r["tours"] == 0 and r["personnes"] == 0 and r["tours_api"] == 0  # aucune personne n'a écrit
+    assert r["modeles"]["claude-sonnet-5-5"] == {"fournisseur": "Anthropic", "tours": 1, "entree": 1000, "sortie": 200,
+                                                  "cache_lecture": 500, "cache_ecriture": 0}  # ce qui se facture, collègue compris
+    assert r["echanges"]["reponses"] == 1 and r["echanges"]["collegues"]["lea"]["reponses"] == 1
+    assert r["echanges"]["collegues"]["lea"]["modeles"]["claude-sonnet-5-5"]["sortie"] == 200
+
+
+def test_un_collegue_n_est_pas_une_personne_du_suivi(tmp_path):
+    c, url = tours_d_un_echange(tmp_path)
+    assert stockage.Suivi(url).conversations() == []
+    assert stockage.Suivi(url).tours(0)[0]["personne"] is None
+
+
+def test_le_suivi_sans_echange_garde_sa_forme(tmp_path):
+    from noyau.suivi import resumer
+
+    r = resumer(CONF_WA, [{"personne": GREG, "quand": 1, "statut": "COMPLETED", "modeles": [], "collegue": None}], {}, 0, 0)
+    assert r["tours"] == 1 and r["personnes"] == 1
+    assert r["echanges"] == {"reponses": 0, "collegues": {}, "refuses": 0, "hors_delai": 0, "en_echec": 0}
+
+
+def test_les_echanges_refuses_et_en_echec_sont_comptes(tmp_path):
+    from noyau.suivi import resumer
+
+    journal = {"echange_boucle": {"nombre": 2, "quantite": 2}, "echange_plafond": {"nombre": 1, "quantite": 1},
+               "echange_hors_delai": {"nombre": 3, "quantite": 3}, "echange_echec": {"nombre": 4, "quantite": 4}}
+    assert resumer(CONF_WA, [], journal, 0, 0)["echanges"] == {"reponses": 0, "collegues": {}, "refuses": 3, "hors_delai": 3, "en_echec": 4}
+
+
+def test_une_question_a_un_collegue_compte_dans_le_plafond_de_la_personne(tmp_path):
+    from noyau.echanges import PLAFOND, Collegue, Relais
+    from noyau.garde import Plafond
+
+    url = f"sqlite:///{tmp_path}/a.db"
+    env = {"CLIENT_CONFIG": json.dumps(conf(**avec()).model_dump(mode="json")), "DATABASE_URL": url,
+           "GESTIONNAIRES": json.dumps({GREG: "greg@agence.ch"}), "GESTION_CLE": "cle", "ANTHROPIC_API_KEY": "essai", "META_APP_SECRET": "s"}
+    conversations = creer(env).state.conversations
+    conversations._roles["+41790000009"] = "visiteur"
+    conversations.plafond = Plafond(par_personne=2, client=100)
+    assert [conversations.echange_permis("+41790000009") for _ in range(3)] == [True, True, False]
+    assert conversations.plafond.libre("+41790000009", "visiteur") == "personne"  # c'est bien le plafond de ses tours
+    assert conversations.echange_permis("+41790000010") is True  # une personne dont le rôle n'est pas connu : pas de plafond ici
+
+    async def repond(question, de, origine, conclure=False):
+        return "Oui."
+
+    relais = Relais(stockage.Echanges(url), {"lea": Collegue("Léa", "comptabilité", repond)}, journal=stockage.Journal(url),
+                    permis=conversations.echange_permis)
+    conversations.plafond = Plafond(par_personne=1, client=100)
+    r1 = asyncio.run(relais.demander(PRINCIPAL, "lea", "Une ?", personne="+41790000009"))
+    r2 = asyncio.run(relais.demander(PRINCIPAL, "lea", "Deux ?", personne="+41790000009"))
+    assert (r1.etat, r2.etat, r2.texte) == ("repondu", "refuse", PLAFOND)
+    assert stockage.Journal(url).totaux(0)["echange_plafond"]["nombre"] == 1  # noté, sans texte
+
+
+def test_le_plafond_suit_la_chaine_et_pas_le_collegue(tmp_path):
+    """Léa interroge Sam au nom de la même personne : un seul plafond, compté pour cette personne."""
+    from noyau.echanges import Collegue, Relais
+
+    comptes = []
+
+    def permis(personne):
+        comptes.append(personne)
+        return True
+
+    relais = Relais(stockage.Echanges(f"sqlite:///{tmp_path}/a.db"), permis=permis)
+
+    async def lea(question, de, origine, conclure=False):
+        return (await relais.demander("lea", "sam", "Et toi ?")).texte  # sans dire de qui : la chaîne le sait
+
+    async def sam(question, de, origine, conclure=False):
+        return "Oui."
+
+    relais.inscrire("lea", Collegue("Léa", "comptabilité", lea))
+    relais.inscrire("sam", Collegue("Sam", "banque", sam))
+    asyncio.run(relais.demander(PRINCIPAL, "lea", "Une ?", personne="+41790000009"))
+    assert comptes == ["+41790000009", "+41790000009"]
+
+
+def test_la_personne_n_est_jamais_rangee_dans_la_base(tmp_path):
+    from noyau.echanges import Collegue, Relais
+
+    url = f"sqlite:///{tmp_path}/a.db"
+
+    async def lea(question, de, origine, conclure=False):
+        return "Oui."
+
+    relais = Relais(stockage.Echanges(url), {"lea": Collegue("Léa", "comptabilité", lea)}, permis=lambda p: True)
+    asyncio.run(relais.demander(PRINCIPAL, "lea", "Une ?", personne="+41790000009"))
+    assert "+41790000009" not in json.dumps(stockage.Echanges(url).depuis(0), default=str)

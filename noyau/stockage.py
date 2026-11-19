@@ -36,6 +36,8 @@ FORMAT = 1
 SCHEMA_VERSION = 2
 # La longueur d'une personne : un numéro WhatsApp, ou « api:<logiciel>:<identifiant> » (noyau/api.py).
 PERSONNE = 80
+# Celui qui parle à un collègue de l'agent n'est pas une personne : un autre agent (« collegue:<identifiant> »).
+COLLEGUE = "collegue:"
 
 
 def _elargir_personnes(c, schema) -> None:
@@ -1351,12 +1353,17 @@ class Suivi:
         metriques = t.c.run_data["metrics"] if isinstance(t.c.run_data.type, JSON) else t.c.run_data
         sortie = []
         with self._e.connect() as c:
-            for l in c.execute(select(t.c.user_id, t.c.created_at, t.c.status, metriques.label("m")).where(t.c.created_at >= int(depuis))):
+            agent = t.c.agent_id if "agent_id" in t.c else text("NULL")
+            for l in c.execute(select(t.c.user_id, t.c.created_at, t.c.status, metriques.label("m"), agent.label("agent"))
+                               .where(t.c.created_at >= int(depuis))):
                 m = self._donnees(l.m)
                 if "metrics" in m and not isinstance(t.c.run_data.type, JSON):
                     m = m.get("metrics") or {}
                 modeles = [x for liste in (m.get("details") or {}).values() for x in (liste or [])]
-                sortie.append({"personne": l.user_id, "quand": l.created_at, "statut": l.status, "modeles": modeles})
+                # Un tour d'un collègue (noyau/echanges.py) : la réponse à une question d'un autre agent, pas à une personne.
+                collegue = str(l.agent or "").rpartition("-collegue-")[2] if str(l.user_id or "").startswith(COLLEGUE) else None
+                sortie.append({"personne": None if collegue else l.user_id, "quand": l.created_at, "statut": l.status,
+                               "modeles": modeles, "collegue": collegue})
         return sortie
 
     def conversations(self, limite: int = 50) -> list[dict]:
@@ -1367,7 +1374,8 @@ class Suivi:
         if t is None:
             return []
         with self._e.connect() as c:
-            lignes = c.execute(select(t.c.user_id, func.count(), func.max(t.c.created_at)).where(t.c.user_id.is_not(None))
+            lignes = c.execute(select(t.c.user_id, func.count(), func.max(t.c.created_at))
+                               .where(t.c.user_id.is_not(None), t.c.user_id.not_like(f"{COLLEGUE}%"))
                                .group_by(t.c.user_id).order_by(func.max(t.c.created_at).desc()).limit(limite))
             return [{"personne": p, "messages": 2 * n, "derniere": d} for p, n, d in lignes]
 

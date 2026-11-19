@@ -209,6 +209,17 @@ class Conversations(Envois, Autour):
 
         self._lancer(ensuite())
 
+    def echange_permis(self, personne: str) -> bool:
+        """Cette personne a-t-elle encore droit à un tour aujourd'hui ? Le compte si oui. Une question à un collègue
+        (noyau/echanges.py) en est un : une chaîne de questions ne contourne pas le plafond. Un rôle sans plafond n'en a pas."""
+        role = self._roles.get(personne)
+        if role is None:
+            return True
+        if self.plafond.libre(personne, role) is not None:
+            return False
+        self.plafond.compter(personne, role)
+        return True
+
     def agent_du_role(self, role: str):
         return self.agents.get(role, self.agent)
 

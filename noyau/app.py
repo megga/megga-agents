@@ -293,6 +293,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     cles = {k: env.get(k, "") for k in CLES}
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     construire_agents = agent is None
+    relais = None  # le relais des collègues (noyau/echanges.py), s'il y en a
     # Le Contexte du noyau (Conversations.contexte : prénom du profil, rappels prévus, souvenirs, vocal envoyé), lu à
     # chaque tour ; les conversations naissent après les agents.
     tenues: dict = {}
@@ -404,6 +405,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                   juger=juger, decrire=decrire, role_de=personnes.role, memoire=memoire,
                                   seconde_passe=getattr(relations, "seconde_passe", None))
     tenues["conversations"] = conversations
+    if relais is not None:  # une question à un collègue compte dans le plafond du jour de la personne qui l'a provoquée
+        relais.permis = conversations.echange_permis
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     jeton_interne = env.get("INTERNE_TOKEN", "")
