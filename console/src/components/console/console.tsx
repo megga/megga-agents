@@ -13,8 +13,13 @@ import type { AgentVu, Memoire } from "./types";
 
 
 
-/** membre : le compte est membre de l'admin ; son menu y mène. */
-export function Console({ entreprise, agentsInitiaux, membre }: { entreprise: string; agentsInitiaux: AgentVu[]; membre: boolean }) {
+/** membre : le compte est membre de l'admin ; son menu y mène. image : sa photo, s'il en a une. */
+export function Console({ entreprise, image = null, agentsInitiaux, membre }: {
+  entreprise: string;
+  image?: string | null;
+  agentsInitiaux: AgentVu[];
+  membre: boolean;
+}) {
   const [agents, setAgents] = useState(agentsInitiaux);
   const [actif, setActif] = useState<string | null>(agentsInitiaux[0]?.id ?? null);
   const [studio, setStudio] = useState(false);
@@ -92,6 +97,7 @@ export function Console({ entreprise, agentsInitiaux, membre }: { entreprise: st
         nouveau={nouveau}
         apercus={apercus}
         entreprise={entreprise}
+        image={image}
         membre={membre}
         onChoisir={setActif}
         onNouvel={ouvrirStudio}

@@ -15,7 +15,7 @@ export default async function Accueil() {
   // Membre de l'admin : exactement ceux à qui /admin s'ouvre (gardePage), pour que le menu ne mène jamais à une page 404.
   const b = await pret();
   const membre = (await accesDe(b, s.user)) !== undefined;
-  return <Console entreprise={s.user.name || s.user.email} agentsInitiaux={await lister(b, s.user.id)} membre={membre} />;
+  return <Console entreprise={s.user.name || s.user.email} image={s.user.image ?? null} agentsInitiaux={await lister(b, s.user.id)} membre={membre} />;
 }
 
 // Page propre à chaque compte : rendue à la demande, après la vérification de la session.

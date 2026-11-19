@@ -1,4 +1,5 @@
 import { Refus } from "@/lib/agents";
+import type { Base } from "@/lib/donnees/base";
 import { estObjet } from "./champs";
 import { TA } from "./textes";
 
@@ -65,4 +66,20 @@ export function refusMotDePasse(e: unknown): never {
   const texte = REFUS_MOT_DE_PASSE[codeDe(e) ?? ""];
   if (texte) throw new Refus(400, texte);
   throw e;
+}
+
+/** Un appareil connecté : une session ouverte du compte, sans jeton ni adresse IP. */
+export type Appareil = { id: string; ouverteLe: string; vueLe: string; agent: string | null; courant: boolean };
+
+/**
+ * Les sessions ouvertes d'un compte, celle en cours d'abord, puis la plus récemment vue. Lues dans la table de Better Auth
+ * plutôt que par listSessions : celle-ci refuse une session ouverte depuis plus d'un jour (freshAge), le cas ordinaire ici.
+ */
+export async function appareilsDe(b: Base, utilisateur: string, courante: string | null, maintenant = new Date()): Promise<Appareil[]> {
+  const lignes = await b.tous<{ id: string; createdAt: string; updatedAt: string; userAgent: string | null }>(
+    'SELECT id, "createdAt", "updatedAt", "userAgent" FROM session WHERE "userId" = ? AND "expiresAt" > ? ORDER BY "updatedAt" DESC, id',
+    utilisateur, maintenant.toISOString(),
+  );
+  const appareils = lignes.map((l) => ({ id: l.id, ouverteLe: l.createdAt, vueLe: l.updatedAt, agent: l.userAgent || null, courant: l.id === courante }));
+  return [...appareils.filter((x) => x.courant), ...appareils.filter((x) => !x.courant)];
 }

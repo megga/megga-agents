@@ -15,6 +15,7 @@ type Props = {
   nouveau: string | null;
   apercus: Record<string, string>;
   entreprise: string;
+  image?: string | null;
   membre: boolean; // membre de l'admin : le menu du compte y mène
   onChoisir: (id: string) => void;
   onNouvel: () => void;
@@ -72,7 +73,7 @@ export function Rail(p: Props) {
         </>
       )}
 
-      <Compte entreprise={p.entreprise} lien={p.membre ? { href: "/admin", texte: TA.administration } : undefined} />
+      <Compte entreprise={p.entreprise} image={p.image} lien={p.membre ? { href: "/admin", texte: TA.administration } : undefined} />
     </nav>
   );
 }

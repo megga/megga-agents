@@ -1,5 +1,6 @@
 "use client";
 
+import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
@@ -11,16 +12,24 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Avatar } from "./avatar";
 import { HautBas } from "./icones";
 
-// Le menu du compte, en bas du rail : le thème, un lien facultatif (l'admin depuis la console, la console depuis l'admin),
-// se déconnecter. Il sert aux deux rails.
+// Le menu du compte, en bas du rail : la photo ou l'initiale, le thème, un lien facultatif (l'admin depuis la console, la
+// console depuis l'admin), Mon compte (dans l'admin seulement), le retour au site public (dans un nouvel onglet), se
+// déconnecter. Il sert aux deux rails.
 
-function initiale(nom: string): string {
-  return ([...nom.trim()][0] ?? "M").toUpperCase();
-}
+/** Le site public de MEGGA. */
+export const SITE = "https://megga.ai";
 
-export function Compte({ entreprise, lien }: { entreprise: string; lien?: { href: string; texte: string } }) {
+const entree = "rounded-[10px] px-2.5 py-2 text-[14px]";
+
+export function Compte({ entreprise, lien, image, monCompte }: {
+  entreprise: string;
+  lien?: { href: string; texte: string };
+  image?: string | null;
+  monCompte?: string;
+}) {
   const router = useRouter();
   const [theme, setTheme] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
@@ -52,13 +61,13 @@ export function Compte({ entreprise, lien }: { entreprise: string; lien?: { href
           aria-label={T.compteEtReglages}
           className="flex w-full min-w-0 items-center gap-2.5 rounded-[14px] px-2.5 py-2 text-left text-ink hover:bg-hover aria-expanded:bg-hover"
         >
-          <span className="grid size-9 flex-none place-items-center rounded-[11px] bg-ink text-[14px] font-extrabold text-bg">{initiale(entreprise)}</span>
+          <Avatar nom={entreprise} image={image} taille={36} />
           <b className="truncate text-[14.5px] font-bold max-[760px]:hidden">{entreprise}</b>
           <HautBas className="ml-auto size-4 flex-none text-muted-ink max-[760px]:hidden" />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="top" sideOffset={8} className="min-w-[230px] rounded-2xl p-1.5 shadow-[0_16px_40px_rgba(27,27,47,.18)]">
           <div className="mb-1 flex items-center gap-2.5 px-2.5 pt-1.5 pb-2 [border-bottom:var(--fin)_solid_var(--trait)]">
-            <span className="grid size-[30px] flex-none place-items-center rounded-[9px] bg-ink text-[12.5px] font-extrabold text-bg">{initiale(entreprise)}</span>
+            <Avatar nom={entreprise} image={image} taille={30} />
             <b className="truncate text-[14.5px]">{entreprise}</b>
           </div>
           <div className="px-2.5 pt-1 text-[11.5px] font-bold tracking-[.06em] text-faint uppercase">{T.theme}</div>
@@ -77,11 +86,24 @@ export function Compte({ entreprise, lien }: { entreprise: string; lien?: { href
           </div>
           <DropdownMenuSeparator />
           {lien && (
-            <DropdownMenuItem onClick={() => router.push(lien.href)} className="rounded-[10px] px-2.5 py-2 text-[14px]">
+            <DropdownMenuItem onClick={() => router.push(lien.href)} className={entree}>
               {lien.texte}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={sortir} className="rounded-[10px] px-2.5 py-2 text-[14px]">
+          <MenuPrimitive.LinkItem
+            href={SITE}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={"flex cursor-default items-center text-ink outline-hidden select-none focus:bg-hover " + entree}
+          >
+            {T.retourSite}
+          </MenuPrimitive.LinkItem>
+          {monCompte && (
+            <DropdownMenuItem onClick={() => router.push(monCompte)} className={entree}>
+              {T.monCompte}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onClick={sortir} className={entree}>
             {T.seDeconnecter}
           </DropdownMenuItem>
         </DropdownMenuContent>

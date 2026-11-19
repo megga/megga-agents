@@ -62,6 +62,11 @@ export async function retirerPhoto(b: Base, utilisateur: string): Promise<void> 
   await b.ecrire("DELETE FROM compte_photo WHERE utilisateur = ?", utilisateur);
 }
 
+/** Le champ image du compte (Better Auth) : l'adresse de sa photo, ou null. */
+export async function imageDe(b: Base, utilisateur: string): Promise<string | null> {
+  return (await b.un<{ image: string | null }>('SELECT image FROM "user" WHERE id = ?', utilisateur))?.image ?? null;
+}
+
 export async function lirePhoto(b: Base, utilisateur: string): Promise<{ type: TypePhoto; octets: Uint8Array } | undefined> {
   const l = await b.un<{ type: string; donnees: string }>("SELECT type, donnees FROM compte_photo WHERE utilisateur = ?", utilisateur);
   if (!l || !estType(l.type)) return undefined;
