@@ -17,7 +17,6 @@ const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as 
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
 vi.mock("@/lib/base", async (original) => ({
   ...(await original<typeof import("@/lib/base")>()),
-  base: () => etat.db.pourAuth(), // le temps de la conversion
   pret: async () => etat.db,
   donnees: () => etat.db,
 }));

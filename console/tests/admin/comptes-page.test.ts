@@ -24,7 +24,6 @@ const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, qui: null as 
 vi.mock("next/server", async (original) => ({ ...(await original<typeof import("next/server")>()), connection: async () => {} }));
 vi.mock("@/lib/base", async (original) => ({
   ...(await original<typeof import("@/lib/base")>()),
-  base: () => etat.db.pourAuth(), // le temps de la conversion
   pret: async () => etat.db,
   donnees: () => etat.db,
 }));
@@ -158,7 +157,7 @@ describe("la fiche d'un compte", () => {
   });
 
   it("un compte suspendu : son état et son motif ; réactiver plutôt que suspendre", async () => {
-    await etat.db.ecrire("UPDATE \"user\" SET banned = 1, \"banReason\" = 'Abus' WHERE id = 'c'");
+    await etat.db.ecrire("UPDATE \"user\" SET banned = ?, \"banReason\" = 'Abus' WHERE id = 'c'", true);
     etat.qui = "exploitant";
     const arbre = await fiche("c");
     expect(elements(arbre, GestesCompte)[0].props).toMatchObject({ suspendu: true });

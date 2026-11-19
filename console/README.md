@@ -51,10 +51,27 @@ Pour entrer dans `/admin`, il faut un superadmin : cette commande imprime le lie
 npm run admin:inviter -- <courriel>
 ```
 
+Contre la base de production (Postgres chez Neon), depuis `console/` : l'adresse de la base se tape en masqué, sans passer par l'historique du terminal ni par un fichier.
+
+```bash
+read -rs CONSOLE_BASE_URL && export CONSOLE_BASE_URL && BETTER_AUTH_URL=https://console.megga.ai npm run admin:inviter -- <courriel>
+```
+
+### La base
+
+SQLite en local et dans les essais (`.donnees/console.sqlite`, ou `CONSOLE_BASE`) ; Postgres dès que `CONSOLE_BASE_URL` est posée, comme en production. Tout le SQL passe par l'interface de `src/lib/donnees` et s'écrit une fois pour les deux moteurs. Les tables se créent à la première requête (`pret()`, `src/lib/base.ts`).
+
 ## Essais
 
 ```bash
 cd console && npm test && npm run typecheck && npm run lint
+```
+
+Sur Postgres aussi, comme la CI : un serveur d'essai jetable (jamais la production), sur lequel chaque essai crée sa propre base, puis la supprime.
+
+```bash
+docker run -d --name console-pg-essai -e POSTGRES_PASSWORD=essai -p 55432:5432 postgres:18
+CONSOLE_ESSAI_MOTEUR=postgres CONSOLE_BASE_ESSAI_URL=postgres://postgres:essai@localhost:55432/postgres npm test
 ```
 
 ```bash

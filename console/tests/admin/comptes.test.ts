@@ -211,7 +211,7 @@ describe("avec le vrai Better Auth", () => {
     expect((await auth.api.getSession({ headers: cookie }))?.user.id).toBe(user.id);
 
     await suspendre(db, chef, user.id, { motif: "Abus" }, reel);
-    expect(await db.un('SELECT banned, "banReason" FROM "user" WHERE id = ?', user.id)).toEqual({ banned: 1, banReason: "Abus" });
+    expect(await db.un('SELECT CASE WHEN banned THEN 1 ELSE 0 END AS banned, "banReason" FROM "user" WHERE id = ?', user.id)).toEqual({ banned: 1, banReason: "Abus" });
     expect(await db.un("SELECT COUNT(*) AS n FROM session WHERE \"userId\" = ?", user.id)).toEqual({ n: 0 });
     expect(await auth.api.getSession({ headers: cookie })).toBeNull(); // son cookie ne vaut plus rien, dès la requête suivante
     const refus = await auth.api.signInEmail({ body: { email: "fleurs@exemple.test", password: "motdepasse" } }).catch((e: unknown) => e);
@@ -242,7 +242,7 @@ describe("la liste des comptes", () => {
     await compte(db, { id: "d", courriel: "fleurs@exemple.test", nom: "Fleurs", creeLe: avant(1).toISOString() });
     await membre(db, { utilisateur: "chef", role: "superadmin" });
     await db.ecrire("UPDATE \"user\" SET \"createdAt\" = ? WHERE id = 'chef'", avant(5).toISOString());
-    await db.ecrire("UPDATE \"user\" SET banned = 1, \"banReason\" = 'Abus' WHERE id = 'd'");
+    await db.ecrire("UPDATE \"user\" SET banned = ?, \"banReason\" = 'Abus' WHERE id = 'd'", true);
     const a1 = await creer(db, "c", { prenom: "Lou", metier: "garage" }, T0);
     const a2 = await creer(db, "c", { prenom: "Max", metier: "garage" }, T0);
     await compterTour(db, a1.id, avant(31)); // hors des 30 jours
@@ -292,6 +292,12 @@ describe("les pages et la recherche", () => {
     const cinq = await listerComptes(db, { q: "Entreprise 5", page: 1 }, T0);
     expect([cinq.pages, cinq.comptes.map((c) => c.id)]).toEqual([1, ["n5", "n50", "n51", "n52", "n53", "n54", "n55", "n56", "n57", "n58", "n59"]]);
     expect(await listerComptes(db, { q: "rien de tel", page: 4 }, T0)).toEqual({ comptes: [], pages: 1, page: 1 });
+  });
+
+  it("la recherche ignore la casse", async () => {
+    await compte(db, { id: "alice", courriel: "alice@megga.test", nom: "Atelier" });
+    expect((await listerComptes(db, { q: "ALICE", page: 1 }, T0)).comptes.map((c) => c.id)).toEqual(["alice"]);
+    expect((await listerComptes(db, { q: "aTeLiEr", page: 1 }, T0)).comptes.map((c) => c.id)).toEqual(["alice"]);
   });
 
   it("prend % et _ à la lettre", async () => {
@@ -368,7 +374,7 @@ describe("le dernier superadmin", () => {
   it("un superadmin suspendu ne compte pas : le dernier qui peut se connecter ne part pas", async () => {
     const chef = await membre(db, { utilisateur: "chef", role: "superadmin" });
     await membre(db, { utilisateur: "lecteur", role: "lecture" });
-    await db.ecrire("UPDATE \"user\" SET banned = 1 WHERE id = 'lecteur'");
+    await db.ecrire("UPDATE \"user\" SET banned = ? WHERE id = 'lecteur'", true);
     // modifierMembre refuse de nommer superadmin un compte suspendu (equipe.test.ts) : une ligne d'avant, écrite à la main.
     await db.ecrire("UPDATE admin_membre SET role = 'superadmin' WHERE utilisateur = 'lecteur'");
     const e = await refusAsync(() => retirerMembre(db, chef, "chef", T0));

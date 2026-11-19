@@ -1,5 +1,4 @@
 import "server-only";
-import type { DatabaseSync } from "node:sqlite";
 import { creerTablesAdmin } from "./admin/tables";
 import { migrer } from "./auth";
 import { ouvrirBase, type Base } from "./donnees/base";
@@ -7,7 +6,7 @@ import { ouvrirBase, type Base } from "./donnees/base";
 export { cheminBase } from "./donnees/base";
 
 // La base de la console : les comptes de Better Auth, les agents de chaque compte et les tables de l'admin.
-// SQLite (node:sqlite) en local et dans les essais ; Postgres quand CONSOLE_BASE_URL est posée (src/lib/donnees).
+// SQLite, intégré à Node, en local et dans les essais ; Postgres quand CONSOLE_BASE_URL est posée (src/lib/donnees).
 
 const globale = globalThis as unknown as { baseConsole?: Base; baseConsolePrete?: Promise<Base> };
 
@@ -45,11 +44,4 @@ export function pret(): Promise<Base> {
     throw e;
   });
   return globale.baseConsolePrete;
-}
-
-/** Le temps de la conversion : la connexion SQLite de donnees(), pour les modules pas encore passés à Base. */
-export function base(): DatabaseSync {
-  const b = donnees();
-  if (b.dialecte !== "sqlite") throw new Error("base() ne sert que SQLite : ce module n'est pas encore passé à l'interface de base");
-  return b.pourAuth() as DatabaseSync;
 }

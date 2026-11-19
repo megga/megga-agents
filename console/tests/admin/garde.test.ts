@@ -22,7 +22,6 @@ const sessionPour = (qui: string | null) => (qui ? { user: { id: qui, email: `${
 
 vi.mock("@/lib/base", async (original) => ({
   ...(await original<typeof import("@/lib/base")>()),
-  base: () => etat.db.pourAuth(), // le temps de la conversion
   pret: async () => etat.db,
   donnees: () => etat.db,
 }));

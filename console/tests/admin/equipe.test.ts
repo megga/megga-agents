@@ -195,11 +195,11 @@ describe("les membres", () => {
   it("un compte suspendu ne devient pas superadmin : 409, rien ne change ; réactivé, il le peut", async () => {
     const s = await membre(db, { utilisateur: "s", role: "superadmin" });
     await membre(db, { utilisateur: "n", role: "lecture" });
-    await db.ecrire("UPDATE \"user\" SET banned = 1 WHERE id = 'n'");
+    await db.ecrire("UPDATE \"user\" SET banned = ? WHERE id = 'n'", true);
     expect(await refusAsync(() => modifierMembre(db, s, "n", { role: "superadmin" }, T0))).toMatchObject({ statut: 409, message: TA.superadminSuspendu });
     expect((await listerMembres(db)).find((m) => m.utilisateur === "n")?.role).toBe("lecture");
     expect(await modifierMembre(db, s, "n", { role: "finance" }, T0)).toMatchObject({ role: "finance" }); // un autre rôle reste permis
-    await db.ecrire("UPDATE \"user\" SET banned = 0 WHERE id = 'n'");
+    await db.ecrire("UPDATE \"user\" SET banned = ? WHERE id = 'n'", false);
     expect(await modifierMembre(db, s, "n", { role: "superadmin" }, T0)).toMatchObject({ role: "superadmin" });
   });
 });

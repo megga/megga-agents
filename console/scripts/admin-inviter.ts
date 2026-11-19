@@ -13,8 +13,9 @@ if (!courriel) {
   process.exit(1);
 }
 
+// La base de la console : Postgres si CONSOLE_BASE_URL est posée, sinon le fichier SQLite (pret, src/lib/base.ts).
+const b = await pret();
 try {
-  const b = await pret();
   const lien = await inviterSuperadmin(b, courriel, process.env.BETTER_AUTH_URL || "http://localhost:3000");
   const invitation = (await lireInvitation(b, lien.slice(lien.lastIndexOf("/") + 1)))!;
   await noter(b, { qui: null, courriel: null, action: "invitations.commande", cible: `invitation:${invitation.id}`, resultat: "ok",
@@ -23,5 +24,7 @@ try {
 } catch (e) {
   if (!(e instanceof Refus)) throw e;
   console.error(e.message);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  await b.fermer(); // les connexions de Postgres ne retiennent pas la commande
 }

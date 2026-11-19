@@ -12,7 +12,6 @@ import { acces, baseEssai, compte, membre } from "./aides";
 const etat = vi.hoisted(() => ({ db: undefined as unknown as Base, appels: [] as unknown[][], sessionsBloquees: false, ecritureBloquee: false }));
 vi.mock("@/lib/base", async (original) => ({
   ...(await original<typeof import("@/lib/base")>()),
-  base: () => etat.db.pourAuth(), // le temps de la conversion
   pret: async () => etat.db,
   donnees: () => etat.db,
 }));

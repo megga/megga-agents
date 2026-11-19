@@ -1,6 +1,5 @@
 // Les aides des essais de l'admin : un accès de membre fabriqué, la capture d'un refus,
 // et une base en mémoire avec les tables de Better Auth et celles de la console.
-import type { DatabaseSync } from "node:sqlite";
 import { getMigrations } from "better-auth/db/migration";
 import { droitsEffectifs, type Acces, type Perimetre } from "@/lib/admin/acces";
 import { SUPERADMIN, type Droit } from "@/lib/admin/droits";
@@ -64,9 +63,6 @@ export async function roleVide(b: Base): Promise<string> {
     T0.toISOString(), T0.toISOString());
   return "vide";
 }
-
-/** Le temps de la conversion : la connexion SQLite d'une base d'essai, pour les modules pas encore passés à Base. */
-export const sqlite = (b: Base) => b.pourAuth() as DatabaseSync;
 
 /** Un accès de membre, sans base : les droits passent par droitsEffectifs (plafond d'un externe compris). */
 export function acces(p: { utilisateur?: string; role?: string; droits?: readonly Droit[]; externe?: boolean; superadmin?: boolean; perimetre?: Perimetre } = {}): Acces {

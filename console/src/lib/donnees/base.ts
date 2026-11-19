@@ -3,7 +3,7 @@ import { basePostgres } from "./postgres";
 import { baseSqlite } from "./sqlite";
 
 // L'interface de la base de la console : tout le SQL de console/src/lib passe par elle. Deux moteurs la servent : SQLite
-// (node:sqlite), en local et dans les essais, et Postgres (pg), quand CONSOLE_BASE_URL est posée : la production.
+// (intégré à Node), en local et dans les essais, et Postgres (pg), quand CONSOLE_BASE_URL est posée : la production.
 // Le SQL s'écrit une fois, avec des « ? », dans ce que les deux moteurs comprennent.
 
 export type Valeur = string | number | boolean | null;
@@ -23,7 +23,7 @@ export interface Base {
    * que tx. Une transaction ouverte dans une autre (tx.transaction) n'en fait qu'une avec elle.
    */
   transaction<T>(f: (tx: Base) => Promise<T>): Promise<T>;
-  /** Ce que Better Auth reçoit dans `database` : la DatabaseSync de SQLite ou le Pool de Postgres. */
+  /** Ce que Better Auth reçoit dans `database` : la connexion SQLite ou le Pool de Postgres. */
   pourAuth(): unknown;
   fermer(): Promise<void>;
 }
