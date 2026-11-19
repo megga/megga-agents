@@ -25,6 +25,18 @@ def client(tmp_path, monkeypatch):
 ENTETE = {"Authorization": "Bearer secret-essai"}
 
 
+def attendre_resumes():
+    """Les résumés partent après la réponse, à côté : on attend qu'ils soient tous faits."""
+    import time
+
+    import serveur
+
+    fin = time.time() + 5
+    while serveur.RESUMES and time.time() < fin:
+        time.sleep(0.01)
+    assert not serveur.RESUMES
+
+
 def entree(texte):
     return {"threadId": "fil-1", "runId": "tour-1", "state": {}, "messages": [{"id": "m1", "role": "user", "content": texte}],
             "tools": [], "context": [], "forwardedProps": {}}
@@ -152,6 +164,7 @@ def test_les_conversations_resumees_d_un_compte(client):
     tour("agent-lea", "Ma facture est-elle réglée ?", "fil-b", "r1")
     tour("agent-alix", "ESSAI-COLLEGUE Le dossier Martin est-il complet ?", "fil-a", "r2")
     tour("agent-sam", "Autre compte", "fil-c", "r3")
+    attendre_resumes()
     r = client.get("/comptes/c1/conversations", headers=ENTETE).json()["conversations"]
     assert [(c["agent"], c["resume"]) for c in r] == [
         ("agent-alix", "Alix a répondu à «\u00a0Le dossier Martin est-il complet ?\u00a0»"),
@@ -179,6 +192,7 @@ def test_le_resume_ne_retarde_pas_la_reponse(client, monkeypatch):
     with client.stream("POST", "/agents/agent-alix/agui", json=entree("Bonjour"), headers=ENTETE) as flux:
         types = [json.loads(l[5:])["type"] for l in flux.iter_lines() if l.startswith("data:")]
     assert types[-1] == "RUN_FINISHED"
+    attendre_resumes()
     (c,) = client.get("/comptes/c1/conversations", headers=ENTETE).json()["conversations"]
     assert c["resume"] is None  # pas de résumé, mais la conversation est là
 

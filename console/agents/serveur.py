@@ -10,6 +10,7 @@ Lancement : `AGENTS_JETON=… .venv/bin/python -m uvicorn serveur:app --app-dir 
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -29,7 +30,6 @@ from agno.session.summary import SessionSummaryManager
 from agno.os.interfaces.agui.router import run_entity
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
 from atelier import gabarits
@@ -233,6 +233,10 @@ def resumeur(fiche: dict) -> SessionSummaryManager:
     return SessionSummaryManager(model=petit, session_summary_prompt=RESUME.format(prenom=fiche["prenom"]), last_n_runs=6)
 
 
+# Les résumés en cours, gardés jusqu'à leur fin (une tâche sans référence peut être oubliée en route).
+RESUMES: set = set()
+
+
 async def resumer(agent: Agent, fiche: dict, session_id: str) -> None:
     """Résume la conversation une fois la réponse partie : l'écran n'attend pas le résumé pour envoyer le message suivant.
     Un échec ne touche ni la conversation ni la réponse ; il est seulement noté."""
@@ -383,6 +387,9 @@ async def repondre(ident: str, entree: RunAgentInput):
     async def flux():
         async for evenement in run_entity(agent, entree, user_id=ident):
             yield encodeur.encode(evenement)
+        # Le résumé part à côté, une fois le dernier événement envoyé : la réponse se termine sans l'attendre.
+        tache = asyncio.create_task(resumer(agent, fiche, entree.thread_id))
+        RESUMES.add(tache)
+        tache.add_done_callback(RESUMES.discard)
 
-    return StreamingResponse(flux(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"},
-                             background=BackgroundTask(resumer, agent, fiche, entree.thread_id))
+    return StreamingResponse(flux(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
