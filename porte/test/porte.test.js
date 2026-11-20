@@ -214,3 +214,11 @@ test("l'objet du client transmet l'entretien au conteneur, avec le jeton interne
   ]);
   assert.ok(vus.every((v) => /^[0-9a-f]{64}$/.test(v.jeton)) && alarme !== null);
 });
+
+test("les clés des appels (APPELS_CLE, APPELS_SIGNATURE) se rangent avec les autres secrets du client", async () => {
+  const stock = new Map([["secrets", { DATABASE_URL: "postgresql://x" }]]);
+  const ctx = { storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) }, container: { running: false } };
+  const a = new AgentEurope(ctx, {});
+  assert.deepEqual(await a.poserSecrets({ APPELS_CLE: "a".repeat(40), APPELS_SIGNATURE: "wsec_x" }), ["APPELS_CLE", "APPELS_SIGNATURE"]);
+  assert.deepEqual(stock.get("secrets"), { DATABASE_URL: "postgresql://x", APPELS_CLE: "a".repeat(40), APPELS_SIGNATURE: "wsec_x" });
+});

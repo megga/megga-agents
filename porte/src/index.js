@@ -15,6 +15,10 @@
 //                                  (16.11.2026) ; même clé, vérifiée par le conteneur ; la réponse n'est gardée nulle part
 //   POST /vocal/:client             un vocal que l'agent dit de lui-même à un gestionnaire, à la demande de l'équipe
 //                                  (ancienne route /vocal d'Alix FSP) ; transmis tel quel, la clé (VOCAL_CLE) vérifiée par le conteneur
+//   POST /appels/:client/(debut|outils/:nom|fin)
+//                                  les appels WhatsApp décrochés par ElevenLabs (noyau/appels.py) : le début et les outils
+//                                  avec la clé des appels (APPELS_CLE), la fin signée par ElevenLabs (APPELS_SIGNATURE) ;
+//                                  transmis tels quels, vérifiés par le conteneur
 //   GET|POST /admin/clients/:id/cles, DELETE /admin/clients/:id/cles/:cle
 //                                  les clés des logiciels, gardées en empreinte par le conteneur (jeton ADMIN_TOKEN)
 //   PUT  /admin/clients/:id/secrets les secrets d'un client (jeton ADMIN_TOKEN), écriture seule
@@ -50,6 +54,10 @@ const TAILLE_API = 16 * 1024;
 const HOTE_API = "api.megga.ai";
 // Le site d'un client (lot 7.4) : une clé d'au moins 32 caractères, un corps de 16 Kio au plus.
 const CLE_SITE = /^Bearer [\x21-\x7e]{32,200}$/;
+// Les appels (noyau/appels.py) : une signature d'ElevenLabs bien formée pour la fin, dont le texte d'un appel de trente
+// minutes tient en 2 Mio.
+const SIGNATURE_APPEL = /^t=[0-9]{1,12},v0=[0-9a-f]{64}$/;
+const TAILLE_FIN_APPEL = 2 * 1024 * 1024;
 // L'atelier est unique, en zone Europe.
 const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ?? null;
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
@@ -72,6 +80,8 @@ export async function recevoir(requete, env, ctx) {
   if (site) return messageSite(requete, env, site[1], `/site/${site[2]}`);
   const vocal = url.pathname.match(/^\/vocal\/([^/]+)$/);
   if (vocal) return messageSite(requete, env, vocal[1], "/vocal");
+  const appel = url.pathname.match(/^\/appels\/([^/]+)\/(debut|fin|outils\/[a-z_]{1,40})$/);
+  if (appel) return appelVocal(requete, env, appel[1], appel[2]);
   const journalSite = url.pathname.match(/^\/site\/([^/]+)\/journal$/);
   if (journalSite) return lireJournal(requete, env, journalSite[1], url);
   const cles = url.pathname.match(/^\/admin\/clients\/([^/]+)\/cles(\/[^/]+)?$/);
@@ -150,6 +160,33 @@ async function messageSite(requete, env, id, chemin) {
     return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
   } catch (e) {
     console.error("message du site en échec", id, String(e?.message ?? e).slice(0, 200));
+    return json({ erreur: "agent injoignable" }, 503);
+  }
+}
+
+/**
+ * Un appel WhatsApp (noyau/appels.py) : le début et les outils portent la clé des appels, la fin la signature d'ElevenLabs.
+ * La porte ne connaît ni l'une ni l'autre : le conteneur les vérifie ; sans en-tête bien formé, rien ne le réveille.
+ */
+async function appelVocal(requete, env, id, chemin) {
+  if (requete.method !== "POST") return json({ erreur: "méthode : POST" }, 405);
+  const fin = chemin === "fin";
+  const signature = requete.headers.get("elevenlabs-signature") ?? "";
+  if (fin ? !SIGNATURE_APPEL.test(signature) : !CLE_SITE.test(requete.headers.get("authorization") ?? "")) return json({ erreur: "clé refusée" }, 401);
+  const longueur = requete.headers.get("content-length");
+  const taille = fin ? TAILLE_FIN_APPEL : TAILLE_API;
+  if (longueur !== null && (!/^[0-9]{1,9}$/.test(longueur) || Number(longueur) > taille)) return json({ erreur: "requête trop grosse" }, 413);
+  const client = idValide(id) ? await clientParId(env.ANNUAIRE, id) : null;
+  const agent = client && agentDe(env, client);
+  if (!agent) return json({ erreur: "agent inconnu" }, 404);
+  const corps = await requete.arrayBuffer();
+  if (corps.byteLength > taille) return json({ erreur: "requête trop grosse" }, 413);
+  const entetes = { "content-type": "application/json", ...(fin ? { "elevenlabs-signature": signature } : { authorization: requete.headers.get("authorization") }) };
+  try {
+    const r = await agent.fetch(new Request(`http://agent/appels/${chemin}`, { method: "POST", body: corps, headers: entetes }));
+    return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
+  } catch (e) {
+    console.error("appel en échec", id, chemin.split("/")[0], String(e?.message ?? e).slice(0, 200));
     return json({ erreur: "agent injoignable" }, 503);
   }
 }

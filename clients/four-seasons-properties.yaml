@@ -158,6 +158,16 @@ roles:
         I'd be delighted to help you explore our property collection or connect you directly with Greg for a personal consultation.
 
         Are you looking to buy, rent or sell?
+# Les appels WhatsApp (20.11.2026, noyau/appels.py) : ElevenLabs décroche les appels du numéro d'Alix, et seulement les
+# appels ; Alix garde ses outils, son fil et sa mémoire. Greg et Julien seulement, lecture seule, dix minutes au plus
+# (décisions de Julien) ; Greg change les trois premiers réglages dans sa gestion.
+appels:
+  accepter: true
+  qui: gestionnaires
+  duree_max: 600
+  agent: agent_5101m7v709c4fdnrj1grysk9pr93
+  refus: "Bonjour, ici Alix, l'assistante de Greg. Je ne prends pas les appels sur ce numéro : écrivez-moi ici, je vous réponds
+    vite. Hello, this is Alix, Greg's assistant: please write to me here on WhatsApp."
 whatsapp:
   # +1 650-710-7070, le numéro d'Alix, sur le compte WhatsApp « FSP » (bascule du 16.11.2026).
   numero_id: "1391058037432148"

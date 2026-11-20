@@ -361,6 +361,28 @@ class Marche(Strict):
         return self
 
 
+class Appels(Strict):
+    """Les appels WhatsApp, décrochés par un agent vocal d'ElevenLabs (noyau/appels.py, 20.11.2026). Les clés (APPELS_CLE,
+    APPELS_SIGNATURE) sont des secrets, jamais ici. Greg règle les trois premiers dans sa gestion (packs/immobilier/reglages.py)."""
+
+    accepter: bool = True
+    # gestionnaires : les gens du client seulement ; tous : aussi les partenaires et les visiteurs (jamais un numéro bloqué).
+    qui: Literal["gestionnaires", "tous"] = "gestionnaires"
+    duree_max: int = Field(default=600, ge=60, le=1800)
+    # L'agent vocal d'ElevenLabs : une requête d'un autre agent est refusée.
+    agent: str | None = Field(default=None, pattern=r"^agent_[a-z0-9]{10,40}$")
+    # Ce que l'agent dit à un appel refusé, avant de raccrocher.
+    refus: str = Field(default="Bonjour, je ne prends pas les appels sur ce numéro : écrivez-moi ici, je vous réponds vite.",
+                       min_length=10, max_length=400)
+
+    @field_validator("refus")
+    @classmethod
+    def sans_artefacts(cls, v: str) -> str:
+        if re.search(r"[—–·]", v):
+            raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+
 class Config(Strict):
     version: int = VERSION
     id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{1,62}$")
@@ -411,6 +433,8 @@ class Config(Strict):
     gestion: Gestion | None = None
     # Les portails de son marché (outils du marché).
     marche: Marche | None = None
+    # Les appels WhatsApp, décrochés par ElevenLabs (noyau/appels.py) ; sans eux, aucune route d'appel.
+    appels: Appels | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -45,6 +45,14 @@ def appliquer(base: Config, reglages: dict) -> Config:
     roles = d.get("roles") or {}
     if "humeur" in r and roles.get("gestionnaire"):
         roles["gestionnaire"]["humeur"] = r["humeur"]
+    # Les appels (noyau/appels.py) : seulement pour un client qui les a ; la durée se règle en minutes.
+    appels = d.get("appels")
+    if appels is not None:
+        for cle, champ in (("appels", "accepter"), ("appels_qui", "qui")):
+            if cle in r:
+                appels[champ] = r[cle]
+        if "appels_duree" in r:
+            appels["duree_max"] = int(r["appels_duree"]) * 60
     accueil = r.get("accueil")
     if isinstance(accueil, dict) and roles.get("visiteur"):
         roles["visiteur"]["accueil"] = {**(roles["visiteur"].get("accueil") or {}),
@@ -57,14 +65,14 @@ def appliquer_au_mieux(base: Config, reglages: dict) -> tuple[Config, list[str]]
     faux n'emporte pas les autres."""
     try:
         return appliquer(base, reglages), []
-    except (ValidationError, KeyError, TypeError):
+    except (ValidationError, ValueError, KeyError, TypeError):
         pass
     gardes, refuses = {}, []
     for cle, valeur in reglages.items():
         try:
             appliquer(base, {**gardes, cle: valeur})
             gardes[cle] = valeur
-        except (ValidationError, KeyError, TypeError):
+        except (ValidationError, ValueError, KeyError, TypeError):
             refuses.append(cle)
     return appliquer(base, gardes), refuses
 
