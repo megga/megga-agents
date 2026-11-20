@@ -34,6 +34,8 @@ MESURES: dict[str, tuple[str, str]] = {
     "tours": ("Tours", "nombre"),
     "cout": ("Coût des modèles et de la voix", "devise"),
     "reponses_lentes": ("Réponses lentes", "nombre"),
+    "reponse_p95": ("Temps de réponse des cas lents (95 % en dessous)", "s"),
+    "outils_en_echec": ("Appels d'outils en échec", "nombre"),
     "plafond": ("Plafond du jour atteint", "nombre"),
     "envois_en_echec": ("Envois refusés ou en échec", "nombre"),
     # Les signaux de sécurité, comptés par la garde du noyau (noyau/tour.py).
@@ -121,6 +123,11 @@ def mesurer(client: dict, mesure: str, fenetre: int, maintenant: float) -> float
         return round(somme(lambda j: j.get("cout") or 0), 4)
     if mesure == "reponses_lentes":
         return somme(lambda j: (j.get("delais") or {}).get("lentes") or 0)
+    if mesure == "reponse_p95":  # le pire jour de la fenêtre : des centiles ne s'additionnent pas
+        p95 = [((j.get("delais") or {}).get("reponse") or {}).get("p95") for j in jours]
+        return max((float(v) for v in p95 if v is not None), default=None)
+    if mesure == "outils_en_echec":
+        return somme(lambda j: sum((o or {}).get("echecs") or 0 for o in (j.get("outils") or {}).values()))
     genres = JOURNAL[mesure]
     return somme(lambda j: sum(((j.get("journal") or {}).get(g) or {}).get("nombre") or 0 for g in genres))
 
@@ -162,7 +169,7 @@ def nombre(v: float | None, unite: str) -> str:
     if unite == "oui ou non":
         return "oui" if v else "non"
     texte = f"{v:.2f}".rstrip("0").rstrip(".") if v != int(v) else str(int(v))
-    return texte.replace(".", ",") + (" %" if unite == "%" else "")
+    return texte.replace(".", ",") + {"%": " %", "s": " s"}.get(unite, "")
 
 
 def message(r: Regle, genre: str, etat: str, client: dict, valeur: float | None, devise: str) -> dict:

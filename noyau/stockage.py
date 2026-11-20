@@ -1246,6 +1246,13 @@ class Journal:
             lignes = c.execute(select(t.c.genre, func.count(), func.sum(t.c.quantite)).where(*filtre).group_by(t.c.genre))
             return {g: {"nombre": n, "quantite": float(q or 0)} for g, n, q in lignes}
 
+    def valeurs(self, genre: str, depuis: float, jusqu_a: float | None = None, limite: int = 5000) -> list[float]:
+        """Les quantités notées sous ce genre (des délais, en secondes), pour la médiane et les cas lents."""
+        t = self._t
+        filtre = [t.c.genre == genre, t.c.quand >= depuis] + ([t.c.quand < jusqu_a] if jusqu_a is not None else [])
+        with self._e.connect() as c:
+            return [float(q or 0) for (q,) in c.execute(select(t.c.quantite).where(*filtre).limit(limite))]
+
     def purger(self, avant: float) -> int:
         """Le journal ne grossit pas sans fin : ce qui précède `avant` s'efface."""
         with self._e.begin() as c:
@@ -1349,15 +1356,36 @@ class Suivi:
             return []
         from sqlalchemy.types import JSON
 
-        metriques = t.c.run_data["metrics"] if isinstance(t.c.run_data.type, JSON) else t.c.run_data
+        json_natif = isinstance(t.c.run_data.type, JSON)
+        metriques = t.c.run_data["metrics"] if json_natif else t.c.run_data
+        colonnes = [t.c.user_id, t.c.created_at, t.c.status, metriques.label("m")] + ([t.c.run_data["tools"].label("o")] if json_natif else [])
         sortie = []
         with self._e.connect() as c:
-            for l in c.execute(select(t.c.user_id, t.c.created_at, t.c.status, metriques.label("m")).where(t.c.created_at >= int(depuis))):
+            for l in c.execute(select(*colonnes).where(t.c.created_at >= int(depuis))):
                 m = self._donnees(l.m)
-                if "metrics" in m and not isinstance(t.c.run_data.type, JSON):
+                appels = l.o if json_natif else m.get("tools")
+                if "metrics" in m and not json_natif:
                     m = m.get("metrics") or {}
                 modeles = [x for liste in (m.get("details") or {}).values() for x in (liste or [])]
-                sortie.append({"personne": l.user_id, "quand": l.created_at, "statut": l.status, "modeles": modeles})
+                sortie.append({"personne": l.user_id, "quand": l.created_at, "statut": l.status, "modeles": modeles,
+                               "outils": self._outils(appels)})
+        return sortie
+
+    @classmethod
+    def _outils(cls, brut: Any) -> list[dict]:
+        """Les appels d'outils d'un tour : le nom, l'échec, la durée ; jamais les arguments ni le résultat."""
+        if isinstance(brut, str):
+            try:
+                brut = json.loads(brut)
+            except ValueError:
+                return []
+        sortie = []
+        for o in brut if isinstance(brut, list) else []:
+            if not isinstance(o, dict) or not isinstance(o.get("tool_name"), str):
+                continue
+            duree = (o.get("metrics") or {}).get("duration") if isinstance(o.get("metrics"), dict) else None
+            sortie.append({"nom": o["tool_name"], "erreur": bool(o.get("tool_call_error")),
+                           "duree": float(duree) if isinstance(duree, (int, float)) and duree >= 0 else None})
         return sortie
 
     def conversations(self, limite: int = 50) -> list[dict]:

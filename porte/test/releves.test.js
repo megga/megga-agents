@@ -60,6 +60,26 @@ test("le relevé est reconstruit champ par champ : rien de privé ne passe", () 
   assert.deepEqual(point.jours[AUJOURDHUI].modeles, { inconnu: { fournisseur: null, tours: 2, entree: 55, sortie: 0, cache_lecture: 0, cache_ecriture: 0 } });
 });
 
+test("les outils et les délais : des noms d'outil permis et des nombres, rien d'autre", () => {
+  const j = {
+    ...jour(3),
+    outils: {
+      rappeler: { appels: 3, echecs: 1, duree: 1.5, mesures: 3, arguments: "relancer Greg" },
+      "Greg +41790000000": { appels: 2, echecs: 0, duree: 0.2, mesures: 2 },
+      "<script>": { appels: "beaucoup" },
+    },
+    delais: { lecture: { nombre: 2, moyenne: 3, mediane: 2.5, p95: 4 }, reponse: { nombre: 2, moyenne: 9, mediane: "trop longtemps", p95: 12 }, lentes: 0 },
+  };
+  const p = nettoyer({ ...RELEVE, jours: { [AUJOURDHUI]: j } }).jours[AUJOURDHUI];
+  assert.deepEqual(p.outils, { rappeler: { appels: 3, echecs: 1, duree: 1.5, mesures: 3 }, autre: { appels: 2, echecs: 0, duree: 0.2, mesures: 2 } });
+  assert.deepEqual(p.delais.lecture, { nombre: 2, moyenne: 3, mediane: 2.5, p95: 4 });
+  assert.deepEqual(p.delais.reponse, { nombre: 2, moyenne: 9, mediane: 0, p95: 12 });
+  const texte = JSON.stringify(p);
+  for (const prive of ["Greg", "4179", "script", "relancer", "longtemps"]) assert.ok(!texte.includes(prive), prive);
+  // Un relevé d'avant (sans outils ni centiles) reste lisible.
+  assert.deepEqual(nettoyer(RELEVE).jours[AUJOURDHUI].delais.reponse, { nombre: 1, moyenne: 8, mediane: null, p95: null });
+});
+
 test("un relevé sans la forme attendue est refusé", () => {
   assert.equal(nettoyer(null), null);
   assert.equal(nettoyer({ ...RELEVE, forme: 2 }), null);
