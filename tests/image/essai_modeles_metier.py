@@ -7,6 +7,9 @@ Claude (tests/image/faux_claude.py), l'atelier, et un agent Garage. L'atelier cr
 modèles du dépôt (atelier/gabarits/) ; l'agent Garage sert ensuite le client d'après sa version, par l'entrée API.
 Ce qu'on attend se lit dans les fichiers des modèles : un modèle ajouté est essayé sans toucher à ce fichier.
 
+Le catalogue (lot 11, atelier/gabarits/catalogue/) suit les modèles d'accueil : tous rendus, un client créé d'après
+l'un d'eux, un modèle santé refusé pour la zone États-Unis.
+
 Le parcours : les modèles dans l'ordre et leur source ; un client par modèle, son métier, ses outils, ses consignes
 dans les bornes ; santé refusé pour la zone États-Unis, un modèle inconnu refusé ; l'agent reçoit le socle d'accueil
 et le bloc de son métier, avec les outils pour noter, chercher et passer la main ; une demande notée, complétée par
@@ -101,10 +104,28 @@ def main() -> int:
         print(f"Les {len(modeles)} modèles du dépôt")
         st, r = http("GET", base_a + "/atelier/gabarits", entetes=adm)
         servis = r["gabarits"] if st == 200 else []
-        ok("l'atelier les rend tous, dans l'ordre", [g["id"] for g in servis] == [m["id"] for m in modeles], (st, r))
+        ok("l'atelier les rend tous, dans l'ordre", [g["id"] for g in servis[:len(modeles)]] == [m["id"] for m in modeles],
+           (st, [g.get("id") for g in servis[:len(modeles)]]))
         for g, m in zip(servis, modeles):
             ok(f"{g['id']} : sa source" + (" (agency-agents)" if m["source"] else " (aucune)"),
                ("agency-agents" in json.dumps(g["source"])) if m["source"] else g["source"] is None, g["source"])
+        catalogue = {f.stem for f in (GABARITS / "catalogue").glob("*/*.md")}
+        suite = servis[len(modeles):]
+        print(f"Les {len(catalogue)} modèles du catalogue")
+        ok("l'atelier rend tout le catalogue après eux, chacun avec sa catégorie et sa source",
+           {g["id"] for g in suite} == catalogue and len(suite) == len(catalogue)
+           and all(g["categorie"] and "agency-agents" in json.dumps(g["source"]) for g in suite), len(suite))
+        sante = next(g["id"] for g in suite if "sante" in g["garde_fous"])
+        st, r = http("POST", base_a + "/atelier/clients", {"gabarit": sante, "nom_agent": "Alix",
+                     "client": {"id": "essai-catalogue-us", "entreprise": "Essai US", "zone": "etats-unis"}}, adm)
+        ok(f"{sante} refusé pour la zone États-Unis", st == 400 and "États-Unis" in json.dumps(r, ensure_ascii=False), (st, r))
+        st, r = http("POST", base_a + "/atelier/clients", {"gabarit": "security-architect", "nom_agent": "Alix",
+                     "client": {"id": "essai-catalogue", "entreprise": "Essai catalogue", "zone": "suisse"}}, adm)
+        ok("essai-catalogue créé d'après security-architect", st == 201, (st, r))
+        st, v = http("GET", base_a + "/atelier/clients/essai-catalogue/versions/1", entetes=adm)
+        c = v["config"] if st == 200 else {}
+        ok(f"  consignes de {len(c.get('consignes', ''))} caractères, avec la règle de sécurité",
+           "strictement défensif" in c.get("consignes", "") and len(c["consignes"]) <= CONSIGNES_MAX, (st, v))
 
         print("Un client par modèle")
         configs = {}
