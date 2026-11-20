@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { AgentEurope } from "../src/agent.js";
 import { recevoir } from "../src/index.js";
-import { RELEVE_MS, lireReleves, nettoyer, ranger, releverSiDu } from "../src/releves.js";
+import { CLIENTS_PAR_PAGE, JOURS_RELEVE_MAX, RELEVE_MS, joursARelire, lireReleves, nettoyer, ranger, releverSiDu } from "../src/releves.js";
 
 const AUJOURDHUI = new Date().toISOString().slice(0, 10);
 const NUMERO = "+41790000000";
@@ -54,6 +54,10 @@ test("le relevé est reconstruit champ par champ : rien de privé ne passe", () 
   assert.equal(propre.jours[AUJOURDHUI].modeles["claude-sonnet-5-5"].fournisseur, null);
   assert.deepEqual(Object.keys(propre.jours), [AUJOURDHUI]);
   assert.deepEqual(propre.image, { version: "0.7.0", revision: null });
+  // Un modèle au nom non permis garde ses jetons, sous « inconnu », sans son nom ni son fournisseur.
+  assert.deepEqual(propre.jours[AUJOURDHUI].modeles.inconnu, { fournisseur: null, tours: 1, entree: 0, sortie: 0, cache_lecture: 0, cache_ecriture: 0 });
+  const point = nettoyer({ ...RELEVE, jours: { [AUJOURDHUI]: { ...jour(1), modeles: { "?": { tours: 2, entree: 50 }, "inconnu": { entree: 5 } } } } });
+  assert.deepEqual(point.jours[AUJOURDHUI].modeles, { inconnu: { fournisseur: null, tours: 2, entree: 55, sortie: 0, cache_lecture: 0, cache_ecriture: 0 } });
 });
 
 test("un relevé sans la forme attendue est refusé", () => {
@@ -71,7 +75,7 @@ test("ranger puis lire : un rang par jour, l'état, et les clients sans relevé"
   db.brut.prepare("INSERT INTO releves (client, jour, chiffres, maj_le) VALUES ('essai', ?, '{}', 1)").run(ancien);
   await ranger(db, "essai", nettoyer(RELEVE), { demarre: true, alertes: [] }, maintenant + 2);
   assert.equal(db.brut.prepare("SELECT count(*) AS n FROM releves WHERE jour = ?").get(ancien).n, 0); // plus de 400 jours : effacé
-  const lu = await lireReleves(db, 7, maintenant);
+  const lu = await lireReleves(db, 7, "", maintenant);
   const [essai, muet] = lu.clients;
   assert.equal(essai.id, "essai");
   assert.equal(essai.jours[AUJOURDHUI].tours, 4);
@@ -81,7 +85,7 @@ test("ranger puis lire : un rang par jour, l'état, et les clients sans relevé"
   assert.deepEqual([muet.id, muet.etat, muet.releve_le, muet.jours], ["muet", null, null, {}]);
   // L'état rangé ne garde que le genre et l'heure des pannes : pas leur message.
   await ranger(db, "essai", nettoyer(RELEVE), { demarre: true, alertes: [{ quand: maintenant, quoi: "releve", message: "secret", resolue: null }] }, maintenant + 3);
-  const etat = (await lireReleves(db, 7, maintenant)).clients[0].etat;
+  const etat = (await lireReleves(db, 7, "", maintenant)).clients[0].etat;
   assert.deepEqual(etat.pannes_en_cours, [{ quoi: "releve", quand: maintenant }]);
   assert.ok(!JSON.stringify(etat).includes("secret"));
 });
@@ -114,38 +118,61 @@ function objet(env, reponse = () => Response.json(RELEVE)) {
   return { a, port, vus, stock };
 }
 
-test("un relevé au plus par quart d'heure, avec le jeton interne", async () => {
+test("un relevé au plus par quart d'heure, avec le jeton interne ; le premier reprend deux semaines", async () => {
   const db = d1();
   const { a, port, vus } = objet({ ANNUAIRE: db });
   const t = Date.now();
   assert.equal(await releverSiDu(a, port, "jeton", t), true);
-  assert.deepEqual(vus, [["/interne/releve?jours=2", "jeton"]]);
+  assert.deepEqual(vus, [[`/interne/releve?jours=${JOURS_RELEVE_MAX}`, "jeton"]]);
   assert.equal(await releverSiDu(a, port, "jeton", t + RELEVE_MS - 1), false);
   assert.equal(await releverSiDu(a, port, "jeton", t + RELEVE_MS), true);
+  assert.equal(vus.at(-1)[0], "/interne/releve?jours=2");
   assert.equal((await lireReleves(db, 1)).clients[0].releve_le, t + RELEVE_MS);
 });
 
-test("un relevé en échec ne range rien et ne se retente qu'au quart d'heure suivant", async () => {
+test("après une absence, les jours manqués sont relus (deux semaines au plus)", () => {
+  const jour = 86400000;
+  const midi = Math.floor(Date.now() / jour) * jour + jour / 2;
+  assert.equal(joursARelire(midi - 3600000, midi), 2);
+  assert.equal(joursARelire(midi - jour, midi), 2);
+  assert.equal(joursARelire(midi - 3 * jour, midi), 4);
+  assert.equal(joursARelire(midi - 60 * jour, midi), JOURS_RELEVE_MAX);
+  assert.equal(joursARelire(undefined, midi), JOURS_RELEVE_MAX);
+});
+
+test("un relevé en échec ne range rien, reste hors des pannes, et ne se retente qu'au quart d'heure suivant", async () => {
   const db = d1();
-  const { a, port, vus } = objet({ ANNUAIRE: db }, () => new Response("panne", { status: 500 }));
-  await assert.rejects(releverSiDu(a, port, "jeton"), /relevé 500/);
-  assert.equal(await releverSiDu(a, port, "jeton"), false);
+  const { a, port, vus, stock } = objet({ ANNUAIRE: db }, () => new Response("panne", { status: 500 }));
+  const t = Date.now();
+  assert.equal(await releverSiDu(a, port, "jeton", t), false);
+  assert.equal(await releverSiDu(a, port, "jeton", t + 1), false);
   assert.equal(vus.length, 1);
+  assert.equal(await releverSiDu(a, port, "jeton", t + RELEVE_MS), false);
+  assert.deepEqual(stock.get("releve_echec"), { depuis: t, essais: 2, quand: t + RELEVE_MS, message: "relevé 500" });
+  assert.equal(stock.get("alertes"), undefined); // les pannes du conteneur restent les siennes
+  assert.equal((await a.etat()).releve_echec.essais, 2);
   assert.equal((await lireReleves(db, 1)).clients[0].releve_le, null);
   const mal = objet({ ANNUAIRE: db }, () => Response.json({ forme: 1, jours: {} }));
-  await assert.rejects(releverSiDu(mal.a, mal.port, "jeton"), /mal formé/);
+  assert.equal(await releverSiDu(mal.a, mal.port, "jeton"), false);
+  assert.equal(mal.stock.get("releve_echec").message, "relevé mal formé");
+  // Un relevé qui repasse efface l'échec.
+  const ok = objet({ ANNUAIRE: db });
+  ok.stock.set("releve_echec", { depuis: 1, essais: 3 });
+  assert.equal(await releverSiDu(ok.a, ok.port, "jeton"), true);
+  assert.equal(ok.stock.get("releve_echec"), undefined);
 });
 
 test("à l'alarme : rappels puis relevé ; un relevé en panne n'arrête pas les rappels", async () => {
   const db = d1();
   const { a, vus } = objet({ ANNUAIRE: db });
   await a.alarm();
-  assert.deepEqual(vus.map(([chemin]) => chemin), ["/interne/rappels", "/interne/releve?jours=2"]);
+  assert.deepEqual(vus.map(([chemin]) => chemin), ["/interne/rappels", `/interne/releve?jours=${JOURS_RELEVE_MAX}`]);
   assert.equal((await lireReleves(db, 1)).clients[0].jours[AUJOURDHUI].tours, 4);
   const enPanne = objet({ ANNUAIRE: db }, () => new Response("panne", { status: 503 }));
   await enPanne.a.alarm();
   assert.equal(enPanne.stock.get("echecs_alarme"), undefined); // l'alarme a réussi : les rappels sont partis
-  assert.equal(enPanne.stock.get("alertes").at(-1).quoi, "releve");
+  assert.equal(enPanne.stock.get("alertes"), undefined);
+  assert.equal(enPanne.stock.get("releve_echec").message, "relevé 503");
 });
 
 test("GET /admin/releves : le jeton de MEGGA, des jours bornés, sans réveiller aucun conteneur", async () => {
@@ -154,11 +181,34 @@ test("GET /admin/releves : le jeton de MEGGA, des jours bornés, sans réveiller
   const env = { ADMIN_TOKEN: "admin", ANNUAIRE: db };
   const lire = (chemin, jeton = "admin") => recevoir(new Request(`https://porte.essai${chemin}`, { headers: { authorization: `Bearer ${jeton}` } }), env);
   assert.equal((await lire("/admin/releves", "faux")).status, 401);
-  for (const faux of ["abc", "1000", "-1"]) assert.equal((await lire(`/admin/releves?jours=${faux}`)).status, 400);
+  for (const faux of ["abc", "0", "93", "1000", "-1"]) assert.equal((await lire(`/admin/releves?jours=${faux}`)).status, 400);
+  assert.equal((await lire("/admin/releves?apres=A%20B")).status, 400);
   const r = await lire("/admin/releves?jours=30");
   assert.equal(r.status, 200);
   const d = await r.json();
   assert.equal(d.jours, 30);
   assert.deepEqual(d.clients.map((c) => c.id), ["essai", "muet"]);
   assert.equal(d.clients[0].jours[AUJOURDHUI].tours, 4);
+  assert.equal(d.suivant, null);
+});
+
+test("les relevés se lisent par pages de 50 clients", async () => {
+  const db = d1();
+  for (let i = 0; i < 120; i++) {
+    const id = `client-${String(i).padStart(3, "0")}`;
+    db.brut.prepare("INSERT INTO clients (id, numero_id, zone, config, version) VALUES (?, NULL, 'europe', '{}', 1)").run(id);
+    await ranger(db, id, nettoyer(RELEVE), { demarre: true, alertes: [] });
+  }
+  const vus = [];
+  let apres = "";
+  do {
+    const page = await lireReleves(db, 7, apres);
+    assert.ok(page.clients.length <= CLIENTS_PAR_PAGE);
+    vus.push(...page.clients.map((c) => c.id));
+    for (const c of page.clients) if (c.id.startsWith("client-")) assert.equal(c.jours[AUJOURDHUI].tours, 4);
+    apres = page.suivant;
+  } while (apres);
+  assert.equal(vus.length, 122);
+  assert.equal(new Set(vus).size, 122);
+  await assert.rejects(lireReleves(db, 93), RangeError);
 });

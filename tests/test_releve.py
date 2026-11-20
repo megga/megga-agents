@@ -52,7 +52,7 @@ def test_le_releve_borne_ses_jours(tmp_path):
     app, _ = serveur(tmp_path)
     with TestClient(app) as t:
         assert len(t.get("/interne/releve?jours=1", headers=INTERNE).json()["jours"]) == 1
-        assert len(t.get("/interne/releve?jours=99", headers=INTERNE).json()["jours"]) == 3
+        assert len(t.get("/interne/releve?jours=99", headers=INTERNE).json()["jours"]) == 14  # le rattrapage, deux semaines au plus
 
 
 # Dans l'atelier
@@ -113,7 +113,7 @@ def test_les_releves_pour_megga_seulement(atelier):
     c = r.json()["clients"][0]
     assert c["id"] == "exemple" and c["version_en_service"] == 1 and not c["ecart"]
     assert t.get("/atelier/releves", headers=jeton_client(t)).status_code == 403
-    for faux in ("0", "401", "abc"):
+    for faux in ("0", "93", "abc", "²", "٣"):
         assert t.get(f"/atelier/releves?jours={faux}", headers=MEGGA).status_code == 400
 
 
@@ -126,8 +126,11 @@ def test_porte_http_releves():
 
     def repondre(r: httpx.Request):
         vus.append((str(r.url), r.headers["authorization"]))
-        return httpx.Response(200, json={"clients": []})
+        if "apres" not in r.url.params:
+            return httpx.Response(200, json={"depuis": "x", "jours": 7, "clients": [{"id": "a"}], "suivant": "a"})
+        return httpx.Response(200, json={"depuis": "x", "jours": 7, "clients": [{"id": "b"}], "suivant": None})
 
     p = Porte("https://porte.essai", "jeton", transport=httpx.MockTransport(repondre))
-    assert asyncio.run(p.releves(7)) == {"clients": []}
-    assert vus == [("https://porte.essai/admin/releves?jours=7", "Bearer jeton")]
+    assert asyncio.run(p.releves(7)) == {"depuis": "x", "jours": 7, "clients": [{"id": "a"}, {"id": "b"}], "suivant": None}
+    assert vus == [("https://porte.essai/admin/releves?jours=7", "Bearer jeton"),
+                   ("https://porte.essai/admin/releves?jours=7&apres=a", "Bearer jeton")]

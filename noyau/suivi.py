@@ -73,8 +73,9 @@ def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_e
 
 
 JOUR = 86400
-# Le relevé chiffré (20.11.2026) : aujourd'hui et hier par défaut, trois jours au plus (en UTC, les clients sont partout).
-JOURS_RELEVE = 3
+# Le relevé chiffré (20.11.2026) : aujourd'hui et hier par défaut (en UTC, les clients sont partout) ; deux semaines au
+# plus, pour rattraper les jours manqués après une absence (porte/src/releves.js, JOURS_RELEVE_MAX).
+JOURS_RELEVE = 14
 
 
 def jours_utc(nombre: int, maintenant: float) -> list[tuple[str, float, float]]:

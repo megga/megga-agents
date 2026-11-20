@@ -12,6 +12,8 @@ from .couts import Tarifs, couts
 
 # Un relevé est pris au plus tous les quarts d'heure ; au-delà de 40 minutes sans relevé, l'agent est silencieux.
 SILENCE_S = 40 * 60
+# La période lue d'un coup : un trimestre au plus (porte/src/releves.js, JOURS_LUS_MAX).
+JOURS_LUS_MAX = 92
 CHIFFRES = ("tours", "tours_api", "tours_en_echec", "secours")
 
 

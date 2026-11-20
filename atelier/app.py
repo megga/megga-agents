@@ -45,7 +45,7 @@ Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/conversations/{personne}  les derniers échanges avec elle
   GET   /clients/{id}/alertes[?jours=7]         échecs, pannes du conteneur, écart avec l'annuaire
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
-  GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour,
+  GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour (92 au plus),
                                                 avec coûts, écart et agents silencieux (aucun conteneur réveillé)
 
 Installations hors Cloudflare (chez le client, zone suisse), pilotées par un canal sortant et signé :
@@ -94,7 +94,7 @@ from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
 from .regles import Refus
-from .releves import rassembler
+from .releves import JOURS_LUS_MAX, rassembler
 from .versions import Versions
 
 log = logging.getLogger("megga.atelier")
@@ -666,8 +666,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     async def releves(requete: Request, qui: Identite = Depends(identite)):
         megga(qui)
         brut = requete.query_params.get("jours") or "7"
-        if not brut.isdigit() or not 1 <= int(brut) <= 400:
-            raise Refus(400, "jours : de 1 à 400")
+        if not re.fullmatch(r"[0-9]{1,2}", brut, re.ASCII) or not 1 <= int(brut) <= JOURS_LUS_MAX:
+            raise Refus(400, f"jours : de 1 à {JOURS_LUS_MAX}")
         if porte is None:
             raise Refus(503, "porte non réglée (PORTE_URL)")
         try:
