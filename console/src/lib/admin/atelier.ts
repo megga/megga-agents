@@ -33,6 +33,8 @@ export type ClientAtelier = {
   ecart?: boolean | null;
   annuaire?: { version?: number; conteneur?: { demarre: boolean } } | null;
   installation?: Record<string, unknown>;
+  /** Le pays du client (code ISO à deux lettres), réglé dans l'atelier ; absent d'un atelier d'avant le 20.11.2026. */
+  pays?: string | null;
 };
 export type Alerte = { quand: number | null; genre: string; detail: string; resolue?: number | null }; // quand : inconnu d'une installation sans relevé
 export type Activite = {
@@ -220,6 +222,7 @@ export const atelier = {
   essai: (id: string, n: number, corps: Corps) =>
     ecrire<{ version: number; conversation: string; reponse: string }>(`${v(id, n)}/essai`, "POST", corps, ATTENTE_ESSAI_MS),
   activer: (id: string, n: number, corps: Corps) => ecrire<Corps>(`${v(id, n)}/activer`, "POST", corps, ATTENTE_ACTIVER_MS),
+  reglerPays: (id: string, pays: string | null) => ecrire<{ client: string; pays: string | null }>(`${c(id)}/pays`, "PUT", { pays }),
   reprise: (id: string, corps: Corps) => ecrire<{ client: string; gere_par_megga: boolean }>(`${c(id)}/reprise`, "POST", corps),
   creerJeton: (id: string) => ecrire<{ client: string; jeton: string }>(`${c(id)}/jetons`, "POST"),
   retirerJetons: (id: string) => ecrire<{ client: string; retires: number }>(`${c(id)}/jetons`, "DELETE"),

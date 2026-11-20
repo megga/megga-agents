@@ -56,6 +56,8 @@ CLIENTS = (
 CHALET = "chalet-essai"
 INJOIGNABLES = {"fleuriste-essai"}  # en service, mais son conteneur ne répond plus : la porte rend 503 à tout suivi
 BROUILLONS = {"librairie-essai"}  # jamais mis en service : un brouillon, inconnu de la porte
+# Le pays de chacun, pour la carte du monde ; la librairie n'en a pas.
+PAYS = {"boulangerie-essai": "CH", "garage-essai": "FR", "agence-essai": "ES", "chalet-essai": "CH", "fleuriste-essai": "AE"}
 # Un seul modèle a son tarif : le secours (deepseek-v4-pro), la voix et l'écoute sortent « sans tarif ».
 TARIFS = {"devise": "USD", "modeles": {"claude-sonnet-5-5": {"entree": 3, "sortie": 15, "cache_lecture": 0.3, "cache_ecriture": 3.75}}}
 
@@ -301,6 +303,8 @@ def peupler(t: TestClient, porte: PorteEssai) -> None:
         attendu(t.post("/atelier/clients", json=c))
         if c["client"]["id"] not in BROUILLONS:
             attendu(t.post(f"/atelier/clients/{c['client']['id']}/versions/1/activer", json={"forcer": True}))
+    for ident, pays in PAYS.items():
+        attendu(t.put(f"/atelier/clients/{ident}/pays", json={"pays": pays}))
     attendu(t.post("/atelier/clients/agence-essai/versions", json={"changements": {"ton": "chaleureux et précis, vouvoie en français"}}))
     attendu(t.post("/atelier/clients/agence-essai/versions/2/activer", json={"forcer": True}))
     # Une mise en service interrompue après la porte : l'annuaire sert encore la version 1, d'où l'écart.
