@@ -11,7 +11,7 @@ from typing import Any
 from .regles import Refus
 
 CLE = "pays"
-# Les codes ISO 3166-1 à deux lettres (console/scripts/carte-monde.cjs les tire de i18n-iso-countries).
+# Les codes ISO 3166-1 à deux lettres (console/scripts/carte-monde.mjs les tire de i18n-iso-countries).
 CODES = frozenset((
     "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC "
     "CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD "

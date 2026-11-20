@@ -1,7 +1,7 @@
 import CODES_ISO from "./pays-codes.json";
 
 // Les pays des clients (20.11.2026) : un code ISO à deux lettres, réglé dans l'atelier (PUT /clients/{id}/pays), jamais dans
-// la configuration de l'agent. La liste vient de scripts/carte-monde.cjs ; le nom en français, du navigateur ou de Node (Intl).
+// la configuration de l'agent. La liste vient de scripts/carte-monde.mjs ; le nom en français, du navigateur ou de Node (Intl).
 
 export const CODES_PAYS: readonly string[] = CODES_ISO;
 const CONNUS: ReadonlySet<string> = new Set(CODES_ISO);

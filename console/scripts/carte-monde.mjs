@@ -3,16 +3,16 @@
 // (ISC), projetées par d3-geo (ISC) ; les codes ISO à deux lettres par i18n-iso-countries (MIT). L'Antarctique est laissé.
 //
 //   npm i --no-save d3-geo@3.1.1 topojson-client@3.1.0 world-atlas@2.0.2 i18n-iso-countries@7.14.0
-//   node scripts/carte-monde.cjs
+//   node scripts/carte-monde.mjs
 //
 // Il écrit aussi la liste des codes que l'atelier accepte (src/lib/admin/pays-codes.json, à recopier dans atelier/pays.py
 // du moteur).
-const fs = require("node:fs");
-const path = require("node:path");
-const { geoEqualEarth, geoPath } = require("d3-geo");
-const { feature } = require("topojson-client");
-const pays = require("i18n-iso-countries");
-const monde = require("world-atlas/countries-110m.json");
+import fs from "node:fs";
+import path from "node:path";
+import { geoEqualEarth, geoPath } from "d3-geo";
+import pays from "i18n-iso-countries";
+import { feature } from "topojson-client";
+import monde from "world-atlas/countries-110m.json" with { type: "json" };
 
 const LARGEUR = 1000;
 const formes = feature(monde, monde.objects.countries).features;
@@ -28,7 +28,7 @@ for (const f of formes) {
 const gardees = formes.filter((f) => f.id && pays.numericToAlpha2(f.id) && pays.numericToAlpha2(f.id) !== "AQ");
 const [[x0, y0], [x1, y1]] = trace.bounds({ type: "FeatureCollection", features: gardees });
 const codes = Object.keys(pays.getAlpha2Codes()).sort();
-const fichier = path.join(__dirname, "..", "src", "lib", "admin", "carte-monde.json");
+const fichier = path.join(import.meta.dirname, "..", "src", "lib", "admin", "carte-monde.json");
 fs.writeFileSync(fichier, JSON.stringify({ vue: [x0, y0, x1 - x0, y1 - y0].map((n) => Math.round(n)).join(" "), pays: sortie }) + "\n");
 fs.writeFileSync(path.join(path.dirname(fichier), "pays-codes.json"), JSON.stringify(codes) + "\n");
 console.log(`${Object.keys(sortie).length} pays tracés, ${codes.length} codes, ${fs.statSync(fichier).size} octets`);

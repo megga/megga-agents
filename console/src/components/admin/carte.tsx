@@ -4,7 +4,7 @@ import { nomPays } from "@/lib/admin/pays";
 import { TA } from "@/lib/admin/textes";
 
 // La carte du monde, en SVG rendu côté serveur (aucune bibliothèque, aucun script) : le fond vient de
-// scripts/carte-monde.cjs (Natural Earth). Un pays qui a des clients se fonce selon ses tours de la période, à l'échelle du
+// scripts/carte-monde.mjs (Natural Earth). Un pays qui a des clients se fonce selon ses tours de la période, à l'échelle du
 // plus actif ; un pays dont un client est à surveiller prend la couleur d'avertissement. Le détail se lit au survol, et le
 // tableau sous la carte le redit pour un lecteur d'écran. Un petit pays absent du fond (Monaco) n'est que dans le tableau.
 
