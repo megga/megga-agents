@@ -60,6 +60,7 @@ PARAMETRES = {"fiche_pdf": ("version", "langue", "slug", "reference", "sans_prix
 LISTES = ("chercher_biens", "biens_pour_recherche")
 TROIS = ("\n(À l'oral : dis combien il y en a, cites-en trois au plus, les plus proches de la demande, et propose d'envoyer "
          "les autres en cartes dans la conversation avec montrer_biens. Jamais un slug à voix haute.)")
+DELAI_REGLAGES = 2.5  # au décrochage, les réglages de la gestion relus, sans faire attendre l'appel davantage
 DELAI_OUTIL = 25.0  # secondes ; ElevenLabs en attend 30 (response_timeout_secs des outils)
 DELAI_ENVOI = 8.0  # un envoi plus long continue en arrière-plan
 RESULTAT = 3000  # caractères d'un résultat rendu à la voix
@@ -279,8 +280,20 @@ class Appels:
         texte = masquer_secrets("\n".join(morceaux))[-RECENT_MAX:]
         return texte or "aucune"
 
+    async def relire_reglages(self) -> None:
+        """Les réglages que Greg change dans sa gestion (accepter les appels, qui, la durée), relus à chaque décrochage : un
+        clic dans la gestion vaut pour l'appel suivant. Une gestion lente ou en panne laisse ceux d'avant."""
+        reglages = getattr(self.conversations, "reglages_gestion", None)
+        if reglages is None:
+            return
+        try:
+            await asyncio.wait_for(reglages.rafraichir(forcer=True), DELAI_REGLAGES)
+        except Exception as e:
+            log.warning("réglages non relus au décrochage : %s", str(e)[:200] or type(e).__name__)
+
     async def debut(self, d: dict) -> dict:
         """La réponse au webhook de début : les variables de l'agent vocal, et la durée de l'appel."""
+        await self.relire_reglages()
         a = self.conf.appels
         personne = appelant(d.get("caller_id") or d.get("system__caller_id"))
         role = await self._role(personne)

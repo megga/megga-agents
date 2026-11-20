@@ -95,8 +95,10 @@ class ReglagesDeLaGestion:
         self._prochain = 0.0
         self._verrou = asyncio.Lock()
 
-    async def rafraichir(self) -> None:
-        if self.horloge() < self._prochain or self._verrou.locked():
+    async def rafraichir(self, forcer: bool = False) -> None:
+        """`forcer` : relus même s'ils l'ont été il y a moins de trente secondes (au décrochage d'un appel, noyau/appels.py :
+        Greg coupe les appels d'un clic, le suivant le sait)."""
+        if (not forcer and self.horloge() < self._prochain) or self._verrou.locked():
             return
         async with self._verrou:
             self._prochain = self.horloge() + self.intervalle

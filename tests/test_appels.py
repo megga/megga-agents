@@ -167,6 +167,39 @@ def test_greg_regle_les_appels_dans_sa_gestion(fsp):
     assert sorted(refuses) == ["appels_duree", "appels_qui"] and c.appels == CONF.appels and c.reactions is False
 
 
+def test_au_decrochage_les_reglages_de_la_gestion_sont_relus(fsp):
+    """Greg coupe les appels d'un clic dans sa gestion : l'appel suivant le sait, même dans les trente secondes."""
+    a, conv, *_ = fsp
+
+    class Reglages:
+        def __init__(self):
+            self.forces = []
+
+        async def rafraichir(self, forcer=False):
+            self.forces.append(forcer)
+            conv.conf, _ = appliquer_au_mieux(CONF, {"appels": False})
+
+    conv.reglages_gestion = Reglages()
+    r = run(a.debut({"caller_id": "41790000001"}))
+    assert conv.reglages_gestion.forces == [True] and r["dynamic_variables"]["role"] == "refuse"
+
+
+def test_une_gestion_lente_ne_retient_pas_l_appel(fsp, monkeypatch):
+    import noyau.appels as module
+
+    monkeypatch.setattr(module, "DELAI_REGLAGES", 0.05)
+    a, conv, *_ = fsp
+
+    class Lente:
+        async def rafraichir(self, forcer=False):
+            await asyncio.sleep(5)
+
+    conv.reglages_gestion = Lente()
+    debut = time.monotonic()
+    r = run(a.debut({"caller_id": "41790000001"}))
+    assert time.monotonic() - debut < 2 and r["dynamic_variables"]["role"] == "gestionnaire"
+
+
 def test_un_autre_agent_vocal_est_refuse(fsp):
     a, *_ = fsp
     assert a.agent_connu(AGENT) and a.agent_connu(None) and not a.agent_connu("agent_autre1234567890")

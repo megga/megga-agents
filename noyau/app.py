@@ -398,7 +398,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             if fabriquer is not None and nouvelle.modeles != avant.modeles:
                 conversations.agent, conversations.agents = fabriquer(nouvelle)
 
-        conversations.avant_le_tour = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir).rafraichir
+        reglages_gestion = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir)
+        conversations.avant_le_tour = reglages_gestion.rafraichir
+        conversations.reglages_gestion = reglages_gestion  # relus aussi au décrochage d'un appel (noyau/appels.py)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
     # Les appels WhatsApp (noyau/appels.py) : avec leur réglage et leur clé, et les outils du rôle gestionnaire.
