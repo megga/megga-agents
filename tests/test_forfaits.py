@@ -51,7 +51,11 @@ def test_vue_enveloppe_revenu_marge():
     assert a["revenu"] == 410 and a["cout"] == 45 and a["marge"] == 365
     assert b["revenu"] == 0 and b["consommees"] == 5  # en essai : rien n'est encaissé
     t = v["totaux"]
-    assert t["actif"] == 1 and t["essai"] == 1 and t["revenu"] == 410 and t["cout"] == 45
+    assert t["actif"] == 1 and t["essai"] == 1 and t["revenu"] == 410 and t["cout"] == 46  # l'essai coûte aussi
+    assert t["marge"] == 364
+    # Un abonnement qui commence le mois prochain n'encaisse rien ce mois-ci.
+    futur = {"c": Abonnement(forfait="essentiel", statut="actif", debut="2026-12-01")}
+    assert vue(cat, futur, [], releve, date(2026, 11, 20))["clients"][0]["revenu"] == 0
     # Proche : sous le seuil choisi.
     abos["a"] = Abonnement(forfait="essentiel", statut="actif", debut="2026-11-01", seuil_recharge=150)
     assert vue(cat, abos, recharges, releve, date(2026, 11, 20))["clients"][0]["proche"]
