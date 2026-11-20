@@ -36,6 +36,42 @@ export type ClientAtelier = {
   /** Le pays du client (code ISO à deux lettres), réglé dans l'atelier ; absent d'un atelier d'avant le 20.11.2026. */
   pays?: string | null;
 };
+/** Les forfaits et les clients payants (atelier/forfaits.py, 20.11.2026) : l'unité vendue est la conversation. */
+export type Forfait = {
+  id: string;
+  nom: string;
+  prix_mensuel: number;
+  conversations: number;
+  remise_annuelle: number;
+  recharge: { conversations: number; prix: number } | null;
+};
+export type CatalogueForfaits = { devise: string; multiplicateur: number; forfaits: Forfait[] };
+export type StatutAbonnement = "essai" | "actif" | "retard" | "parti";
+export type Abonnement = { forfait: string; rythme: "mensuel" | "annuel"; statut: StatutAbonnement; debut: string; seuil_recharge: number | null };
+export type LignePayant = {
+  client: string;
+  entreprise: string | null;
+  abonnement: Abonnement;
+  forfait_inconnu: boolean;
+  mois: { debut: string };
+  enveloppe: number;
+  consommees: number;
+  reste: number;
+  proche: boolean;
+  recharges: { nombre: number; conversations: number; prix: number };
+  revenu: number;
+  cout: number;
+  marge: number | null;
+};
+export type TotauxPayants = Record<StatutAbonnement, number> & { revenu: number; cout: number; marge: number | null; proches: number };
+export type VuePayants = {
+  devise: string;
+  devise_couts: string | null;
+  catalogue: CatalogueForfaits;
+  clients: LignePayant[];
+  totaux: TotauxPayants;
+  releve_lisible: boolean;
+};
 export type Alerte = { quand: number | null; genre: string; detail: string; resolue?: number | null }; // quand : inconnu d'une installation sans relevé
 export type Activite = {
   tours: number;
@@ -245,6 +281,12 @@ export const atelier = {
   ajouterDestination: (corps: Corps) => ecrire<Destination & { secret?: string }>("/alertes/destinations", "POST", corps),
   retirerDestination: (id: string) => ecrire<{ retiree: string }>(`/alertes/destinations/${encodeURIComponent(id)}`, "DELETE"),
   essayerDestination: (id: string) => ecrire<{ envoye: boolean }>(`/alertes/destinations/${encodeURIComponent(id)}/essai`, "POST"),
+  forfaits: () => lire<CatalogueForfaits>("/forfaits"),
+  reglerForfaits: (corps: Corps) => ecrire<CatalogueForfaits>("/forfaits", "PUT", corps),
+  payants: () => lire<VuePayants>("/abonnements"),
+  reglerAbonnement: (id: string, corps: Corps) => ecrire<Abonnement & { client: string }>(`${c(id)}/abonnement`, "PUT", corps),
+  retirerAbonnement: (id: string) => ecrire<{ client: string; retire: boolean }>(`${c(id)}/abonnement`, "DELETE"),
+  recharger: (id: string, corps: Corps) => ecrire<{ client: string; conversations: number; prix: number }>(`${c(id)}/recharges`, "POST", corps),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
 };
 

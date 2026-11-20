@@ -58,6 +58,18 @@ INJOIGNABLES = {"fleuriste-essai"}  # en service, mais son conteneur ne répond 
 BROUILLONS = {"librairie-essai"}  # jamais mis en service : un brouillon, inconnu de la porte
 # Le pays de chacun, pour la carte du monde ; la librairie n'en a pas.
 PAYS = {"boulangerie-essai": "CH", "garage-essai": "FR", "agence-essai": "ES", "chalet-essai": "CH", "fleuriste-essai": "AE"}
+# Deux forfaits et quatre abonnements : un actif, un en retard, un en essai, un à l'année ; le fleuriste et la librairie n'en ont pas.
+FORFAITS = {"devise": "USD", "multiplicateur": 3, "forfaits": [
+    {"id": "essentiel", "nom": "Essentiel", "prix_mensuel": 290, "conversations": 200, "remise_annuelle": 20,
+     "recharge": {"conversations": 100, "prix": 120}},
+    {"id": "pro", "nom": "Pro", "prix_mensuel": 790, "conversations": 600, "remise_annuelle": 20,
+     "recharge": {"conversations": 250, "prix": 290}}]}
+ABONNEMENTS = {
+    "boulangerie-essai": {"forfait": "essentiel", "statut": "actif", "seuil_recharge": 60},
+    "garage-essai": {"forfait": "pro", "statut": "retard"},
+    "agence-essai": {"forfait": "essentiel", "statut": "essai"},
+    "chalet-essai": {"forfait": "pro", "statut": "actif", "rythme": "annuel"},
+}
 # Un seul modèle a son tarif : le secours (deepseek-v4-pro), la voix et l'écoute sortent « sans tarif ».
 TARIFS = {"devise": "USD", "modeles": {"claude-sonnet-5-5": {"entree": 3, "sortie": 15, "cache_lecture": 0.3, "cache_ecriture": 3.75}}}
 
@@ -305,6 +317,11 @@ def peupler(t: TestClient, porte: PorteEssai) -> None:
             attendu(t.post(f"/atelier/clients/{c['client']['id']}/versions/1/activer", json={"forcer": True}))
     for ident, pays in PAYS.items():
         attendu(t.put(f"/atelier/clients/{ident}/pays", json={"pays": pays}))
+    attendu(t.put("/atelier/forfaits", json=FORFAITS))
+    debut = time.strftime("%Y-%m-01", time.gmtime())
+    for ident, abo in ABONNEMENTS.items():
+        attendu(t.put(f"/atelier/clients/{ident}/abonnement", json={"debut": debut, **abo}))
+    attendu(t.post("/atelier/clients/boulangerie-essai/recharges", json={"conversations": 100, "prix": 120}))
     attendu(t.post("/atelier/clients/agence-essai/versions", json={"changements": {"ton": "chaleureux et précis, vouvoie en français"}}))
     attendu(t.post("/atelier/clients/agence-essai/versions/2/activer", json={"forcer": True}))
     # Une mise en service interrompue après la porte : l'annuaire sert encore la version 1, d'où l'écart.
