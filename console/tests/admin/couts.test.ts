@@ -57,6 +57,7 @@ vi.mock("@/lib/admin/atelier", async (original) => {
       suivi: async (id: string) => (noter(`suivi ${id}`), simule.suivis[id]),
       alertes: async (id: string) => (noter(`alertes ${id}`), { periode_jours: 7, alertes: [] }),
       tarifs: async () => (noter("tarifs"), simule.tarifs),
+      releves: async (jours: number) => (noter(`releves ${jours}`), RELEVES),
     },
   };
 });
@@ -70,6 +71,19 @@ const suivi = (id: string, couts: Suivi["couts"]): Suivi => ({
   couts,
 });
 const LISIBLES = { devise: "USD", postes: { "claude-sonnet-5-5": 1.8507 }, total: 1.8507, sans_tarif: ["deepseek-v4-pro", "voix"] };
+// Le relevé chiffré que lit la vue d'ensemble (GET /atelier/releves) : hissé, la simulation de l'atelier le rend.
+const RELEVES = vi.hoisted(() => {
+  const jour = (cout: number) => ({ tours: 5, tours_api: 0, tours_en_echec: 0, secours: 0, personnes: 1, cout,
+    delais: { lecture: { nombre: 0, moyenne: null }, reponse: { nombre: 1, moyenne: 4 }, lentes: 0 } });
+  const client = (id: string, entreprise: string, cout: number, sansTarif: string[], autres = {}) => ({
+    id, entreprise, zone: "europe", actif: true, version_en_service: 1, ecart: false, releve_le: 1, silencieux: false,
+    etat: { demarre: true, pannes_en_cours: [] }, totaux: { tours: 10, tours_api: 0, tours_en_echec: 0, secours: 1, cout, sans_tarif: sansTarif },
+    jours: { "2026-11-19": jour(cout / 2), "2026-11-20": jour(cout / 2) }, ...autres });
+  return { depuis: "2026-11-14", periode_jours: 7, devise: "USD", clients: [
+    client("boulangerie-essai", "Boulangerie des Essais", 1.8507, ["deepseek-v4-pro", "voix"]),
+    client("chalet-essai", "Chalet des Essais", 0, [], { silencieux: true }),
+  ] };
+});
 const ILLISIBLES = { erreur: "activité illisible" };
 
 /** Les composants async du serveur (BlocMoteur) se rendent d'abord ; le reste se dessine en HTML. */
@@ -175,21 +189,22 @@ describe("la vue d'ensemble", () => {
     for (const m of [TA.cout, "USD", TA.montant(1.8507), "deepseek", enHtml(TA.coutsIllisibles("Chalet des Essais"))]) expect(h, m).not.toContain(m);
   });
 
-  it("avec couts.voir : la tuile « Coût » et sa devise, la colonne, un tiret de TA pour un coût illisible, et les clients dont le coût manque", async () => {
+  it("avec couts.voir : la tuile « Coût » et sa devise, la colonne, le coût par jour et les modèles sans tarif", async () => {
     etat.qui = "comptable";
     const h = await html(await vue());
     expect(tuile(h, TA.cout)).toBe(TA.montantEn(1.8507, "USD"));
     expect(h).toContain(`>${TA.coutEn("USD")}</th>`);
-    expect(h).toContain(`>${TA.inconnu}</span>`);
-    expect(h).toContain(enHtml(TA.coutsIllisibles("Chalet des Essais")));
+    expect(h).toContain(TA.coutParJour("USD"));
     expect(h).toContain(enHtml(TA.sansTarif("deepseek-v4-pro, voix")));
   });
 
-  it("avec couts.voir et aucun coût lisible : la tuile « Coût » reste, avec le tiret de TA", async () => {
+  it("une seule lecture, le relevé chiffré : aucun suivi ni aucune alerte de client, la santé la pire d'abord", async () => {
     etat.qui = "comptable";
-    simule.suivis["boulangerie-essai"] = suivi("boulangerie-essai", ILLISIBLES);
     const h = await html(await vue());
-    expect(tuile(h, TA.cout)).toBe(TA.inconnu);
-    expect(h).toContain(enHtml(TA.coutsIllisibles("Boulangerie des Essais, Chalet des Essais")));
+    expect(simule.appels).toEqual(["releves 7"]);
+    expect(tuile(h, TA.aSurveiller)).toBe("1");
+    expect(h.indexOf("Chalet des Essais")).toBeLessThan(h.indexOf("Boulangerie des Essais"));
+    expect(h).toContain(TA.santes.silencieux);
+    expect(h).toContain(TA.secondes(4));
   });
 });

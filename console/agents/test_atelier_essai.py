@@ -128,6 +128,19 @@ def test_suivi_avec_couts(essai):
     assert 0 < un < trente
 
 
+def test_releves(essai):
+    """Le relevé chiffré : le garage en panne, le fleuriste silencieux, les autres en bonne santé ; aucune conversation."""
+    r = essai.t.get("/atelier/releves?jours=7")
+    assert r.status_code == 200, r.text
+    d = {c["id"]: c for c in r.json()["clients"]}
+    assert set(d) == {"agence-essai", "boulangerie-essai", "fleuriste-essai", "garage-essai"}
+    assert d["fleuriste-essai"]["silencieux"] and not d["boulangerie-essai"]["silencieux"]
+    assert [p["quoi"] for p in d["garage-essai"]["etat"]["pannes_en_cours"]] == ["transmission"]
+    assert len(d["boulangerie-essai"]["jours"]) == 7 and d["boulangerie-essai"]["totaux"]["tours"] == 7 * 14
+    assert d["boulangerie-essai"]["totaux"]["cout"] > 0
+    assert "+4179" not in r.text and "Martin" not in r.text
+
+
 def test_conversations(essai):
     t = essai.t
     personnes = t.get("/atelier/clients/boulangerie-essai/conversations").json()["conversations"]

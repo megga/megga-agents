@@ -113,7 +113,7 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   expect(lien.startsWith(`${baseURL}/admin/invitation/`)).toBe(true);
   await rejoindre(page, lien, SUPERADMIN_ESSAI);
 
-  // La vue d'ensemble : les tuiles, dont le coût ; le garage et ses pannes à surveiller (sa place attend l'ordre de Thomas).
+  // La vue d'ensemble, d'après le relevé chiffré : les tuiles, dont le coût ; la santé de chaque client, la pire d'abord.
   await expect(titre(page, TA.vueEnsemble)).toBeVisible();
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(TA.cout, { exact: true }).first()).toBeVisible();
@@ -121,8 +121,10 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   const valeurCout = page.getByText(TA.cout, { exact: true }).first().locator("xpath=following-sibling::b");
   await expect(valeurCout).toContainText(/\d/);
   expect(await valeurCout.evaluate((b) => b.scrollWidth <= b.clientWidth)).toBe(true);
-  const aSurveiller = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: TA.soucis, exact: true }) });
-  await expect(aSurveiller.getByRole("link", { name: GARAGE.entreprise, exact: true })).toBeVisible();
+  const sante = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: TA.sante, exact: true }) });
+  const ligneGarage = sante.getByRole("row").filter({ has: page.getByRole("link", { name: GARAGE.entreprise, exact: true }) });
+  await expect(ligneGarage.getByText(TA.santes.panne, { exact: true })).toBeVisible(); // une panne de transmission dure
+  await expect(sante.getByRole("row").filter({ hasText: "Fleuriste des Essais" }).getByText(TA.santes.silencieux, { exact: true })).toBeVisible();
   await page.screenshot({ path: "captures/admin-vue.png", fullPage: true });
 
   // La boulangerie : sa fiche, puis ses versions.

@@ -221,6 +221,14 @@ export const TA = {
   aSurveiller: "À surveiller",
   activiteParClient: "Activité par client",
   console: "Console",
+  // La santé d'après le relevé chiffré (lib/admin/releves.ts)
+  sante: "Santé",
+  santes: { silencieux: "Silencieux", panne: "En panne", ecart: "Écart de version", echecs: "Tours en échec", ok: "En bonne santé" },
+  reponseMoyenne: "Réponse",
+  secondes: (n: number) => `${NOMBRE.format(n)} s`,
+  toursParJour: "Tours par jour",
+  coutParJour: (devise: string) => `Coût par jour en ${devise}`,
+  videSante: "Aucun client en service.",
 
   // Les gestes
   nouveauClient: "Nouveau client",
