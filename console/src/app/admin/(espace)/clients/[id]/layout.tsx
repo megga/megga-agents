@@ -3,7 +3,7 @@ import { PastillesEtat } from "@/components/admin/pastille";
 import { ongletsClient, peut } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type ClientAtelier } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
-import { nomPays } from "@/lib/admin/pays";
+import { nomPays, paysTries } from "@/lib/admin/pays";
 import { etatClient, horsCloudflare, zoneClient } from "@/lib/admin/suivi";
 import { OngletsClient } from "./onglets";
 import { ChoixPays } from "./pays";
@@ -33,7 +33,7 @@ export default async function FicheClient({ children, params }: LayoutProps<"/ad
         <p className="m-0 flex flex-wrap gap-x-3 text-[14px] text-muted-ink">
           {lu?.nom_agent && <span className="font-semibold text-ink">{lu.nom_agent}</span>}
           <span>{id}</span>
-          {lu && peut(a, "clients.creer") ? <ChoixPays id={id} pays={lu.pays ?? null} /> : lu?.pays && <span>{nomPays(lu.pays)}</span>}
+          {lu && peut(a, "clients.creer") ? <ChoixPays id={id} pays={lu.pays ?? null} liste={paysTries()} /> : lu?.pays && <span>{nomPays(lu.pays)}</span>}
         </p>
         {lu && <PastillesEtat etat={etatClient(lu)} />}
       </header>

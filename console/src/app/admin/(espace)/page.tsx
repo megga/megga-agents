@@ -18,8 +18,8 @@ import { TA } from "@/lib/admin/textes";
 import { pret } from "@/lib/base";
 
 // La vue d'ensemble. Le bloc du moteur (clients.voir) : la période, les tuiles, les tours et le coût jour par jour, la santé de
-// chaque client, la pire d'abord, puis les clients par pays sur la carte du monde ; tout vient du relevé chiffré (une lecture pour tous les clients, aucun conteneur réveillé,
-// jamais une conversation), borné au périmètre du membre. Avec couts.voir, le coût. Le bloc de la console (comptes.voir,
+// chaque client, la pire d'abord, puis les clients par pays sur la carte du monde ; tout vient du relevé chiffré (une lecture
+// pour tous les clients, aucun conteneur réveillé, jamais une conversation), borné au périmètre du membre. Avec couts.voir, le coût. Le bloc de la console (comptes.voir,
 // jamais un externe) : ses tuiles et ses barres, à la même période, mise alors en tête de page.
 
 const COULEUR: Record<Sante, Etat> = { silencieux: "accent", panne: "accent", ecart: "warn", soucis: "warn", ok: "ok", installation: "faint" };

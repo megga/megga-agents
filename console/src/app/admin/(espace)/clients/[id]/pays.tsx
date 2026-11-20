@@ -1,17 +1,16 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useDemande } from "@/components/admin/demande";
 import { envoyer, refusDe } from "@/components/admin/envoyer";
-import { nomPays, paysTries } from "@/lib/admin/pays";
 import { TA } from "@/lib/admin/textes";
 
-// Le pays du client, dans l'en-tête de sa fiche (clients.creer) : un menu ; chaque choix se confirme avant de partir.
-export function ChoixPays({ id, pays }: { id: string; pays: string | null }) {
+// Le pays du client, dans l'en-tête de sa fiche (clients.creer) : un menu ; chaque choix se confirme avant de partir. La liste
+// et ses noms viennent du serveur : le navigateur ne les recalcule pas (son Intl pourrait nommer un pays autrement).
+export function ChoixPays({ id, pays, liste }: { id: string; pays: string | null; liste: readonly { code: string; nom: string }[] }) {
   const router = useRouter();
   const { demander, fenetre } = useDemande();
-  const liste = useMemo(() => paysTries(), []);
   const [message, setMessage] = useState<string | null>(null);
   return (
     <span className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
@@ -20,7 +19,7 @@ export function ChoixPays({ id, pays }: { id: string; pays: string | null }) {
         value={pays ?? ""}
         onChange={(e) => {
           const code = e.target.value || null;
-          demander(TA.paysQuestion(code && nomPays(code)), code ? TA.enregistrer : TA.retirer, () => {
+          demander(TA.paysQuestion(liste.find((p) => p.code === code)?.nom ?? null), code ? TA.enregistrer : TA.retirer, () => {
             envoyer(`/api/admin/clients/${encodeURIComponent(id)}/pays`, "PUT", { pays: code })
               .then(() => {
                 setMessage(TA.paysEnregistre);
