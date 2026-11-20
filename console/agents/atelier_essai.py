@@ -188,9 +188,11 @@ class PorteEssai:
                 d = debut - (jours - 1 - k) * JOUR
                 a = activite(c, maintenant - JOUR, maintenant)
                 a["tours_en_echec"] = sum(1 for e in echecs(c, maintenant) if e["genre"] == "tour_echec" and d <= e["quand"] < d + JOUR)
-                a["delais"] = {"lecture": {"nombre": a["tours"], "moyenne": 2.0}, "reponse": {"nombre": a["tours"], "moyenne": 7.5}, "lentes": 0}
+                a["delais"] = {"lecture": {"nombre": a["tours"], "moyenne": 2.0, "mediane": 1.5, "p95": 4.0},
+                               "reponse": {"nombre": a["tours"], "moyenne": 7.5, "mediane": 6.0, "p95": 18.0}, "lentes": 0}
+                a["outils"] = {"rappeler": {"appels": 2, "echecs": 0, "duree": 0.4, "mesures": 2}} if a["tours"] else {}
                 par_jour[time.strftime("%Y-%m-%d", time.gmtime(d))] = {k2: a[k2] for k2 in
-                    ("tours", "tours_api", "tours_en_echec", "secours", "personnes", "modeles", "journal", "delais")}
+                    ("tours", "tours_api", "tours_en_echec", "secours", "personnes", "modeles", "journal", "delais", "outils")}
             etat = conteneur(c, maintenant)
             en_cours = [{"quoi": p["quoi"], "quand": p["quand"]} for p in etat["alertes"] if not p["resolue"]]
             clients.append({"id": c, "zone": "europe", "actif": 1, "version": v, "releve_le": (maintenant - 300) * 1000,

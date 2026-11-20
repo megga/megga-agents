@@ -51,9 +51,10 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
       />
       <h2 className="m-0 text-[17px] font-extrabold">{TA.sante}</h2>
       <Tableau
-        colonnes={[TA.client, TA.sante, TA.tours, TA.echecs, TA.secours, TA.reponseMoyenne, ...(voitCouts && cout ? [TA.coutEn(cout.devise)] : [])]}
+        colonnes={[TA.client, TA.sante, TA.tours, TA.echecs, TA.secours, TA.reponseMoyenne, TA.reponseLente,
+          ...(voitCouts && cout ? [TA.coutEn(cout.devise)] : [])]}
         vide={TA.videSante}
-        replier={voitCouts ? [2, 3, 4, 5, 6] : [2, 3, 4, 5]}
+        replier={voitCouts ? [2, 3, 4, 5, 6, 7] : [2, 3, 4, 5, 6]}
         lignes={v.lignes.map((l) => [
           <Link key="client" href={`/admin/clients/${encodeURIComponent(l.client)}?jours=${jours}`} className="font-bold text-ink hover:underline">
             {l.entreprise || l.client}
@@ -66,9 +67,26 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
             <span key={i} className={"tabular-nums " + (i === 1 && n > 0 ? "font-semibold text-warn" : "")}>{l.horsReleve ? TA.inconnu : TA.nombre(n)}</span>
           )),
           <span key="reponse" className="whitespace-nowrap tabular-nums">{l.reponse === null ? TA.inconnu : TA.secondes(l.reponse)}</span>,
+          <span key="lente" className="whitespace-nowrap tabular-nums">{l.reponseLente === null ? TA.inconnu : TA.secondes(l.reponseLente)}</span>,
           ...(voitCouts && cout ? [<span key="cout" className="whitespace-nowrap tabular-nums">{l.cout === undefined ? TA.inconnu : TA.montant(l.cout)}</span>] : []),
         ])}
       />
+      {v.outils.length > 0 && (
+        <>
+          <h2 className="m-0 text-[17px] font-extrabold">{TA.outils}</h2>
+          <Tableau
+            colonnes={[TA.outil, TA.appels, TA.echecs, TA.dureeMoyenne]}
+            vide={TA.videOutils}
+            replier={[1, 2, 3]}
+            lignes={v.outils.map((o) => [
+              <b key="nom" className="font-bold break-all">{o.nom}</b>,
+              <span key="appels" className="tabular-nums">{TA.nombre(o.appels)}</span>,
+              <span key="echecs" className={"tabular-nums " + (o.echecs > 0 ? "font-semibold text-warn" : "")}>{TA.nombre(o.echecs)}</span>,
+              <span key="duree" className="whitespace-nowrap tabular-nums">{o.dureeMoyenne === null ? TA.inconnu : TA.secondes(o.dureeMoyenne)}</span>,
+            ])}
+          />
+        </>
+      )}
     </>
   );
 }
