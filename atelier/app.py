@@ -46,6 +46,7 @@ Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/conversations/{personne}  le client seulement : les derniers échanges avec elle
   GET   /clients/{id}/alertes[?jours=7]         échecs, pannes du conteneur, écart avec l'annuaire
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
+  GET   /forfaits, /abonnements, …              MEGGA : les forfaits et les clients payants (atelier/routes_forfaits.py)
   GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour (92 au plus),
                                                 avec coûts, écart et agents silencieux (aucun conteneur réveillé)
   GET   /alertes, PUT /alertes/regles, …       MEGGA : les alertes envoyées (atelier/routes_alertes.py) : règles à
@@ -90,10 +91,11 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
-from . import gabarits, pays, regles, routes_alertes
+from . import gabarits, pays, regles, routes_alertes, routes_forfaits
 from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs, couts
 from .essai import essayer
+from .forfaits import Abonnements
 from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
@@ -705,6 +707,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     routes_alertes.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
                           etats=EtatsAlertes(env["DATABASE_URL"]), porte=porte, rassembler_tout=rassembler_tout,
                           transport=transport_alertes)
+    routes_forfaits.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
+                           abonnements=Abonnements(env["DATABASE_URL"]), client_de=client_de, rassembler_tout=rassembler_tout)
 
     @r.get("/installations")
     def installations(qui: Identite = Depends(identite)):
