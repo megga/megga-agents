@@ -291,3 +291,15 @@ def test_un_client_inactif_repart_de_zero(atelier):
     assert t.get("/atelier/alertes", headers=MEGGA).json()["etats"] == []
     t.post("/atelier/alertes/evaluer", headers=MEGGA)  # de retour : l'alerte repart
     assert len(t.envoyes) == 2
+
+
+def test_mesures_des_temps_et_des_outils():
+    hier = time.strftime("%Y-%m-%d", time.gmtime(MAINTENANT - 86400))
+    jours = {hier: {**CHIFFRES, "delais": {"reponse": {"p95": 40.0}}, "outils": {"rappeler": {"appels": 3, "echecs": 2}}},
+             AUJOURDHUI: {**CHIFFRES, "delais": {"reponse": {"p95": 12.5}}, "outils": {"rappeler": {"echecs": 1}, "autre": {"echecs": 0}}}}
+    c = client(jours=jours)
+    assert mesurer(c, "reponse_p95", 1, MAINTENANT) == 12.5 and mesurer(c, "reponse_p95", 2, MAINTENANT) == 40.0
+    assert mesurer(c, "outils_en_echec", 1, MAINTENANT) == 1 and mesurer(c, "outils_en_echec", 2, MAINTENANT) == 3
+    assert mesurer(client(), "reponse_p95", 1, MAINTENANT) is None  # un relevé d'avant les centiles : sans données
+    r = Regle(id="lent", nom="Réponses lentes", mesure="reponse_p95", comparaison=">", alerte=30)
+    assert "40 s" in message(r, "nouveau", "alerte", c, 40.0, "USD")["texte"]

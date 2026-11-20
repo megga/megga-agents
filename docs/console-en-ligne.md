@@ -36,8 +36,10 @@ Sans `BETTER_AUTH_SECRET` ou sans `CONSOLE_BASE_URL`, le Worker ne démarre pas 
 Depuis `main` à jour, après la fusion de la PR, Docker lancé :
 
 ```bash
-cd console/hebergement && npx wrangler deploy --tag "$(git rev-parse --short HEAD)"
+gh workflow run deployer-console.yml --ref megga/console-vitesse -f confirmation="Fusionne et déploie"
 ```
+
+Le workflow « déployer la console » construit l'image sur une machine de GitHub, du même processeur que les serveurs de Cloudflare. Sur un Mac Apple, Docker imite ce processeur, et la compilation de Next.js y plante par intermittence (erreur de segmentation, 20.11.2026). Le déploiement depuis le Mac (`cd console/hebergement && npx wrangler deploy --tag "$(git rev-parse --short HEAD)"`) ne reste qu'en secours, avec Rosetta activé dans colima (`rosetta: true`).
 
 Le premier déploiement crée le Worker et son domaine. Tant que les secrets manquent, `console.megga.ai` montre la page d'attente.
 
