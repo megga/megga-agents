@@ -87,8 +87,8 @@ Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours (dont `tours_api`, venus d'un logiciel), tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente, refus de débit par API (`api_debit` du journal), `delais` (temps moyen jusqu'aux coches bleues et jusqu'à la réponse, en secondes depuis l'envoi du message, et le nombre de réponses lentes : plus de 30 s pour lire, 120 s pour répondre, notées `reponse_lente` aux alertes) ; **coûts pour MEGGA seulement** |
-| `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
-| `GET /clients/{id}/conversations/{personne}` | tous | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
+| `GET /clients/{id}/conversations` | client | les personnes qui ont écrit, la plus récente d'abord |
+| `GET /clients/{id}/conversations/{personne}` | client | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
 | `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; envois refusés après coup par Meta (`envoi_refuse`, son code d'erreur) ; messages reçus trop tard pour une réponse (`message_ancien`) ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
 | `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
 
@@ -113,7 +113,7 @@ D'où il vient :
 
 Un relevé en échec n'arrête pas les rappels et se retente au quart d'heure suivant. Il est gardé à part (`releve_echec` : depuis quand, combien d'essais, le dernier message technique), dans l'état que rend `GET /admin/clients`, jamais parmi les pannes du conteneur : il ne les chasse pas et ne se croit pas réparé quand le conteneur répond. Les installations hors Cloudflare n'y sont pas encore : leur suivi vient toujours de leur pilote.
 
-MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
+Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres de chaque agent, jamais ce qui se dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026). Avec le jeton de MEGGA, l'atelier refuse (`403`) avant toute lecture.
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 

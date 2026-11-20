@@ -23,7 +23,7 @@ from noyau.app import creer as creer_agent
 from pilote.__main__ import main as commande
 from pilote.service import DELAI_APPLICATION, Installation, Pilote, adresse
 from test_app import FauxAgent, FauxExpediteur
-from test_lot5 import ADMIN, CLE_PILOTAGE, CLE_PILOTAGE_TEXTE, MEGGA, FaussePorte, cle_jetable
+from test_lot5 import ADMIN, CLE_PILOTAGE, CLE_PILOTAGE_TEXTE, MEGGA, FaussePorte, cle_jetable, jeton_client
 from test_lot6_client import CLE as CLE_LICENCE
 from test_lot6_client import jeton as licence
 
@@ -474,9 +474,12 @@ def test_le_suivi_ne_porte_jamais_une_conversation(canal):
     assert c.t.get("/atelier/clients/exemple/suivi?jours=2", headers=MEGGA).status_code == 400
     alertes = c.t.get("/atelier/clients/exemple/alertes", headers=MEGGA).json()["alertes"]
     assert {"genre": "envoi_echec", "detail": "refus pour [numéro]"} in [{k: a[k] for k in ("genre", "detail")} for a in alertes]
-    # les conversations ne quittent jamais l'installation, même pour MEGGA
-    assert c.t.get("/atelier/clients/exemple/conversations", headers=MEGGA).status_code == 409
-    assert c.t.get("/atelier/clients/exemple/conversations/41790000000", headers=MEGGA).status_code == 409
+    # MEGGA ne lit jamais une conversation (20.11.2026) ; celles d'une installation ne la quittent pas, même pour son client
+    assert c.t.get("/atelier/clients/exemple/conversations", headers=MEGGA).status_code == 403
+    assert c.t.get("/atelier/clients/exemple/conversations/41790000000", headers=MEGGA).status_code == 403
+    client = jeton_client(c.t)
+    assert c.t.get("/atelier/clients/exemple/conversations", headers=client).status_code == 409
+    assert c.t.get("/atelier/clients/exemple/conversations/41790000000", headers=client).status_code == 409
     # le suivi suivant attend 5 minutes ; l'état part à chaque relevé
     vus.clear()
     c.tour(p)
