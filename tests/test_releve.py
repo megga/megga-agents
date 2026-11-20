@@ -134,3 +134,36 @@ def test_porte_http_releves():
     assert asyncio.run(p.releves(7)) == {"depuis": "x", "jours": 7, "clients": [{"id": "a"}, {"id": "b"}], "suivant": None}
     assert vus == [("https://porte.essai/admin/releves?jours=7", "Bearer jeton"),
                    ("https://porte.essai/admin/releves?jours=7&apres=a", "Bearer jeton")]
+
+
+# Les temps de réponse et les outils (20.11.2026)
+
+
+def test_centiles_et_outils():
+    from noyau.stockage import Suivi as LectureTours
+    from noyau.suivi import centile, outils
+
+    assert centile([], 50) is None
+    assert (centile(list(range(1, 21)), 50), centile(list(range(1, 21)), 95), centile([7.0], 95)) == (10, 19, 7.0)
+    brut = [{"tool_name": "rappeler", "tool_args": {"texte": "relancer Greg"}, "result": "ok +41790000000",
+             "tool_call_error": False, "metrics": {"duration": 0.5}},
+            {"tool_name": "rappeler", "tool_call_error": True, "metrics": {}},
+            {"tool_name": None}, "pas un appel"]
+    vus = LectureTours._outils(brut)
+    assert vus == [{"nom": "rappeler", "erreur": False, "duree": 0.5}, {"nom": "rappeler", "erreur": True, "duree": None}]
+    assert LectureTours._outils(json.dumps(brut)) == vus and LectureTours._outils("illisible") == []
+    assert "Greg" not in json.dumps(vus) and "4179" not in json.dumps(vus)  # ni arguments ni résultat
+    assert outils([{"outils": vus}, {"outils": vus[:1]}]) == {"rappeler": {"appels": 3, "echecs": 1, "duree": 1.0, "mesures": 2}}
+
+
+def test_le_releve_dit_la_mediane_et_les_cas_lents(tmp_path):
+    app, url = serveur(tmp_path)
+    j = stockage.Journal(url)
+    for s in (2, 4, 6, 8, 100):
+        j.noter("delai_reponse", s)
+    with TestClient(app) as t:
+        r = t.get("/interne/releve?jours=1", headers=INTERNE).json()
+        s = t.get(f"/interne/suivi?depuis={int(time.time()) - 60}", headers=INTERNE).json()
+    d = r["jours"][AUJOURDHUI]["delais"]["reponse"]
+    assert (d["nombre"], d["moyenne"], d["mediane"], d["p95"]) == (5, 24.0, 6.0, 100.0)
+    assert s["delais"]["reponse"]["mediane"] == 6.0 and r["jours"][AUJOURDHUI]["outils"] == {}

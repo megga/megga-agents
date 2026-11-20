@@ -769,8 +769,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         depuis = date(requete.query_params.get("depuis"))
         tours = await asyncio.to_thread(lecture.tours, depuis)
         totaux = await asyncio.to_thread(journal.totaux, depuis)
+        valeurs = {g: await asyncio.to_thread(journal.valeurs, g, depuis) for g in suivi_agent.DELAIS}
         attente = await asyncio.to_thread(rappels.en_attente) if rappels is not None else 0
-        return suivi_agent.resumer(conf, tours, totaux, attente, depuis)
+        return suivi_agent.resumer(conf, tours, totaux, attente, depuis, valeurs)
 
     @app.get("/interne/releve")
     async def interne_releve(requete: Request):
@@ -779,8 +780,9 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         jours = suivi_agent.jours_utc(borne(requete.query_params.get("jours"), 2, suivi_agent.JOURS_RELEVE), time.time())
         tours = await asyncio.to_thread(lecture.tours, jours[0][1])
         journaux = {j: await asyncio.to_thread(journal.totaux, debut, fin) for j, debut, fin in jours}
+        valeurs = {j: {g: await asyncio.to_thread(journal.valeurs, g, debut, fin) for g in suivi_agent.DELAIS} for j, debut, fin in jours}
         attente = await asyncio.to_thread(rappels.en_attente) if rappels is not None else 0
-        return suivi_agent.releve(conf, tours, journaux, jours, attente, version_image.carte())
+        return suivi_agent.releve(conf, tours, journaux, jours, attente, version_image.carte(), valeurs)
 
     @app.get("/interne/suivi/conversations")
     async def interne_conversations(requete: Request):
