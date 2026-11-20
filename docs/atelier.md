@@ -145,7 +145,7 @@ Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et
 | `DELETE /clients/{id}/abonnement` | retire un abonnement saisi par erreur |
 | `POST /clients/{id}/recharges` | `{conversations, prix}` une recharge achetée hors Stripe |
 
-Le mois d'un abonnement court d'une date anniversaire à la suivante (le 31 tombe au dernier jour d'un mois plus court), même à l'année : un forfait annuel garde une enveloppe par mois, à son prix mensuel moins la remise. Seuls `actif` et `retard` encaissent ; une recharge compte dans le mois où elle est achetée. La marge n'est donnée que si le catalogue et les tarifs sont dans la même devise. Tant que Stripe n'est pas branché, rien ne se recharge seul : le seuil ne fait que signaler le client.
+Le mois d'un abonnement court d'une date anniversaire à la suivante (le 31 tombe au dernier jour d'un mois plus court), même à l'année : un forfait annuel garde une enveloppe par mois, à son prix mensuel moins la remise. Seuls `actif` et `retard` encaissent leur forfait, à partir de leur début ; une recharge compte dans le mois où elle est achetée. Le coût total compte tous les abonnés, essais compris. La marge n'est donnée que si le catalogue et les tarifs sont dans la même devise. Tant que Stripe n'est pas branché, rien ne se recharge seul : le seuil ne fait que signaler le client.
 
 Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
 

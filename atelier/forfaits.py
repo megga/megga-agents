@@ -25,7 +25,7 @@ from noyau.stockage import _table
 
 CLE = "forfaits"
 STATUTS = ("essai", "actif", "retard", "parti")
-# Les statuts qui paient : un client en retard doit encore son mois.
+# Les statuts qui paient leur forfait : un client en retard doit encore son mois.
 PAYANTS = ("actif", "retard")
 # Proche de l'enveloppe vide sans seuil réglé : moins de 10 % restants.
 PROCHE_PART = 0.10
@@ -178,7 +178,8 @@ def vue(catalogue: Catalogue, abonnements: dict[str, Abonnement], recharges: lis
         debut_s = _epoch(debut)
         achats = [r for r in recharges if r["client"] == client and r["quand"] >= debut_s]
         enveloppe = (f.conversations if f else 0) + sum(r["conversations"] for r in achats)
-        paie = a.statut in PAYANTS
+        # Un abonnement qui n'a pas commencé n'encaisse rien ce mois-ci.
+        paie = a.statut in PAYANTS and date.fromisoformat(a.debut) <= aujourdhui
         revenu = round((prix_du_mois(f, a.rythme) if f and paie else 0) + sum(r["prix"] for r in achats), 2)
         reste = enveloppe - consommees
         seuil = a.seuil_recharge if a.seuil_recharge is not None else enveloppe * PROCHE_PART
@@ -200,7 +201,8 @@ def vue(catalogue: Catalogue, abonnements: dict[str, Abonnement], recharges: lis
         })
     compte = {s: sum(1 for l in lignes if l["abonnement"]["statut"] == s) for s in STATUTS}
     revenu = round(sum(l["revenu"] for l in lignes), 2)
-    cout = round(sum(l["cout"] for l in lignes if l["abonnement"]["statut"] in PAYANTS), 4)
+    # Le coût de tous les abonnés, essais compris : un essai coûte sans rapporter, la marge le dit.
+    cout = round(sum(l["cout"] for l in lignes), 4)
     return {
         "devise": catalogue.devise,
         "devise_couts": releve.get("devise"),
