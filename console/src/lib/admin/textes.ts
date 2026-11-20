@@ -379,6 +379,7 @@ export const TA = {
   confirmerRetraitDestination: (id: string) => `Retirer la destination ${id} ?`,
   confirmerEssai: (id: string) => `Envoyer un message d'essai à ${id} ?`,
   cleSignature: "Clé de signature, montrée une seule fois",
+  effetRetraitDestination: "Plus aucune alerte n'y sera envoyée. Une règle qui l'utilise encore empêche le retrait.",
   videEnAlerte: "Aucune alerte en cours.",
   reglesInvalides: "Règles illisibles.",
   destinationInvalide: "Destination illisible.",

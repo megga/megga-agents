@@ -113,7 +113,7 @@ export function FormRegles({ regles, mesures, destinations, fenetreMax }: {
       {lignes.map((l, i) => {
         const p = `regle-${i}`;
         return (
-          <fieldset key={i} className="trait m-0 flex min-w-0 flex-col gap-3 rounded-2xl bg-bg px-4 pt-3 pb-4">
+          <fieldset key={l.id} className="trait m-0 flex min-w-0 flex-col gap-3 rounded-2xl bg-bg px-4 pt-3 pb-4">
             <legend className="float-left flex w-full items-center gap-2">
               <Input id={`${p}-nom`} aria-label={TA.nomRegle} value={l.nom} maxLength={80} onChange={(e) => changer(i, { nom: e.target.value })}
                 className={champ + " mr-auto min-w-0 flex-1 font-bold"} />
@@ -189,7 +189,7 @@ export function FormRegles({ regles, mesures, destinations, fenetreMax }: {
 }
 
 export function GererDestinations({ destinations }: { destinations: Destination[] }) {
-  const { avant, fenetre } = useDemande();
+  const { avant, demander, fenetre } = useDemande();
   const router = useRouter();
   const [id, setId] = useState("");
   const [genre, setGenre] = useState<Destination["genre"]>("slack");
@@ -233,11 +233,11 @@ export function GererDestinations({ destinations }: { destinations: Destination[
           <b className="font-bold">{d.id}</b>
           <span className="text-[13.5px] text-muted-ink">{TA.genresDestination[d.genre] ?? d.genre}</span>
           <span className="mr-auto min-w-0 text-[13.5px] break-all text-muted-ink">{d.adresse}</span>
-          <button type="button" onClick={() => void essayer(d.id)}
+          <button type="button" onClick={() => demander(TA.confirmerEssai(d.id), TA.essayer, () => void essayer(d.id))}
             className="trait rounded-full bg-bg px-3 py-1 text-[13px] font-semibold text-ink hover:bg-hover">
             {TA.essayer}
           </button>
-          <Confirmation titre={TA.confirmerRetraitDestination(d.id)} effet={TA.genresDestination[d.genre] ?? d.genre} bouton={TA.retirer}
+          <Confirmation titre={TA.confirmerRetraitDestination(d.id)} effet={TA.effetRetraitDestination} bouton={TA.retirer}
             onConfirmer={async () => {
               await envoyer("/api/admin/alertes/destinations/" + encodeURIComponent(d.id), "DELETE");
               router.refresh();
