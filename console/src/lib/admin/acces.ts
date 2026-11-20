@@ -144,12 +144,18 @@ export function peutReglerAlertes(a: Acces): boolean {
   return peut(a, "alertes.regler") && a.perimetre === "tous";
 }
 
+/** Le catalogue des forfaits vaut pour tous les clients : un membre limité à une liste ne le règle pas. */
+export function peutReglerForfaits(a: Acces): boolean {
+  return peut(a, "tarifs.regler") && a.perimetre === "tous";
+}
+
 const RAIL: readonly { href: string; texte: string; droit: Droit | null }[] = [
   { href: "/admin", texte: TA.vueEnsemble, droit: null },
   { href: "/admin/clients", texte: TA.clients, droit: "clients.voir" },
   { href: "/admin/alertes", texte: TA.alertes, droit: "clients.voir" },
   { href: "/admin/installations", texte: TA.installations, droit: "clients.voir" },
   { href: "/admin/comptes", texte: TA.comptes, droit: "comptes.voir" },
+  { href: "/admin/payants", texte: TA.clientsPayants, droit: "couts.voir" },
   { href: "/admin/tarifs", texte: TA.tarifs, droit: "couts.voir" },
   { href: "/admin/equipe", texte: TA.equipe, droit: "equipe.gerer" },
   { href: "/admin/journal", texte: TA.journal, droit: "journal.voir" },

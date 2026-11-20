@@ -365,7 +365,7 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   expect((await rail(page).boundingBox())?.width).toBeCloseTo(76, 0);
   expect(await deborde(page)).toBe(false);
-  const entrees = [TA.vueEnsemble, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.tarifs, TA.equipe, TA.journal];
+  const entrees = [TA.vueEnsemble, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.clientsPayants, TA.tarifs, TA.equipe, TA.journal];
   await expect(rail(page).getByRole("link")).toHaveText(entrees);
 
   for (const largeur of [390, 800]) {
@@ -382,6 +382,11 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
       await expect(titre(page, entree)).toBeVisible({ timeout: 15_000 });
       await sansDefilement(entree);
     }
+
+    // L'onglet des forfaits : le catalogue, l'abonnement d'un client et la recharge se règlent sans défiler de côté.
+    await page.goto("/admin/payants/forfaits");
+    await expect(page.getByRole("heading", { name: TA.abonnerClient })).toBeVisible({ timeout: 15_000 });
+    await sansDefilement(TA.forfaits);
 
     // Chaque onglet de la fiche d'un client installé hors Cloudflare se voit (aucun caché hors du cadre) et mène à sa page.
     await page.goto(`/admin/clients/${CHALET.id}`);

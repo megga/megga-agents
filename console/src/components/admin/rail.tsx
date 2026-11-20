@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Coins, LayoutGrid, ScrollText, Server, ShieldCheck, Store, Users, type LucideIcon } from "lucide-react";
+import { Bell, Coins, CreditCard, LayoutGrid, ScrollText, Server, ShieldCheck, Store, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compte } from "@/components/console/compte";
@@ -16,6 +16,7 @@ const ICONES: Record<string, LucideIcon> = {
   "/admin/alertes": Bell,
   "/admin/installations": Server,
   "/admin/comptes": Users,
+  "/admin/payants": CreditCard,
   "/admin/tarifs": Coins,
   "/admin/equipe": ShieldCheck,
   "/admin/journal": ScrollText,

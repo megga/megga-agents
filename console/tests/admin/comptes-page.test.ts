@@ -197,7 +197,9 @@ describe("le bloc Console de la vue d'ensemble", () => {
     // Deux cadres de barres (inscriptions, messages), sept jours chacun ; aujourd'hui, deux messages.
     expect(h).toContain(`>${TA.inscriptions}</span>`);
     expect(h.match(/<li[ >]/g)).toHaveLength(14);
-    expect(h).toContain(enHtml(TA.barre(TA.jour(new Date().toISOString().slice(0, 10)), 2)));
+    // Le jour de Zurich, comme la page : entre minuit à Zurich et minuit UTC, le jour UTC serait celui de la veille.
+    const aujourdhui = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Zurich" }).format(new Date());
+    expect(h).toContain(enHtml(TA.barre(TA.jour(aujourdhui), 2)));
   });
 
   it("comptes.voir sans clients.voir : la période et le bloc Console, sans lire l'atelier", async () => {
