@@ -79,6 +79,7 @@ def test_rassembler_couts_ecart_et_silence():
     c = rassembler(brut(maintenant * 1000 - 60_000), tarifs, connus, maintenant)["clients"][0]
     assert c["entreprise"] == "Exemple SA" and not c["ecart"] and not c["silencieux"]
     assert c["jours"][AUJOURDHUI]["cout"] == 3.0 and c["totaux"]["cout"] == 3.0 and c["totaux"]["tours"] == 10
+    assert c["jours"][AUJOURDHUI]["postes"] == {"claude-sonnet-5-5": 3.0}  # le coût poste par poste, pour les analyses
     assert c["totaux"]["sans_tarif"] == ["inconnu-1"]  # un modèle sans tarif est dit, pas compté à zéro sans le dire
     vieux = rassembler(brut((maintenant - SILENCE_S - 60) * 1000, version=2), tarifs, connus, maintenant)["clients"][0]
     assert vieux["silencieux"] and vieux["ecart"]

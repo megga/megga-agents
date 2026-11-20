@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Coins, CreditCard, LayoutGrid, ScrollText, Server, ShieldCheck, Store, Users, type LucideIcon } from "lucide-react";
+import { Bell, ChartColumn, Coins, CreditCard, LayoutGrid, ScrollText, Server, ShieldCheck, Store, Users, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compte } from "@/components/console/compte";
@@ -12,6 +12,7 @@ import { TA } from "@/lib/admin/textes";
 
 const ICONES: Record<string, LucideIcon> = {
   "/admin": LayoutGrid,
+  "/admin/analyses": ChartColumn,
   "/admin/clients": Store,
   "/admin/alertes": Bell,
   "/admin/installations": Server,

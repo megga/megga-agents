@@ -151,6 +151,7 @@ export function peutReglerForfaits(a: Acces): boolean {
 
 const RAIL: readonly { href: string; texte: string; droit: Droit | null }[] = [
   { href: "/admin", texte: TA.vueEnsemble, droit: null },
+  { href: "/admin/analyses", texte: TA.analyses, droit: "clients.voir" },
   { href: "/admin/clients", texte: TA.clients, droit: "clients.voir" },
   { href: "/admin/alertes", texte: TA.alertes, droit: "clients.voir" },
   { href: "/admin/installations", texte: TA.installations, droit: "clients.voir" },

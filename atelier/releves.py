@@ -28,7 +28,8 @@ def rassembler(brut: dict, tarifs: Tarifs, clients_atelier: dict[str, dict], mai
         jours, totaux, sans_tarif = {}, {k: 0 for k in CHIFFRES} | {"cout": 0.0}, set()
         for jour, chiffres in sorted((c.get("jours") or {}).items()):
             cout = couts(chiffres, tarifs)
-            jours[jour] = {**chiffres, "cout": cout["total"]}
+            # Le coût du jour, et poste par poste (chaque modèle, la voix, l'écoute) pour les analyses de la console.
+            jours[jour] = {**chiffres, "cout": cout["total"], "postes": {k: round(v, 4) for k, v in cout["postes"].items()}}
             for k in CHIFFRES:
                 totaux[k] += int(chiffres.get(k) or 0)
             totaux["cout"] += cout["total"]

@@ -141,10 +141,10 @@ describe("le rôle proposé d'abord à une invitation", () => {
 
 describe("le rail", () => {
   it("le rail ne montre que les entrées ouvertes", () => {
-    expect(entreesRail(acces({ superadmin: true })).map((e) => e.href)).toEqual(["/admin", "/admin/clients", "/admin/alertes",
+    expect(entreesRail(acces({ superadmin: true })).map((e) => e.href)).toEqual(["/admin", "/admin/analyses", "/admin/clients", "/admin/alertes",
       "/admin/installations", "/admin/comptes", "/admin/payants", "/admin/tarifs", "/admin/equipe", "/admin/journal"]);
     expect(entreesRail(acces({ externe: true, droits: DROITS, perimetre: ["garage-essai"] })).map((e) => e.href))
-      .toEqual(["/admin", "/admin/clients", "/admin/alertes", "/admin/installations"]);
+      .toEqual(["/admin", "/admin/analyses", "/admin/clients", "/admin/alertes", "/admin/installations"]);
     expect(entreesRail(acces({ superadmin: true }))[0]).toEqual({ href: "/admin", texte: TA.vueEnsemble });
   });
 });
