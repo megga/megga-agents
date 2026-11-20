@@ -1251,7 +1251,8 @@ class Journal:
         t = self._t
         filtre = [t.c.genre == genre, t.c.quand >= depuis] + ([t.c.quand < jusqu_a] if jusqu_a is not None else [])
         with self._e.connect() as c:
-            return [float(q or 0) for (q,) in c.execute(select(t.c.quantite).where(*filtre).limit(limite))]
+            # Au-delà de `limite`, les plus récents : la médiane d'un jour très chargé porte sur ses dernières réponses.
+            return [float(q or 0) for (q,) in c.execute(select(t.c.quantite).where(*filtre).order_by(t.c.quand.desc()).limit(limite))]
 
     def purger(self, avant: float) -> int:
         """Le journal ne grossit pas sans fin : ce qui précède `avant` s'efface."""
