@@ -14,7 +14,7 @@ export function ChoixPays({ id, pays }: { id: string; pays: string | null }) {
   const liste = useMemo(() => paysTries(), []);
   const [message, setMessage] = useState<string | null>(null);
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
       <select
         aria-label={TA.choisirPays}
         value={pays ?? ""}
@@ -29,7 +29,7 @@ export function ChoixPays({ id, pays }: { id: string; pays: string | null }) {
               .catch((err: unknown) => setMessage(refusDe(err).erreur));
           });
         }}
-        className="rounded-lg bg-transparent text-[14px] text-muted-ink hover:text-ink"
+        className="w-48 max-w-full min-w-0 truncate rounded-lg bg-transparent text-[14px] text-muted-ink hover:text-ink"
       >
         <option value="">{TA.aucunPays}</option>
         {liste.map((p) => (
