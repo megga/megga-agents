@@ -87,8 +87,8 @@ Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l
 | Route | Rôle | Effet |
 |---|---|---|
 | `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours (dont `tours_api`, venus d'un logiciel), tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente, refus de débit par API (`api_debit` du journal), `delais` (temps moyen jusqu'aux coches bleues et jusqu'à la réponse, en secondes depuis l'envoi du message, et le nombre de réponses lentes : plus de 30 s pour lire, 120 s pour répondre, notées `reponse_lente` aux alertes) ; **coûts pour MEGGA seulement** |
-| `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
-| `GET /clients/{id}/conversations/{personne}` | tous | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
+| `GET /clients/{id}/conversations` | client | les personnes qui ont écrit, la plus récente d'abord |
+| `GET /clients/{id}/conversations/{personne}` | client | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
 | `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; envois refusés après coup par Meta (`envoi_refuse`, son code d'erreur) ; messages reçus trop tard pour une réponse (`message_ancien`) ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
 | `GET /tarifs`, `PUT /tarifs` | MEGGA | les tarifs : par million de jetons et par modèle (entrée, sortie, cache), la voix pour 1000 caractères, l'écoute par vocal |
 
@@ -113,9 +113,26 @@ D'où il vient :
 
 Un relevé en échec n'arrête pas les rappels et se retente au quart d'heure suivant. Il est gardé à part (`releve_echec` : depuis quand, combien d'essais, le dernier message technique), dans l'état que rend `GET /admin/clients`, jamais parmi les pannes du conteneur : il ne les chasse pas et ne se croit pas réparé quand le conteneur répond. Les installations hors Cloudflare n'y sont pas encore : leur suivi vient toujours de leur pilote.
 
-MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
+Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres de chaque agent, jamais ce qui se dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026). Avec le jeton de MEGGA, l'atelier refuse (`403`) avant toute lecture.
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
+
+**Les alertes envoyées** (20.11.2026) : une règle se règle en trois temps, comme chez Langfuse, la mesure, les seuils, l'envoi. Toutes les 5 minutes, le déclencheur de la porte (`triggers.crons`) demande à l'atelier d'évaluer chaque règle sur chaque client actif, d'après le relevé chiffré : aucun conteneur réveillé, aucune conversation lue.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /alertes` | MEGGA | les mesures, les règles (les proposées tant qu'aucune n'est enregistrée), les destinations, adresse d'un webhook masquée, et l'état de chaque règle pour chaque client |
+| `PUT /alertes/regles` | MEGGA | remplace toutes les règles (20 au plus) |
+| `POST /alertes/destinations` | MEGGA | `{id, genre, adresse}` : `courriel`, `slack` (webhook entrant) ou `web` (https, nom d'hôte public) ; la clé de signature d'une adresse web est montrée une fois |
+| `DELETE /alertes/destinations/{id}` | MEGGA | refusé (`409`) tant qu'une règle l'utilise |
+| `POST /alertes/destinations/{id}/essai` | MEGGA | un message d'essai |
+| `POST /alertes/evaluer` | MEGGA | évalue et envoie ; appelée par la porte |
+
+Une règle : une mesure (`silencieux`, `pannes_en_cours`, `ecart`, `taux_echec` en %, `secours`, `tours`, `cout`, `reponses_lentes`, `plafond`, `envois_en_echec`, et deux signaux de sécurité, `secrets_masques` et `debit_depasse`), une comparaison, un seuil d'alerte et un d'avertissement facultatif, une fenêtre de 1 à 7 jours (1 : le jour en cours, UTC), le traitement de l'absence de données (compter bon, garder l'état d'avant, ou le signaler), les clients visés (tous par défaut), les destinations, un rappel en heures, une pause. L'état de chaque règle pour chaque client est rangé (`megga_alertes_etats`) ; un message part au changement d'état, puis en rappel, jamais en pause. Un envoi en échec est repris aux trois évaluations suivantes.
+
+Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et le seuil. Le courriel part par la porte (`POST /admin/courriel`, Cloudflare Email Service, expéditeur `COURRIEL_DE`, sur un sous-domaine à ouvrir à Email Sending) ; Slack et les adresses web, par l'atelier. Le corps d'une adresse web est signé : `x-megga-signature` vaut `sha256=` suivi du HMAC de `<x-megga-horodatage>.<corps>` avec sa clé.
+
+Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
 
 ## Les installations hors Cloudflare (lot 6.3)
 
@@ -135,7 +152,7 @@ Chez le client (puis en zone suisse), aucun accès entrant : le pilote de l'inst
 - Une image (`MISES_A_JOUR=oui` chez le client, `mises_a_jour` dans l'installation) : `a_appliquer` avance sans changer d'état, et chaque étape arrive au journal (signature vérifiée, base sauvegardée et image remplacée) ; puis `applique` quand l'agent répond sur la nouvelle version, ou `echec` avec retour à l'image d'avant. Le détail : `docs/installation-client.md`, « Les mises à jour de l'image ». MEGGA ne propose jamais une version qui saute une migration (deux versions soutenues).
 - L'écart : l'installation ne sert pas la version en service dans l'atelier, d'après son dernier relevé ; inconnu si l'agent n'a pas répondu à ce relevé (renvoyer la version attend alors le relevé suivant).
 
-**Le suivi** d'une installation vient de son dernier relevé, calculé chez elle toutes les 5 minutes : `jours` vaut 1, 7 ou 30, et la réponse dit quand il a été calculé. Les coûts, pour MEGGA seulement, comme ailleurs. Les alertes y ajoutent l'installation silencieuse ou révoquée, l'agent en panne, la licence expirée, l'écart, et les ordres refusés, en échec ou expirés. Les conversations ne quittent jamais l'installation : `409`, même pour MEGGA.
+**Le suivi** d'une installation vient de son dernier relevé, calculé chez elle toutes les 5 minutes : `jours` vaut 1, 7 ou 30, et la réponse dit quand il a été calculé. Les coûts, pour MEGGA seulement, comme ailleurs. Les alertes y ajoutent l'installation silencieuse ou révoquée, l'agent en panne, la licence expirée, l'écart, et les ordres refusés, en échec ou expirés. Les conversations ne quittent jamais l'installation : `409` pour son client ; MEGGA, lui, ne lit aucune conversation (`403`).
 
 **Le journal** du pilotage (`megga_pilotage`) garde, des deux côtés, chaque clé enregistrée ou révoquée et chaque ordre : déposé, par qui, remis, puis ce qu'il est devenu.
 
