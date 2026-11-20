@@ -1,4 +1,5 @@
-import { TableauAlertes } from "@/components/admin/alertes";
+import { EnAlerte, OngletsAlertes, TableauAlertes } from "@/components/admin/alertes";
+import { voitClient, voitReglesAlertes } from "@/lib/admin/acces";
 import { Bandeau } from "@/components/admin/erreurs";
 import { Onglets } from "@/components/admin/onglets";
 import { ChoixPeriode } from "@/components/admin/periode";
@@ -24,11 +25,13 @@ export default async function PageAlertes({ searchParams }: PageProps<"/admin/al
   const jours = joursDe(p.jours);
   const tri: Tri = TRIS.find((t) => t.tri === p.tri)?.tri ?? "quand";
   const titre = <h1 className="m-0 text-[26px] font-extrabold tracking-[-0.02em]">{TA.alertes}</h1>;
-  const r = await ouRefus(lireAlertes(a, jours, atelier));
+  // Les alertes envoyées en cours, d'après les règles : illisibles, elles ne cachent pas le reste.
+  const [r, envoyees] = await Promise.all([ouRefus(lireAlertes(a, jours, atelier)), ouRefus(atelier.alertesEnvoyees())]);
   if (r instanceof RefusChamps) {
     return (
       <>
         {titre}
+        <OngletsAlertes actif="/admin/alertes" regles={voitReglesAlertes(a)} />
         <Bandeau>{r.message}</Bandeau>
       </>
     );
@@ -40,6 +43,8 @@ export default async function PageAlertes({ searchParams }: PageProps<"/admin/al
   return (
     <>
       {titre}
+      <OngletsAlertes actif="/admin/alertes" regles={voitReglesAlertes(a)} />
+      {!(envoyees instanceof RefusChamps) && <EnAlerte envoyees={envoyees} voit={(c) => voitClient(a, c)} noms={noms} />}
       <div className="flex flex-wrap items-center gap-3">
         <ChoixPeriode jours={jours} chemin={tri === "quand" ? "/admin/alertes" : `/admin/alertes?tri=${tri}`} />
         <Onglets onglets={TRIS.map((t) => ({ href: adresse(jours, t.tri), texte: t.texte }))} actif={adresse(jours, tri)} />

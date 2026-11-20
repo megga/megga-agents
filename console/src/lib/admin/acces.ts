@@ -134,6 +134,16 @@ export function peutCreerClient(a: Acces): boolean {
   return peut(a, "clients.creer") && a.perimetre === "tous";
 }
 
+/** Les règles et les destinations des alertes valent pour tous les clients : seul un périmètre complet les lit. */
+export function voitReglesAlertes(a: Acces): boolean {
+  return peut(a, "clients.voir") && a.perimetre === "tous";
+}
+
+/** Les alertes se règlent pour tous les clients à la fois : un membre limité à une liste ne les règle pas. */
+export function peutReglerAlertes(a: Acces): boolean {
+  return peut(a, "alertes.regler") && a.perimetre === "tous";
+}
+
 const RAIL: readonly { href: string; texte: string; droit: Droit | null }[] = [
   { href: "/admin", texte: TA.vueEnsemble, droit: null },
   { href: "/admin/clients", texte: TA.clients, droit: "clients.voir" },

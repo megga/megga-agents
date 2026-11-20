@@ -63,6 +63,38 @@ export type Tarifs = {
   voix_par_1000_caracteres: number | null;
   par_vocal_entendu: number | null;
 };
+/** Une règle des alertes envoyées (atelier/alertes.py, Regle). */
+export type RegleAlerte = {
+  id: string;
+  nom: string;
+  mesure: string;
+  comparaison: ">" | ">=" | "<" | "<=";
+  alerte: number;
+  avertissement: number | null;
+  fenetre_jours: number;
+  sans_donnees: "ok" | "garder" | "signaler";
+  clients: string[];
+  destinations: string[];
+  rappel_heures: number;
+  en_pause: boolean;
+};
+export type EtatAlerte = {
+  regle: string;
+  client: string;
+  etat: "ok" | "avertissement" | "alerte" | "sans_donnees";
+  depuis: number;
+  valeur: number | null;
+  envoye_le: number | null;
+};
+export type Destination = { id: string; genre: "courriel" | "slack" | "web"; adresse: string };
+export type AlertesEnvoyees = {
+  mesures: Record<string, { libelle: string; unite: string }>;
+  fenetre_max: number;
+  proposees: boolean;
+  regles: RegleAlerte[];
+  destinations: Destination[];
+  etats: EtatAlerte[];
+};
 export type Gabarit = { id: string; titre: string; description: string; metier: string; reglages: Record<string, unknown> };
 export type Corps = Record<string, unknown>;
 
@@ -205,6 +237,11 @@ export const atelier = {
   releves: (jours: Jours) => lire<Releves>(`/releves?jours=${jours}`),
   tarifs: () => lire<Tarifs>("/tarifs"),
   reglerTarifs: (corps: Corps) => ecrire<Tarifs>("/tarifs", "PUT", corps),
+  alertesEnvoyees: () => lire<AlertesEnvoyees>("/alertes"),
+  reglerAlertes: (regles: unknown[]) => ecrire<{ regles: RegleAlerte[] }>("/alertes/regles", "PUT", regles),
+  ajouterDestination: (corps: Corps) => ecrire<Destination & { secret?: string }>("/alertes/destinations", "POST", corps),
+  retirerDestination: (id: string) => ecrire<{ retiree: string }>(`/alertes/destinations/${encodeURIComponent(id)}`, "DELETE"),
+  essayerDestination: (id: string) => ecrire<{ envoye: boolean }>(`/alertes/destinations/${encodeURIComponent(id)}/essai`, "POST"),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
 };
 
