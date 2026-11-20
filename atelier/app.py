@@ -545,9 +545,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
         Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres, jamais ce qui se
         dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026)."""
+        c = client_de(qui, ident)
         if conversations and qui.role == "megga":
             raise Refus(403, "les conversations d'un client ne se lisent que par lui")
-        c = client_de(qui, ident)
         if zone_de(ident) not in regles.ZONES_PORTE:
             if conversations:
                 raise Refus(409, "les conversations d'une installation hors Cloudflare ne la quittent jamais : elles se lisent chez le client")

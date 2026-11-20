@@ -364,6 +364,7 @@ def test_megga_ne_lit_jamais_une_conversation(atelier):
         assert r.status_code == 403 and "ne se lisent que par lui" in r.text
     assert len(t.porte.suivis) == avant
     assert t.get("/atelier/clients/exemple/suivi", headers=MEGGA).status_code == 200  # les chiffres, oui
+    assert t.get("/atelier/clients/inconnu-x/conversations", headers=MEGGA).status_code == 404  # un client inconnu reste inconnu
 
 
 def test_entrees_du_suivi(atelier):
