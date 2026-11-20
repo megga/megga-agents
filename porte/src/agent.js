@@ -9,6 +9,7 @@
 // L'atelier (lot 5) tourne de la même façon : un objet, un conteneur de la même image.
 import { DurableObject } from "cloudflare:workers";
 import { clientParId } from "./annuaire.js";
+import { releverSiDu } from "./releves.js";
 
 const PORT = 8080;
 const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes sans message
@@ -109,9 +110,10 @@ class Conteneur extends DurableObject {
     return true;
   }
 
-  /** L'état du conteneur et ses dernières pannes, sans rien de privé. */
+  /** L'état du conteneur, ses dernières pannes et l'échec de son relevé chiffré s'il y en a un, sans rien de privé. */
   async etat() {
-    return { demarre: Boolean(this.ctx.container?.running), alertes: (await this.ctx.storage.get("alertes")) ?? [] };
+    const [alertes, echec] = [await this.ctx.storage.get("alertes"), await this.ctx.storage.get("releve_echec")];
+    return { demarre: Boolean(this.ctx.container?.running), alertes: alertes ?? [], ...(echec ? { releve_echec: echec } : {}) };
   }
 
   /** Garde une panne (démarrage, transmission, rappels) pour le suivi : l'heure et un message technique. */
@@ -423,6 +425,7 @@ class AgentClient extends Conteneur {
     // Le prochain rappel, ou la veille si elle vient avant : le conteneur ne s'endort pas entre les deux.
     const veille = Date.now() + VEILLE_MS;
     await this.ctx.storage.setAlarm(prochain ? Math.min(Math.max(Math.round(prochain * 1000), Date.now() + 5000), veille) : veille);
+    await releverSiDu(this, this.ctx.container.getTcpPort(PORT), jeton); // releves.js : ne lève rien, garde son échec à part
     if (rejeu) throw rejeu;
   }
 

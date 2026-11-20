@@ -19,7 +19,7 @@ from noyau.config import Gestion as ReglageGestion
 # (« villa/visibilite ») ; « retirer_video(slug="villa#") » appelait sinon DELETE /annonces/villa.
 SLUG = r"[a-z0-9][a-z0-9-]{0,119}"
 CHEMIN = re.compile(
-    r"/(?:resume|clients|annonces|vitrine|vitrine/correspondances|acces/site|acces/porte/[a-z0-9][a-z0-9-]{0,39}"
+    r"/(?:resume|clients|annonces|vitrine|vitrine/correspondances|alix/reglages|acces/site|acces/porte/[a-z0-9][a-z0-9-]{0,39}"
     rf"|annonces/{SLUG}(?:/(?:fiche|acces|photos|documents|videos|visibilite|prive))?"
     r"|clients/recherches(?:/[A-Za-z0-9_-]{1,64}(?:/biens)?)?)"
 )

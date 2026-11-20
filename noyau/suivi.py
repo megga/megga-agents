@@ -28,6 +28,13 @@ def entree_hors_cache(m: dict) -> int:
     return max(0, entree - int(m.get("cache_read_tokens") or 0))
 
 
+def delai(journal: dict[str, dict], genre: str) -> dict:
+    """Le temps moyen (secondes) noté au journal sous ce genre, depuis l'envoi du message de la personne."""
+    e = journal.get(genre) or {}
+    n = int(e.get("nombre", 0))
+    return {"nombre": n, "moyenne": round(float(e.get("quantite", 0)) / n, 1) if n else None}
+
+
 def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_en_attente: int, depuis: float) -> dict:
     modeles: dict[str, dict] = {}
     secours = 0
@@ -58,8 +65,44 @@ def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_e
         "derniere_activite": max((t["quand"] for t in tours), default=None),
         "modeles": modeles,
         "journal": journal,
+        # Ce que la personne a attendu (19.11.2026) : jusqu'aux coches bleues, jusqu'à la réponse, et les réponses lentes.
+        "delais": {"lecture": delai(journal, "delai_lecture"), "reponse": delai(journal, "delai_reponse"),
+                   "lentes": int((journal.get("reponse_lente") or {}).get("nombre", 0))},
         "rappels_en_attente": rappels_en_attente,
     }
+
+
+JOUR = 86400
+# Le relevé chiffré (20.11.2026) : aujourd'hui et hier par défaut (en UTC, les clients sont partout) ; deux semaines au
+# plus, pour rattraper les jours manqués après une absence (porte/src/releves.js, JOURS_RELEVE_MAX).
+JOURS_RELEVE = 14
+
+
+def jours_utc(nombre: int, maintenant: float) -> list[tuple[str, float, float]]:
+    """Les `nombre` derniers jours UTC, du plus ancien à aujourd'hui : (AAAA-MM-JJ, début, fin)."""
+    from datetime import datetime, timezone
+
+    aujourdhui = int(maintenant // JOUR) * JOUR
+    return [(datetime.fromtimestamp(d, timezone.utc).strftime("%Y-%m-%d"), float(d), float(d + JOUR))
+            for d in range(aujourdhui - (nombre - 1) * JOUR, aujourdhui + 1, JOUR)]
+
+
+def releve(conf: Config, tours: list[dict], journaux: dict[str, dict], jours: list[tuple[str, float, float]],
+           rappels_en_attente: int, image: dict) -> dict:
+    """Le relevé chiffré de l'agent, jour par jour : les chiffres du suivi, jamais un texte, un nom ni un numéro.
+
+    La porte le lit à intervalle fixe et le range dans son annuaire : la console de MEGGA suit tous les clients
+    d'un coup sans réveiller aucun conteneur. `journaux` : les totaux du journal de chaque jour.
+    """
+    par_jour = {}
+    for jour, debut, fin in jours:
+        r = resumer(conf, [t for t in tours if debut <= (t["quand"] or 0) < fin], journaux.get(jour) or {}, 0, debut)
+        for k in ("depuis", "rappels_en_attente", "derniere_activite"):
+            r.pop(k)
+        par_jour[jour] = r
+    return {"forme": 1, "image": {"version": image.get("version"), "revision": image.get("revision")},
+            "rappels_en_attente": rappels_en_attente,
+            "derniere_activite": max((t["quand"] for t in tours if t["quand"]), default=None), "jours": par_jour}
 
 
 def message_lisible(m: dict) -> dict:

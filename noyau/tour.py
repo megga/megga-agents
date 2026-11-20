@@ -36,6 +36,10 @@ from .whatsapp import PIECES, Entrant, decrire_media
 
 log = logging.getLogger("megga")
 
+# Au-delà, une réponse est notée « lente » au journal (19.11.2026) : la lecture (les coches bleues) depuis l'envoi du message,
+# la réponse depuis ce même envoi (un vocal à dire y compris).
+LENT_LECTURE = 30
+LENT_REPONSE = 120
 EXCUSE = phrases.EXCUSE[0]
 NON_COMPRIS = phrases.NON_COMPRIS[0]
 REGARD = "\U0001F440"
@@ -69,6 +73,8 @@ class Conversations(Envois, Autour):
         # L'agent de tous (sans rôles), ou un agent par rôle (noyau/roles.py) : {rôle: agent}.
         self.agent = agent
         self.agents = agents or {}
+        # async f() appelée pendant l'attente d'un tour (packs/immobilier/reglages.py) ; aucune par défaut.
+        self.avant_le_tour = None
         # Les médias reçus, numérotés par personne (stockage.Medias) ; sans eux, numérotés dans le tour seulement.
         self.medias = medias
         self.exp = expediteur
@@ -186,7 +192,11 @@ class Conversations(Envois, Autour):
             b.tache = self._lancer(self._attendre(m.de))
 
     async def _attendre(self, personne: str) -> None:
-        await asyncio.sleep(self.attente)
+        # Ce qui doit être à jour avant de répondre (les réglages que le client change lui-même, packs) : pendant l'attente.
+        if self.avant_le_tour is not None:
+            await asyncio.gather(asyncio.sleep(self.attente), self._sans_echec(self.avant_le_tour()))
+        else:
+            await asyncio.sleep(self.attente)
         b = self._boites.pop(personne)
         await self._tour(personne, b.messages, b.role)
 
@@ -250,6 +260,9 @@ class Conversations(Envois, Autour):
 
     async def _tour_lu(self, personne: str, messages: list[Entrant], role: str, premier: bool) -> None:
         dernier = messages[-1]
+        # Le temps que la personne a attendu : depuis l'envoi de son plus ancien message (l'heure de Meta, à la seconde près).
+        debut = min((m.envoye for m in messages if m.envoye), default=0)
+        lecture = time.time() - debut if debut else 0.0
         livres = {"n": 0}
         await self._sans_echec(self._rappels_differes(personne, livres, role))
         # Le bouton d'un modèle Meta (« Afficher », « Voir la demande ») : ce qui attendait vient de partir, c'est la
@@ -276,6 +289,7 @@ class Conversations(Envois, Autour):
         regard = self._lancer(self._regard(personne, dernier.id, etat)) if self.conf.reactions else None
         try:
             await self._repondre(personne, messages, role, premier, etat)
+            self.noter_delais(debut, lecture)
         finally:
             etat["fini"] = True
             if regard:
@@ -557,6 +571,16 @@ class Conversations(Envois, Autour):
         self._lancer(self._sans_echec(asyncio.to_thread(f, *args)))
 
     # L'heure est prise ici, pas à l'écriture : en arrière-plan, l'ordre du fil resterait sinon au hasard.
+
+    def noter_delais(self, debut: float, lecture: float) -> None:
+        """Les temps d'un tour réussi : jusqu'à la lecture, puis jusqu'à la réponse (secondes, depuis l'envoi du message)."""
+        if not debut:
+            return
+        lecture, reponse = max(0.0, lecture), max(0.0, time.time() - debut)
+        self.noter_journal("delai_lecture", round(lecture, 1))
+        self.noter_journal("delai_reponse", round(reponse, 1))
+        if lecture > LENT_LECTURE or reponse > LENT_REPONSE:
+            self.noter_journal("reponse_lente", round(reponse, 1), f"lecture {lecture:.0f} s, réponse {reponse:.0f} s")
 
     def noter_journal(self, genre: str, quantite: float = 1, detail: str = "") -> None:
         if self.journal is not None:
