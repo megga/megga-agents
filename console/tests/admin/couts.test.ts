@@ -201,7 +201,7 @@ describe("la vue d'ensemble", () => {
   it("une seule lecture, le relevé chiffré : aucun suivi ni aucune alerte de client, la santé la pire d'abord", async () => {
     etat.qui = "comptable";
     const h = await html(await vue());
-    expect(simule.appels).toEqual(["releves 7"]);
+    expect(simule.appels.sort()).toEqual(["clients", "releves 7"]); // la liste des clients ne réveille aucun conteneur non plus
     expect(tuile(h, TA.aSurveiller)).toBe("1");
     expect(h.indexOf("Chalet des Essais")).toBeLessThan(h.indexOf("Boulangerie des Essais"));
     expect(h).toContain(TA.santes.silencieux);

@@ -222,5 +222,5 @@ export function ouRefus<T>(lecture: Promise<T>): Promise<T | RefusChamps> {
   });
 }
 
-/** Ce que le suivi lit (suivi.ts, lireTout) : remplaçable dans les essais. */
+/** Ce que le suivi lit (suivi.ts, lireSuivis et lireAlertes) : remplaçable dans les essais. */
 export type Lecteur = Pick<typeof atelier, "clients" | "suivi" | "alertes">;

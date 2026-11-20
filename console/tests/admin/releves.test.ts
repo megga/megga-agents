@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agregerReleves, santeDe, type ClientReleve, type JourReleve, type Releves } from "@/lib/admin/releves";
+import type { ClientAtelier } from "@/lib/admin/atelier";
+import { agregerReleves, completer, santeDe, soucisDe, type ClientReleve, type JourReleve, type Releves } from "@/lib/admin/releves";
 import { acces } from "./aides";
 
 // La vue d'ensemble d'après le relevé chiffré, sans réseau.
@@ -28,15 +29,23 @@ describe("la santé d'un agent", () => {
     expect(santeDe(client("alpha", { silencieux: true, ecart: true, totaux }))).toBe("silencieux");
     expect(santeDe(client("alpha", { etat: { pannes_en_cours: [{ quoi: "demarrage", quand: 1 }] }, ecart: true }))).toBe("panne");
     expect(santeDe(client("alpha", { ecart: true, totaux }))).toBe("ecart");
-    expect(santeDe(client("alpha", { totaux }))).toBe("echecs");
+    expect(santeDe(client("alpha", { totaux }))).toBe("soucis");
     expect(santeDe(client("alpha"))).toBe("ok");
+  });
+
+  it("les soucis du journal comptent : un client dont Meta refuse les envois n'est pas en bonne santé", () => {
+    const refus = (n: number): JourReleve => ({ ...jour(5, 0), journal: { envoi_refuse: { nombre: n }, voix_caracteres: { nombre: 9 }, plafond: { nombre: 1 } } });
+    const c = client("alpha", { jours: { "2026-11-19": refus(2), "2026-11-20": refus(3) } });
+    expect(soucisDe(c)).toEqual([{ genre: "envoi_refuse", nombre: 5 }, { genre: "plafond", nombre: 2 }]);
+    expect(santeDe(c)).toBe("soucis");
+    expect(soucisDe(client("alpha"))).toEqual([]);
   });
 });
 
 describe("la vue d'ensemble des relevés", () => {
   it("tuiles, jours additionnés, la pire santé d'abord, la réponse moyenne pondérée", () => {
     const v = agregerReleves(releves([client("beta"), client("alpha", { silencieux: true }), client("gamma", { actif: false })]), tous);
-    expect(v.tuiles).toEqual({ enService: 2, aSurveiller: 1, silencieux: 1, tours: 20, echecs: 0, cout: { devise: "USD", total: 3 } });
+    expect(v.tuiles).toEqual({ enService: 2, aSurveiller: 1, silencieux: 1, tours: 20, echecs: 0, personnesParJour: 2, cout: { devise: "USD", total: 3 } });
     expect(v.lignes.map((l) => [l.client, l.sante])).toEqual([["alpha", "silencieux"], ["beta", "ok"]]);
     expect(v.lignes[1].reponse).toBe(9); // (2 × 6 + 3 × 11) / 5
     expect(v.parJour).toEqual([{ jour: "2026-11-19", tours: 8, cout: 1 }, { jour: "2026-11-20", tours: 12, cout: 2 }]);
@@ -67,5 +76,20 @@ describe("la vue d'ensemble des relevés", () => {
   it("sans réponse mesurée, la réponse est inconnue", () => {
     const v = agregerReleves(releves([client("alpha", { jours: { "2026-11-20": jour(1, 0) } })]), tous);
     expect(v.lignes[0].reponse).toBeNull();
+  });
+
+  it("les clients en service sans relevé s'ajoutent : installation hors Cloudflare, client absent de l'annuaire", () => {
+    const atelier = (id: string, autres: Partial<ClientAtelier> = {}): ClientAtelier => ({
+      id, nom_agent: "Lou", entreprise: `Entreprise ${id}`, version_en_service: 1, derniere_version: 1, gere_par_megga: false, ...autres });
+    const r = releves([client("alpha")]);
+    const clients = [atelier("alpha"), atelier("absent"), atelier("brouillon", { version_en_service: null }),
+      atelier("chalet", { installation: { silencieuse: false, ecart: false } }), atelier("ferme", { installation: { silencieuse: true } }),
+      atelier("revoque", { installation: { revoquee: 1 } })];
+    const v = completer(agregerReleves(r, tous), r, clients, tous);
+    expect(v.lignes.map((l) => [l.client, l.sante, l.horsReleve ?? false])).toEqual([
+      ["ferme", "silencieux", true], ["revoque", "panne", true], ["absent", "ecart", true], ["alpha", "ok", false], ["chalet", "installation", true]]);
+    expect(v.tuiles).toMatchObject({ enService: 5, aSurveiller: 3, silencieux: 1, tours: 10 });
+    const limite = acces({ droits: ["clients.voir"], perimetre: ["alpha"] });
+    expect(completer(agregerReleves(r, limite), r, clients, limite).lignes.map((l) => l.client)).toEqual(["alpha"]);
   });
 });

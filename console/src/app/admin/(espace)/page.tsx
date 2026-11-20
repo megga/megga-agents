@@ -9,8 +9,8 @@ import { peut, type Acces } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type Jours } from "@/lib/admin/atelier";
 import { totauxConsole } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
-import { agregerReleves, type Sante } from "@/lib/admin/releves";
-import { joursDe } from "@/lib/admin/suivi";
+import { agregerReleves, completer, type Sante } from "@/lib/admin/releves";
+import { joursDe, texteGenre } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 import { pret } from "@/lib/base";
 
@@ -19,22 +19,28 @@ import { pret } from "@/lib/base";
 // jamais une conversation), borné au périmètre du membre. Avec couts.voir, le coût. Le bloc de la console (comptes.voir,
 // jamais un externe) : ses tuiles et ses barres, à la même période, mise alors en tête de page.
 
-const COULEUR: Record<Sante, Etat> = { silencieux: "accent", panne: "accent", ecart: "warn", echecs: "warn", ok: "ok" };
+const COULEUR: Record<Sante, Etat> = { silencieux: "accent", panne: "accent", ecart: "warn", soucis: "warn", ok: "ok", installation: "faint" };
 
 /** periode : le choix de la période, quand le bloc Console ne l'a pas déjà mis en tête de page. */
 async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; periode: boolean }) {
   const r = await ouRefus(atelier.releves(jours));
   if (r instanceof RefusChamps) return <Bandeau>{r.message}</Bandeau>; // sans période : la changer n'y ferait rien
-  const v = agregerReleves(r, a);
+  // Les clients en service que le relevé ne porte pas (installations hors Cloudflare, absents de l'annuaire) : la liste de
+  // l'atelier, qui ne réveille aucun conteneur non plus. Si elle ne répond pas, la vue reste, avec un bandeau.
+  const liste = await ouRefus(atelier.clients());
+  const illisible = liste instanceof RefusChamps;
+  const v = illisible ? agregerReleves(r, a) : completer(agregerReleves(r, a), r, liste.clients, a);
   const voitCouts = peut(a, "couts.voir");
   const cout = v.tuiles.cout;
   return (
     <>
       {periode && <ChoixPeriode jours={jours} chemin="/admin" />}
+      {illisible && <Bandeau etat="warn">{TA.clientsIllisibles}</Bandeau>}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">
         <Tuile titre={TA.clientsEnService} valeur={TA.nombre(v.tuiles.enService)} />
         <Tuile titre={TA.aSurveiller} valeur={TA.nombre(v.tuiles.aSurveiller)} etat={v.tuiles.aSurveiller > 0 ? "accent" : "ok"} />
         <Tuile titre={TA.tours} valeur={TA.nombre(v.tuiles.tours)} />
+        <Tuile titre={TA.personnesParJour} valeur={TA.nombre(v.tuiles.personnesParJour)} />
         <Tuile titre={TA.echecs} valeur={TA.nombre(v.tuiles.echecs)} etat={v.tuiles.echecs > 0 ? "warn" : undefined} />
         {cout && <Tuile titre={TA.cout} valeur={TA.montantEn(cout.total, cout.devise)} />}
       </div>
@@ -52,12 +58,15 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
           <Link key="client" href={`/admin/clients/${encodeURIComponent(l.client)}?jours=${jours}`} className="font-bold text-ink hover:underline">
             {l.entreprise || l.client}
           </Link>,
-          <Pastille key="sante" etat={COULEUR[l.sante]} texte={TA.santes[l.sante]} />,
+          <span key="sante" className="flex flex-wrap gap-1">
+            <Pastille etat={COULEUR[l.sante]} texte={TA.santes[l.sante]} />
+            {l.soucis.map((s) => <Pastille key={s.genre} etat="warn" texte={TA.avecNombre(texteGenre(s.genre), s.nombre)} />)}
+          </span>,
           ...[l.tours, l.echecs, l.secours].map((n, i) => (
-            <span key={i} className={"tabular-nums " + (i === 1 && n > 0 ? "font-semibold text-warn" : "")}>{TA.nombre(n)}</span>
+            <span key={i} className={"tabular-nums " + (i === 1 && n > 0 ? "font-semibold text-warn" : "")}>{l.horsReleve ? TA.inconnu : TA.nombre(n)}</span>
           )),
           <span key="reponse" className="whitespace-nowrap tabular-nums">{l.reponse === null ? TA.inconnu : TA.secondes(l.reponse)}</span>,
-          ...(l.cout !== undefined ? [<span key="cout" className="whitespace-nowrap tabular-nums">{TA.montant(l.cout)}</span>] : []),
+          ...(voitCouts && cout ? [<span key="cout" className="whitespace-nowrap tabular-nums">{l.cout === undefined ? TA.inconnu : TA.montant(l.cout)}</span>] : []),
         ])}
       />
     </>
