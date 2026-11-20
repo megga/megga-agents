@@ -9,6 +9,7 @@
 // L'atelier (lot 5) tourne de la même façon : un objet, un conteneur de la même image.
 import { DurableObject } from "cloudflare:workers";
 import { clientParId } from "./annuaire.js";
+import { releverSiDu } from "./releves.js";
 
 const PORT = 8080;
 const INACTIVITE_MS = 15 * 60 * 1000; // le conteneur s'endort après 15 minutes sans message
@@ -423,6 +424,7 @@ class AgentClient extends Conteneur {
     // Le prochain rappel, ou la veille si elle vient avant : le conteneur ne s'endort pas entre les deux.
     const veille = Date.now() + VEILLE_MS;
     await this.ctx.storage.setAlarm(prochain ? Math.min(Math.max(Math.round(prochain * 1000), Date.now() + 5000), veille) : veille);
+    await releverSiDu(this, this.ctx.container.getTcpPort(PORT), jeton).catch((e) => this.noterAlerte("releve", e)); // releves.js
     if (rejeu) throw rejeu;
   }
 

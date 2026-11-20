@@ -60,6 +60,10 @@ class Porte:
         return await self._appel("GET", f"/admin/clients/{ident}/suivi{chemin}",
                                  params={k: v for k, v in params.items() if v is not None} or None)
 
+    async def releves(self, jours: int) -> dict:
+        """Le relevé chiffré de tous les clients, lu dans l'annuaire de la porte : aucun conteneur n'est réveillé."""
+        return await self._appel("GET", "/admin/releves", params={"jours": jours})
+
     async def etats(self, ident: str | None = None) -> dict[str, dict]:
         """L'état des clients dans l'annuaire (actif, version, conteneur) ; d'un seul si `ident`."""
         params = {"id": ident} if ident else None

@@ -120,6 +120,7 @@ test("redémarrage en douceur : à l'alarme, le conteneur finit ses tours, s'arr
     ["destroy"],
     ["demarrer"],
     ["conteneur", "/interne/rappels", jeton],
+    ["conteneur", "/interne/releve", jeton], // le relevé chiffré, après les rappels (releves.js)
   ]);
   assert.equal(stock.has("a_redemarrer"), false);
   // Le rappel dans une heure garde son heure chez le conteneur ; la veille repasse avant, dans 4 minutes.

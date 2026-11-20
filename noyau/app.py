@@ -44,6 +44,7 @@ Routes :
   GET  /interne/rappels/{personne}   ses rappels en attente (jeton INTERNE_TOKEN)
   POST /interne/rappels/annuler      {personne, id} annule l'un d'eux (jeton INTERNE_TOKEN)
   GET  /interne/suivi[?depuis=]                 volumes, modèles, échecs (jeton INTERNE_TOKEN)
+  GET  /interne/releve[?jours=]                 le relevé chiffré, jour par jour, sans texte ni numéro (jeton INTERNE_TOKEN)
   GET  /interne/suivi/conversations[?limite=]   les personnes qui ont écrit
   GET  /interne/suivi/conversations/{personne}  ses derniers messages, reçus et envoyés
   GET  /interne/suivi/alertes[?depuis=]         les échecs récents
@@ -770,6 +771,16 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         totaux = await asyncio.to_thread(journal.totaux, depuis)
         attente = await asyncio.to_thread(rappels.en_attente) if rappels is not None else 0
         return suivi_agent.resumer(conf, tours, totaux, attente, depuis)
+
+    @app.get("/interne/releve")
+    async def interne_releve(requete: Request):
+        if (refus := lisible(requete)) is not None:
+            return refus
+        jours = suivi_agent.jours_utc(borne(requete.query_params.get("jours"), 2, suivi_agent.JOURS_RELEVE), time.time())
+        tours = await asyncio.to_thread(lecture.tours, jours[0][1])
+        journaux = {j: await asyncio.to_thread(journal.totaux, debut, fin) for j, debut, fin in jours}
+        attente = await asyncio.to_thread(rappels.en_attente) if rappels is not None else 0
+        return suivi_agent.releve(conf, tours, journaux, jours, attente, version_image.carte())
 
     @app.get("/interne/suivi/conversations")
     async def interne_conversations(requete: Request):
