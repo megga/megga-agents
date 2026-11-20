@@ -116,6 +116,8 @@ Un relevé en échec n'arrête pas les rappels et se retente au quart d'heure su
 
 Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres de chaque agent, jamais ce qui se dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026). Avec le jeton de MEGGA, l'atelier refuse (`403`) avant toute lecture.
 
+Chaque jour du relevé rassemblé porte son coût (`cout`) et son détail poste par poste (`postes` : chaque modèle, la voix, l'écoute), pour l'écran Analyses de la console.
+
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 
 **Les alertes envoyées** (20.11.2026) : une règle se règle en trois temps, comme chez Langfuse, la mesure, les seuils, l'envoi. Toutes les 5 minutes, le déclencheur de la porte (`triggers.crons`) demande à l'atelier d'évaluer chaque règle sur chaque client actif, d'après le relevé chiffré : aucun conteneur réveillé, aucune conversation lue.
