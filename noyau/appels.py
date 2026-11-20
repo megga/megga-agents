@@ -55,6 +55,11 @@ OUTILS = ("chercher_biens", "voir_annonce", "lire_bien_prive", "proprietaire_bie
 ENVOIS = ("fiche_pdf", "montrer_biens", "envoyer_video")
 # À la voix, une fiche se fait d'une annonce du site : les champs d'un bien hors du site restent à l'écrit.
 PARAMETRES = {"fiche_pdf": ("version", "langue", "slug", "reference", "sans_prix")}
+# Ceux qui rendent une liste de biens, une ligne par bien : au-delà de trois, la règle de l'oral est redite avec le résultat
+# (banc d'appels du 20.11.2026 : six biens dits d'une traite).
+LISTES = ("chercher_biens", "biens_pour_recherche")
+TROIS = ("\n(À l'oral : dis combien il y en a, cites-en trois au plus, les plus proches de la demande, et propose d'envoyer "
+         "les autres en cartes dans la conversation avec montrer_biens. Jamais un slug à voix haute.)")
 DELAI_OUTIL = 25.0  # secondes ; ElevenLabs en attend 30 (response_timeout_secs des outils)
 DELAI_ENVOI = 8.0  # un envoi plus long continue en arrière-plan
 RESULTAT = 3000  # caractères d'un résultat rendu à la voix
@@ -323,7 +328,10 @@ class Appels:
             tache.cancel()
             return {"erreur": "Trop long à cette heure : propose d'y revenir par écrit."}
         try:
-            return {"resultat": masquer_secrets(str(tache.result()))[:RESULTAT]}
+            texte = masquer_secrets(str(tache.result()))
+            if nom in LISTES and len([l for l in texte.splitlines() if l.strip()]) > 3:
+                texte = texte[:RESULTAT - len(TROIS)] + TROIS
+            return {"resultat": texte[:RESULTAT]}
         except ValueError as e:
             return {"erreur": str(e)[:500]}
         except Exception as e:

@@ -191,6 +191,18 @@ def test_un_outil_au_nom_de_greg(fsp):
     assert ("appel_outil", "chercher_biens") in conv.journal
 
 
+def test_au_dela_de_trois_biens_la_regle_de_l_oral_est_redite(fsp):
+    a, _, recus, *_ = fsp
+
+    async def chercher_biens(run_context, communes: list[str] | None = None) -> str:
+        """Cherche parmi les biens."""
+        return "\n".join(f"bien-{i} | Villa {i}, Cologny | CHF {i}’000’000" for i in range(1, 7))
+
+    a.outils["chercher_biens"] = chercher_biens
+    r = run(a.outil("chercher_biens", {"appelant": "41790000001"}))["resultat"]
+    assert r.count("\n") == 6 and r.endswith("Jamais un slug à voix haute.)") and "trois au plus" in r
+
+
 def test_seuls_les_outils_permis_et_seulement_pour_l_equipe(fsp):
     a, conv, recus, *_ = fsp
     assert "masquer_annonce" not in a.outils and run(a.outil("masquer_annonce", {"appelant": "41790000001"})) == {"erreur": "outil inconnu"}
