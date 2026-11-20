@@ -10,7 +10,9 @@ CLIENT = {"type": "object", "description": "le client : son nom (exigé pour une
                          (("nom", "son nom"), ("telephone", "son téléphone"), ("email", "son e-mail"))}}
 
 # Ce que l'outil fait à la voix, quand ce n'est pas tout ce qu'il fait à l'écrit.
-DESCRIPTIONS = {"fiche_pdf": "Compose la fiche PDF d'une annonce du site (son slug ou sa référence) et l'envoie dans la conversation WhatsApp."}
+DESCRIPTIONS = {"fiche_pdf": "Compose la fiche PDF d'une annonce du site (son slug ou sa référence) et l'envoie dans la conversation WhatsApp.",
+                "recherche_client": "Enregistre dans la gestion la recherche d'un nouveau client, dictée pendant l'appel, et dit quels biens "
+                                    "y correspondent. Une recherche existante ne se change pas au téléphone : par écrit."}
 
 
 def definitions(outils: dict, base: str, secret_id: str, delai: int = 30) -> list[dict]:
@@ -35,11 +37,12 @@ def definitions(outils: dict, base: str, secret_id: str, delai: int = 30) -> lis
         props = {k: propriete(k, v) for k, v in params.items() if permis is None or k in permis}
         props["appelant"] = {"type": "string", "dynamic_variable": "system__caller_id"}
         props["conversation"] = {"type": "string", "dynamic_variable": "system__conversation_id"}
-        props["numero"] = {"type": "string", "dynamic_variable": "system__called_number"}
+        # « numero_appele » : envoyer_video a déjà un paramètre « numero » (celui de la vidéo).
+        props["numero_appele"] = {"type": "string", "dynamic_variable": "system__called_number"}
         requis = [k for k in d["parameters"].get("required", []) if k in props]
         sortie.append({"type": "webhook", "name": nom, "description": DESCRIPTIONS.get(nom) or " ".join(d["description"].split())[:1000],
                        "response_timeout_secs": delai, "api_schema": {
                            "url": f"{base}/outils/{nom}", "method": "POST",
                            "request_headers": {"Authorization": {"secret_id": secret_id}},
-                           "request_body_schema": {"type": "object", "properties": props, "required": [*requis, "appelant", "numero"]}}})
+                           "request_body_schema": {"type": "object", "properties": props, "required": [*requis, "appelant", "numero_appele"]}}})
     return sortie

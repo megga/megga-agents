@@ -36,7 +36,7 @@ le +1 650 actuel. Dix minutes au plus par appel.
 | `clients/four-seasons-properties.yaml`, `appels` | accepter, qui (`gestionnaires` ou `tous`), duree_max (dix minutes au plus), les numéros appelés permis, l'agent vocal, le refus |
 | Gestion de Greg, Paramètres d'Alix, « Les appels » | `appels`, `appels_qui`, `appels_duree` (5 ou 10 minutes) : posés par-dessus la version (`packs/immobilier/reglages.py`) |
 | Secrets du conteneur | `APPELS_CLE` (la clé du début et des outils), `APPELS_SIGNATURE` (le secret du webhook de fin) |
-| ElevenLabs | l'agent `agent_5101m7v709c4fdnrj1grysk9pr93`, le secret `fsp_appels_cle` (« Bearer <APPELS_CLE> »), les 21 outils, le webhook de début propre à l'agent |
+| ElevenLabs | l'agent `agent_5101m7v709c4fdnrj1grysk9pr93`, le secret `fsp_appels_cle` (« Bearer <APPELS_CLE> »), les 21 outils (le numéro appelé lié à `system__called_number`), le webhook de début propre à l'agent, l'authentification exigée, des valeurs par défaut fermées (rôle `refuse`) |
 
 Les outils d'ElevenLabs se tirent du code d'Alix, pour que la voix et l'écrit aient les mêmes :
 

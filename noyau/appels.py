@@ -300,7 +300,7 @@ class Appels:
         if f is None:
             return {"erreur": "outil inconnu"}
         personne = appelant(d.get("appelant"))
-        role = await self._role(personne) if self.numero_connu(d.get("numero")) else None
+        role = await self._role(personne) if self.numero_connu(d.get("numero_appele")) else None
         if role != "gestionnaire" or not self.permis(role):
             return {"erreur": "Cet outil est réservé à l'équipe de l'agence : dis-le simplement."}
         if nom == "recherche_client" and d.get("id"):

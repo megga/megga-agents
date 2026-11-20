@@ -77,7 +77,7 @@ def test_un_appel_de_greg_de_bout_en_bout(appel):
     lundi = (dt.datetime.now(ZoneInfo("Europe/Zurich")) + dt.timedelta(days=4)).replace(hour=9, minute=0).strftime("%Y-%m-%dT%H:%M")
     with TestClient(app) as t:
         def outil(nom, **args):
-            r = t.post(f"/appels/outils/{nom}", json={"appelant": "41790000001", "numero": "1403253919537610", "conversation": "conv_sim", **args}, headers=h)
+            r = t.post(f"/appels/outils/{nom}", json={"appelant": "41790000001", "numero_appele": "1403253919537610", "conversation": "conv_sim", **args}, headers=h)
             return r.status_code, r.json()
 
         # Le décrochage.
@@ -102,7 +102,7 @@ def test_un_appel_de_greg_de_bout_en_bout(appel):
         # Ce qui reste à l'écrit n'existe pas au téléphone ; un autre numéro n'a aucun outil ; une erreur se dit simplement.
         assert outil("masquer_annonce", slug="cologny-villa-lac", masquer=True)[0] == 404
         assert outil("modifier_annonce", slug="cologny-villa-lac")[0] == 404
-        r = t.post("/appels/outils/chercher_biens", json={"appelant": INCONNU, "numero": "1403253919537610", "communes": ["Cologny"]}, headers=h).json()
+        r = t.post("/appels/outils/chercher_biens", json={"appelant": INCONNU, "numero_appele": "1403253919537610", "communes": ["Cologny"]}, headers=h).json()
         assert "erreur" in r
         assert outil("voir_annonce", slug="inconnue")[1] == {"erreur": "la gestion du site refuse : annonce inconnue"}
         assert not any(m == "PUT" or m == "DELETE" for m, _, _ in site.appels)  # rien n'a changé dans la gestion
