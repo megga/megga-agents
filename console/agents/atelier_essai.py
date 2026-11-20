@@ -1,6 +1,6 @@
 """L'atelier d'essai local de l'admin MEGGA : le vrai atelier (`atelier.app.creer`) sur SQLite, devant une porte simulée.
 
-La porte invente l'activité, les alertes, les conversations et les clés de six clients fictifs, sur les modèles
+La porte invente l'activité, les alertes et les clés de six clients fictifs (aucune conversation : MEGGA n'en lit jamais), sur les modèles
 de FaussePorte (tests/test_lot5.py), PorteSuivie (tests/test_suivi.py) et PorteAuxCles (tests/test_lot6_api.py).
 L'un d'eux tourne hors Cloudflare : son pilote inventé envoie des relevés signés par `noyau.pilotage.entetes`,
 comme `releve_signe` (tests/test_lot6_pilote.py). Il ne sert qu'au développement et aux essais de bout en bout ;
@@ -80,26 +80,6 @@ PANNES = {
     "fleuriste-essai": (("transmission", 25, "conteneur injoignable", None),),
 }
 
-# Les conversations : (il y a combien de minutes, sens, texte). Des numéros fictifs.
-CONVERSATIONS = {
-    "boulangerie-essai": {
-        "+41790000001": ((190, "recu", "Bonjour, vous avez encore des tresses au beurre pour samedi ?"),
-                         (190, "envoye", "Bonjour ! Oui, je vous en mets une de côté. À quel nom ?"),
-                         (185, "recu", "Au nom de Martin, merci."),
-                         (185, "envoye", "C'est noté : une tresse au beurre pour samedi, au nom de Martin.")),
-        "+41790000002": ((45, "recu", "Vous êtes ouverts le lundi ?"),
-                         (45, "envoye", "Nous sommes fermés le lundi, ouverts du mardi au dimanche dès 7 h.")),
-    },
-    "garage-essai": {
-        "+41790000003": ((130, "recu", "Ma voiture fait un bruit au freinage."),
-                         (130, "envoye", "Je transmets à l'atelier. Quand pourriez-vous passer ?")),
-    },
-    "agence-essai": {
-        "+41790000004": ((600, "recu", "Je cherche un trois pièces à louer, près de la gare."),
-                         (600, "envoye", "Volontiers. Quel est votre budget, et pour quand ?")),
-    },
-}
-
 
 class Disque:
     """Ce que la porte (son annuaire, les clés de ses conteneurs) et l'installation (son pilote) gardent d'une relance
@@ -161,11 +141,6 @@ def conteneur(ident: str, maintenant: float) -> dict:
     return {"demarre": all(p["resolue"] for p in pannes), "alertes": pannes}
 
 
-def fils(ident: str, maintenant: float) -> dict[str, list[dict]]:
-    return {p: [{"quand": maintenant - m * 60, "sens": s, "genre": "texte", "texte": t} for m, s, t in messages]
-            for p, messages in CONVERSATIONS.get(ident, {}).items()}
-
-
 class PorteEssai:
     """La porte simulée : l'annuaire et ses mises en service (FaussePorte), le suivi des conteneurs (PorteSuivie),
     les clés des logiciels gardées en empreinte (PorteAuxCles)."""
@@ -192,17 +167,10 @@ class PorteEssai:
         if ident in INJOIGNABLES:
             raise PorteErreur(503, json.dumps({"erreur": "conteneur injoignable"}))
         maintenant = time.time()
-        limite = params.get("limite") or 50
         if chemin == "":
             return activite(ident, float(params.get("depuis") or 0), maintenant)
         if chemin == "/alertes":
             return {"alertes": [a for a in echecs(ident, maintenant) if a["quand"] >= float(params.get("depuis") or 0)]}
-        if chemin == "/conversations":
-            personnes = [{"personne": p, "messages": len(m), "derniere": m[-1]["quand"]} for p, m in fils(ident, maintenant).items()]
-            return {"conversations": sorted(personnes, key=lambda p: p["derniere"], reverse=True)[:limite]}
-        if chemin.startswith("/conversations/"):
-            personne = chemin.removeprefix("/conversations/")
-            return {"personne": personne, "messages": fils(ident, maintenant).get(personne, [])[-limite:]}
         raise PorteErreur(404, "introuvable")
 
     async def releves(self, jours):

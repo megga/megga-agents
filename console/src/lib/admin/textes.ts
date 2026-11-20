@@ -122,7 +122,6 @@ export const TA = {
   nomsDroits: {
     "clients.voir": "Voir les clients",
     "couts.voir": "Voir les coûts et les tarifs",
-    "conversations.lire": "Lire les conversations",
     "clients.creer": "Créer un client",
     "versions.preparer": "Préparer une version",
     "clients.piloter": "Mettre en service, reprendre la main",
@@ -170,6 +169,7 @@ export const TA = {
     "roles.modifier": "Modifier un rôle",
     "roles.retirer": "Retirer un rôle",
     "tarifs.regler": "Changer les tarifs",
+    // Plus aucune lecture depuis le 20.11.2026 ; le libellé reste pour les lignes déjà au journal.
     "conversations.lire": "Lire une conversation",
     "versions.preparer": "Préparer une version",
     "versions.essayer": "Essayer une version",
@@ -195,7 +195,6 @@ export const TA = {
 
   // Les onglets d'un client
   suivi: "Suivi",
-  conversations: "Conversations",
   versions: "Versions",
   acces: "Accès",
   installation: "Installation",
@@ -371,14 +370,9 @@ export const TA = {
   tarifsEnregistres: "Tarifs enregistrés.",
   tarifsInvalides: "Tarifs invalides : un objet attendu.",
 
-  // Les conversations (conversations.lire), en lecture seule
-  personne: "Personne",
-  dernierMessage: "Dernier message",
-  videConversations: "Aucune conversation.",
-  videFil: "Aucun message.",
+  // Le mode d'essai des versions : les deux sens d'un échange avec l'agent d'essai
   recu: "Reçu",
   envoye: "Envoyé par l'agent",
-  jamaisSansConversation: "Aucune conversation : ce client n'a pas encore été mis en service.",
 
   // Les versions : le brouillon d'un externe, limité aux réglages simples (externes.ts)
   corpsObjet: "Requête invalide : un objet JSON attendu.",
