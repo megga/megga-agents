@@ -141,14 +141,6 @@ def test_releves(essai):
     assert "+4179" not in r.text and "Martin" not in r.text
 
 
-def test_conversations(essai):
-    t = essai.t
-    personnes = t.get("/atelier/clients/boulangerie-essai/conversations").json()["conversations"]
-    assert len(personnes) == 2 and all(p["personne"].startswith("+4179000000") for p in personnes)
-    fil = t.get(f"/atelier/clients/boulangerie-essai/conversations/{personnes[0]['personne']}").json()
-    assert {m["sens"] for m in fil["messages"]} == {"recu", "envoye"}
-
-
 def test_essai_repond_sans_reseau(essai):
     t = essai.t
     r = t.post("/atelier/clients/boulangerie-essai/versions/1/essai", json={"message": "Avez-vous des tresses ?"})

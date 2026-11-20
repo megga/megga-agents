@@ -169,6 +169,8 @@ export const TA = {
     "roles.modifier": "Modifier un rôle",
     "roles.retirer": "Retirer un rôle",
     "tarifs.regler": "Changer les tarifs",
+    // Plus aucune lecture depuis le 20.11.2026 ; le libellé reste pour les lignes déjà au journal.
+    "conversations.lire": "Lire une conversation",
     "versions.preparer": "Préparer une version",
     "versions.essayer": "Essayer une version",
     "clients.activer": "Mettre en service",
