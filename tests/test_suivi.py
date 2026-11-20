@@ -355,6 +355,18 @@ def test_le_client_voit_son_activite_mais_pas_les_couts(atelier):
     assert t.porte.suivis[-1] == ("exemple", f"/conversations/{MOI}", {"limite": 5})
 
 
+def test_megga_ne_lit_jamais_une_conversation(atelier):
+    """MEGGA suit la santé et les chiffres, jamais ce qui se dit (20.11.2026) : refusé avant toute lecture de la porte."""
+    t = atelier
+    avant = len(t.porte.suivis)
+    for route in ("/atelier/clients/exemple/conversations", f"/atelier/clients/exemple/conversations/{MOI}"):
+        r = t.get(route, headers=MEGGA)
+        assert r.status_code == 403 and "ne se lisent que par lui" in r.text
+    assert len(t.porte.suivis) == avant
+    assert t.get("/atelier/clients/exemple/suivi", headers=MEGGA).status_code == 200  # les chiffres, oui
+    assert t.get("/atelier/clients/inconnu-x/conversations", headers=MEGGA).status_code == 404  # un client inconnu reste inconnu
+
+
 def test_entrees_du_suivi(atelier):
     t = atelier
     for q in ("jours=0", "jours=400", "jours=abc"):

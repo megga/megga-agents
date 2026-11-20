@@ -41,8 +41,8 @@ dans la base du client, jamais dans l'atelier. Hors Cloudflare, elles se créent
 Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/suivi[?jours=7]           état, activité (tours, personnes, modèles, voix) ;
                                                 coûts pour MEGGA seulement
-  GET   /clients/{id}/conversations[?limite=]   les personnes qui ont écrit
-  GET   /clients/{id}/conversations/{personne}  les derniers échanges avec elle
+  GET   /clients/{id}/conversations[?limite=]   le client seulement : les personnes qui ont écrit
+  GET   /clients/{id}/conversations/{personne}  le client seulement : les derniers échanges avec elle
   GET   /clients/{id}/alertes[?jours=7]         échecs, pannes du conteneur, écart avec l'annuaire
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
   GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour (92 au plus),
@@ -541,8 +541,13 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     def suivable(qui: Identite, ident: str, conversations: bool = False) -> tuple[dict, bool]:
         """Le client, et si son suivi passe par la porte (zones Europe et États-Unis) ou par le pilotage
-        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations)."""
+        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations).
+
+        Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres, jamais ce qui se
+        dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026)."""
         c = client_de(qui, ident)
+        if conversations and qui.role == "megga":
+            raise Refus(403, "les conversations d'un client ne se lisent que par lui")
         if zone_de(ident) not in regles.ZONES_PORTE:
             if conversations:
                 raise Refus(409, "les conversations d'une installation hors Cloudflare ne la quittent jamais : elles se lisent chez le client")

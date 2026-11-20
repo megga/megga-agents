@@ -58,4 +58,4 @@ Toujours en JSON : `{"erreur": "..."}`.
 
 ## Les données
 
-Les messages et la mémoire restent dans la base du client, dans sa zone (ou chez lui). Le texte part toutefois au fournisseur du modèle (Claude, chez Anthropic) pour chaque réponse : pour des données de santé, le client doit le savoir et l'accepter, ou demander à MEGGA un modèle par une voie qui lui convient. MEGGA voit dans sa console les volumes et, comme pour WhatsApp, les conversations des clients hébergés par MEGGA ; jamais celles d'une installation chez le client.
+Les messages et la mémoire restent dans la base du client, dans sa zone (ou chez lui). Le texte part toutefois au fournisseur du modèle (Claude, chez Anthropic) pour chaque réponse : pour des données de santé, le client doit le savoir et l'accepter, ou demander à MEGGA un modèle par une voie qui lui convient. MEGGA voit dans sa console les volumes et la santé de l'agent, jamais les conversations : elles ne se lisent que par le client (décision du 20.11.2026).
