@@ -28,7 +28,7 @@ describe("les droits d'un membre", () => {
   it("un externe ne garde que deux droits ; un droit inconnu n'est jamais accordé", () => {
     expect([...droitsEffectifs(DROITS, true, false)].sort()).toEqual(["clients.voir", "versions.preparer"]);
     expect(droitsEffectifs(["clients.voir", "inconnu"], false, false)).toEqual(new Set(["clients.voir"]));
-    expect(droitsEffectifs([], false, true).size).toBe(12);
+    expect(droitsEffectifs([], false, true).size).toBe(13);
     // un rôle qui avait coché la lecture des conversations la garde en base, sans effet
     expect(droitsEffectifs(["clients.voir", "conversations.lire"], false, false)).toEqual(new Set(["clients.voir"]));
     expect(refus(() => exiger(acces({ droits: ["clients.voir"] }), "couts.voir"))).toMatchObject({ statut: 403, message: TA.sansDroit });

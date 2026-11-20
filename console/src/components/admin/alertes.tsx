@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { Pastille } from "./pastille";
+import { Onglets } from "./onglets";
+import { Pastille, type Etat } from "./pastille";
 import { Tableau } from "./tableau";
-import type { Alerte, Jours } from "@/lib/admin/atelier";
+import type { Alerte, AlertesEnvoyees, EtatAlerte, Jours } from "@/lib/admin/atelier";
 import { estEnCours, texteGenre } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 
@@ -44,5 +45,56 @@ export function TableauAlertes({ alertes, jours, avecClient = false }: {
         <span key="detail" className="text-[13px] break-words text-muted-ink">{a.detail}</span>,
       ])}
     />
+  );
+}
+
+/** Les deux écrans des alertes : ce qui s'est passé, et les règles et envois. */
+export function OngletsAlertes({ actif, regles }: { actif: string; regles: boolean }) {
+  if (!regles) return null;
+  return <Onglets onglets={[{ href: "/admin/alertes", texte: TA.alertes }, { href: "/admin/alertes/regles", texte: TA.reglesEtEnvois }]} actif={actif} />;
+}
+
+const ETAT_PASTILLE: Record<EtatAlerte["etat"], Etat> = { ok: "ok", avertissement: "warn", alerte: "accent", sans_donnees: "faint" };
+
+/** Une valeur mesurée, dite avec son unité (oui ou non, %, nombre). */
+function valeurDe(v: number | null, unite: string | undefined): string {
+  if (v == null) return TA.inconnu;
+  if (unite === "oui ou non") return v ? "oui" : "non";
+  return TA.nombre(v) + (unite === "%" ? " %" : "");
+}
+
+/**
+ * Les règles hors du bon état (alerte, avertissement, sans données), pour les clients que le membre voit ; noms : le nom de
+ * chaque client. Rien quand tout va bien.
+ */
+export function EnAlerte({ envoyees, voit, noms }: { envoyees: AlertesEnvoyees; voit: (client: string) => boolean; noms: Map<string, string> }) {
+  const regles = new Map(envoyees.regles.map((r) => [r.id, r]));
+  const lignes = envoyees.etats
+    .filter((e) => e.etat !== "ok" && voit(e.client))
+    .sort((x, y) => (x.etat === "alerte" ? 0 : 1) - (y.etat === "alerte" ? 0 : 1) || y.depuis - x.depuis);
+  if (!lignes.length) return null;
+  return (
+    <>
+      <h2 className="m-0 text-[17px] font-extrabold">{TA.enAlerte}</h2>
+      <Tableau
+        colonnes={[TA.regle, TA.client, TA.valeur, TA.depuis]}
+        vide={TA.videEnAlerte}
+        replier={[2, 3]}
+        lignes={lignes.map((e) => {
+          const r = regles.get(e.regle);
+          return [
+            <span key="regle" className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <b className="font-bold">{r?.nom ?? e.regle}</b>
+              <Pastille etat={ETAT_PASTILLE[e.etat]} texte={TA.etatsAlerte[e.etat] ?? e.etat} />
+            </span>,
+            <Link key="client" href={`/admin/clients/${encodeURIComponent(e.client)}`} className="font-semibold text-ink hover:underline">
+              {noms.get(e.client) ?? e.client}
+            </Link>,
+            <span key="valeur" className="tabular-nums">{valeurDe(e.valeur, r ? envoyees.mesures[r.mesure]?.unite : undefined)}</span>,
+            <span key="depuis" className="whitespace-nowrap">{TA.moment(e.depuis)}</span>,
+          ];
+        })}
+      />
+    </>
   );
 }

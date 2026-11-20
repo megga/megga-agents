@@ -1,6 +1,6 @@
 import { TA } from "./textes";
 
-// Les douze droits de l'admin, fixés dans le code : un rôle ne peut cocher que ceux-là (conception, « Les droits »).
+// Les treize droits de l'admin, fixés dans le code : un rôle ne peut cocher que ceux-là (conception, « Les droits »).
 // « conversations.lire » est retiré (20.11.2026) : MEGGA ne lit jamais une conversation. Un rôle qui l'avait coché le
 // garde en base sans effet (roles.ts et acces.ts ne retiennent que les droits connus).
 
@@ -17,6 +17,8 @@ export const DROITS = [
   "comptes.gerer",
   "equipe.gerer",
   "journal.voir",
+  // Les règles et les destinations des alertes envoyées (20.11.2026), réglées pour tous les clients à la fois.
+  "alertes.regler",
 ] as const;
 
 export type Droit = (typeof DROITS)[number];
@@ -29,7 +31,7 @@ export function estDroit(x: unknown): x is Droit {
 
 /** Les droits cochés par groupe, à l'écran des rôles ; chaque droit est dans un seul groupe. */
 export const GROUPES_DE_DROITS: readonly { titre: string; droits: readonly Droit[] }[] = [
-  { titre: TA.groupeClients, droits: ["clients.voir", "clients.creer"] },
+  { titre: TA.groupeClients, droits: ["clients.voir", "clients.creer", "alertes.regler"] },
   { titre: TA.groupeVersions, droits: ["versions.preparer", "clients.piloter", "acces.gerer", "installations.gerer"] },
   { titre: TA.groupeCouts, droits: ["couts.voir", "tarifs.regler"] },
   { titre: TA.groupeComptes, droits: ["comptes.voir", "comptes.gerer"] },
@@ -50,7 +52,7 @@ export const ROLES_DE_DEPART: readonly { id: string; nom: string; description: s
     nom: TA.roleExploitation,
     description: TA.roleExploitationDescription,
     droits: ["clients.voir", "versions.preparer", "clients.piloter", "acces.gerer", "installations.gerer",
-      "clients.creer", "comptes.voir", "comptes.gerer"],
+      "clients.creer", "comptes.voir", "comptes.gerer", "alertes.regler"],
   },
   { id: "finance", nom: TA.roleFinance, description: TA.roleFinanceDescription, droits: ["clients.voir", "couts.voir", "tarifs.regler", "comptes.voir"] },
   { id: "lecture", nom: TA.roleLecture, description: TA.roleLectureDescription, droits: ["clients.voir", "comptes.voir"] },

@@ -81,3 +81,7 @@ class Porte:
     async def cles(self, ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
         """Les clés des logiciels d'un client, gardées dans sa base : lister, ajouter (une empreinte), retirer."""
         return await self._appel(methode, f"/admin/clients/{ident}/cles{chemin}", json=corps)
+
+    async def courriel(self, a: str, sujet: str, texte: str) -> dict:
+        """Un courriel d'alerte, envoyé par la porte (Cloudflare Email Service)."""
+        return await self._appel("POST", "/admin/courriel", json={"a": a, "sujet": sujet, "texte": texte})

@@ -29,7 +29,7 @@ from .api import DELAI_TOUR
 from .autour import Autour, _borner
 from .config import Config
 from .envois import ABANDON_RAPPEL, ANNONCE_VALIDE, GARDE_JOURNAL, REESSAI_RAPPEL, Envois  # noqa: F401 (réexportés)
-from .garde import TROP, TROP_JOUR, TROP_TU, Debit, Plafond, masquer_secrets
+from .garde import MASQUE, TROP, TROP_JOUR, TROP_TU, Debit, Plafond, masquer_secrets
 from .typographie import Remplaceur, nettoyer
 from .voix import a_ecrire, se_prete
 from .whatsapp import PIECES, Entrant, decrire_media
@@ -272,6 +272,7 @@ class Conversations(Envois, Autour):
                 self._noter_fil(personne, "recu", "bouton", m.texte)
             return
         if not self._debit_permis(personne, role):
+            self.noter_journal("debit_depasse", len(messages))  # un signal de sécurité, compté sans texte ni numéro
             for m in messages:  # reçus, mais sans tour
                 self._noter_fil(personne, "recu", "vocal" if m.vocal else (m.media.genre if m.media else "texte"), m.texte)
             if self.debit.prevenir(personne):
@@ -530,6 +531,7 @@ class Conversations(Envois, Autour):
         try:
             async with self._a_son_tour(personne):
                 if not self._debit_permis(personne, role):
+                    self.noter_journal("debit_depasse")
                     return None
                 self.plafond.compter(personne, role)
                 self._roles[personne] = role
@@ -550,15 +552,23 @@ class Conversations(Envois, Autour):
                         brute, echec = self.excuse(role), True
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue, self._redit(role))) if p)
-                reponse = self.remplaceur.texte(nettoyer(masquer_secrets(brute)))
+                reponse = self.remplaceur.texte(nettoyer(self._masquer(brute)))
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:
             if lance is not None:
                 self.taches.discard(lance)
 
+    def _masquer(self, texte: str) -> str:
+        """Les secrets masqués, et un signal de sécurité compté quand une réponse en portait un (masqué ici, ou déjà
+        par le crochet de sortie d'Agno)."""
+        masque = masquer_secrets(texte)
+        if isinstance(texte, str) and (masque != texte or MASQUE in texte):
+            self.noter_journal("secret_masque")
+        return masque
+
     async def _ecrire(self, personne: str, texte: str) -> None:
-        envoye = self.remplaceur.texte(nettoyer(masquer_secrets(texte)))
+        envoye = self.remplaceur.texte(nettoyer(self._masquer(texte)))
         try:
             await self.exp.texte(personne, envoye)
             self._noter_fil(personne, "envoye", "texte", envoye)
