@@ -3,7 +3,9 @@
 import { CopilotKitProvider } from "@copilotkit/react-core/v2";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "@/lib/textes";
-import { bulles, Fil } from "./fil";
+import { dernierTexte } from "./bulles";
+import { Activite } from "./activite";
+import { Fil } from "./fil";
 import { Plus } from "./icones";
 import { Palette } from "./palette";
 import { Rail } from "./rail";
@@ -16,6 +18,12 @@ import type { AgentVu, Memoire } from "./types";
 export function Console({ entreprise, agentsInitiaux }: { entreprise: string; agentsInitiaux: AgentVu[] }) {
   const [agents, setAgents] = useState(agentsInitiaux);
   const [actif, setActif] = useState<string | null>(agentsInitiaux[0]?.id ?? null);
+  // La page ouverte à la place d'une conversation (raccourcis de la barre de gauche).
+  const [vue, setVue] = useState<"activite" | null>(null);
+  const choisir = useCallback((id: string) => {
+    setActif(id);
+    setVue(null);
+  }, []);
   const [studio, setStudio] = useState(false);
   const [palette, setPalette] = useState(false);
   const [ouvertures, setOuvertures] = useState(0);
@@ -55,8 +63,8 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
   const garder = useCallback((id: string, m: Memoire) => {
     const messages = m.messages;
     setFils((f) => ({ ...f, [id]: m }));
-    const dernier = bulles(messages).at(-1);
-    if (dernier) setApercus((a) => (a[id] === dernier.texte ? a : { ...a, [id]: dernier.texte }));
+    const dernier = dernierTexte(messages);
+    if (dernier) setApercus((a) => (a[id] === dernier ? a : { ...a, [id]: dernier }));
   }, []);
 
   async function epingler(a: AgentVu) {
@@ -74,7 +82,7 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
   function cree(a: AgentVu) {
     setStudio(false);
     setAgents((l) => [a, ...l]);
-    setActif(a.id);
+    choisir(a.id);
     setNouveau(a.id);
     setTimeout(() => setNouveau(null), 1400);
   }
@@ -87,19 +95,23 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
     <div className="flex h-dvh">
       <Rail
         agents={agents}
-        actif={actif}
+        actif={vue ? null : actif}
+        vue={vue}
+        onActivite={() => setVue("activite")}
         nouveau={nouveau}
         apercus={apercus}
         entreprise={entreprise}
-        onChoisir={setActif}
+        onChoisir={choisir}
         onNouvel={ouvrirStudio}
         onChercher={ouvrirPalette}
         onEpingler={epingler}
       />
       <main className="flex min-w-0 flex-1 flex-col">
-        {agent ? (
+        {vue === "activite" ? (
+          <Activite agents={agents} onContinuer={choisir} />
+        ) : agent ? (
           <CopilotKitProvider key={cle} runtimeUrl="/api/copilotkit" showDevConsole={false} enableInspector={false}>
-            <Fil key={agent.id} agent={agent} memoire={fils[agent.id]} onChange={garder} />
+            <Fil key={agent.id} agent={agent} agents={agents} memoire={fils[agent.id]} onChange={garder} />
           </CopilotKitProvider>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
@@ -112,7 +124,7 @@ export function Console({ entreprise, agentsInitiaux }: { entreprise: string; ag
         )}
       </main>
       <Studio key={"s" + ouvertures} ouvert={studio} onFermer={() => setStudio(false)} onCree={cree} onErreur={dire} />
-      <Palette key={"p" + ouvertures} ouvert={palette} agents={agents} onFermer={() => setPalette(false)} onChoisir={setActif} />
+      <Palette key={"p" + ouvertures} ouvert={palette} agents={agents} onFermer={() => setPalette(false)} onChoisir={choisir} />
       <div
         role="status"
         className={

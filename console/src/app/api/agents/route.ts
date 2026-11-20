@@ -21,7 +21,7 @@ export async function POST(requete: Request) {
     throw e;
   }
   try {
-    await inscrire(agent.id, { prenom: agent.prenom, metier: agent.metier, entreprise: s.user.name || "Votre entreprise" });
+    await inscrire(agent.id, { prenom: agent.prenom, metier: agent.metier, entreprise: s.user.name || "Votre entreprise", compte: s.user.id });
   } catch (e) {
     retirer(base(), s.user.id, agent.id);
     console.error("création d'agent :", e);

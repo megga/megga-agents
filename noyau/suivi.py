@@ -35,24 +35,40 @@ def delai(journal: dict[str, dict], genre: str) -> dict:
     return {"nombre": n, "moyenne": round(float(e.get("quantite", 0)) / n, 1) if n else None}
 
 
+def _compter(modeles: dict[str, dict], tour: dict) -> set:
+    """Ajoute à `modeles` les jetons de ce tour, par modèle ; rend les modèles qu'il a employés."""
+    vus = set()
+    for m in tour["modeles"]:
+        ident = m.get("id") or "?"
+        e = modeles.setdefault(ident, {"fournisseur": m.get("provider"), "tours": 0, "entree": 0, "sortie": 0,
+                                       "cache_lecture": 0, "cache_ecriture": 0})
+        e["entree"] += entree_hors_cache(m)
+        e["sortie"] += int(m.get("output_tokens") or 0)
+        e["cache_lecture"] += int(m.get("cache_read_tokens") or 0)
+        e["cache_ecriture"] += int(m.get("cache_write_tokens") or 0)
+        vus.add(ident)
+    for ident in vus:
+        modeles[ident]["tours"] += 1
+    return vus
+
+
 def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_en_attente: int, depuis: float) -> dict:
+    """`modeles` : tous les jetons du client, ceux de ses collègues compris (c'est ce qui se facture). `echanges` : la
+    part des collègues (noyau/echanges.py), par collègue, dans la même forme, pour en lire le coût à part."""
     modeles: dict[str, dict] = {}
+    collegues: dict[str, dict] = {}
     secours = 0
+    reponses = [t for t in tours if t.get("collegue")]  # les réponses des collègues à l'agent
+    tours = [t for t in tours if not t.get("collegue")]  # les tours des personnes
     for t in tours:
-        vus = set()
-        for m in t["modeles"]:
-            ident = m.get("id") or "?"
-            e = modeles.setdefault(ident, {"fournisseur": m.get("provider"), "tours": 0, "entree": 0, "sortie": 0,
-                                           "cache_lecture": 0, "cache_ecriture": 0})
-            e["entree"] += entree_hors_cache(m)
-            e["sortie"] += int(m.get("output_tokens") or 0)
-            e["cache_lecture"] += int(m.get("cache_read_tokens") or 0)
-            e["cache_ecriture"] += int(m.get("cache_write_tokens") or 0)
-            vus.add(ident)
-        for ident in vus:
-            modeles[ident]["tours"] += 1
+        vus = _compter(modeles, t)
         if conf.modeles.secours and conf.modeles.secours in vus:
             secours += 1
+    for t in reponses:
+        _compter(modeles, t)
+        e = collegues.setdefault(t["collegue"], {"reponses": 0, "modeles": {}})
+        e["reponses"] += 1
+        _compter(e["modeles"], t)
     return {
         "depuis": depuis,
         "tours": len(tours),
@@ -69,6 +85,12 @@ def resumer(conf: Config, tours: list[dict], journal: dict[str, dict], rappels_e
         "delais": {"lecture": delai(journal, "delai_lecture"), "reponse": delai(journal, "delai_reponse"),
                    "lentes": int((journal.get("reponse_lente") or {}).get("nombre", 0))},
         "rappels_en_attente": rappels_en_attente,
+        # Les échanges entre l'agent et ses collègues : combien de réponses, et ce qu'elles ont coûté, par collègue.
+        "echanges": {"reponses": len(reponses), "collegues": collegues,
+                     "refuses": int((journal.get("echange_boucle") or {}).get("nombre", 0))
+                                + int((journal.get("echange_plafond") or {}).get("nombre", 0)),
+                     "hors_delai": int((journal.get("echange_hors_delai") or {}).get("nombre", 0)),
+                     "en_echec": int((journal.get("echange_echec") or {}).get("nombre", 0))},
     }
 
 

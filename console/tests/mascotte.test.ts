@@ -27,3 +27,15 @@ describe("la tête de la mascotte", () => {
     expect(teteSvg(99, -1, false)).toBe(teteSvg(0, 0, false));
   });
 });
+
+describe("la tête endormie", () => {
+  it("ferme les paupières, montre les « z » et élargit le cadre pour eux", () => {
+    const eveillee = teteSvg(0, 0, false);
+    const endormie = teteSvg(0, 0, false, true);
+    expect(eveillee).toContain('id="fx-zzz" opacity="0"');
+    expect(endormie).toContain('id="fx-zzz" opacity="1"');
+    expect(endormie.match(/class="lidTop" id="haut[LR]" transform="translate\(0 158\)"/g)).toHaveLength(2);
+    expect(endormie.match(/class="lidBot" id="bas[LR]" transform="translate\(0 -24\)"/g)).toHaveLength(2);
+    expect(endormie).toContain('viewBox="126 176 774 514"');
+  });
+});

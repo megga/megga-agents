@@ -63,10 +63,12 @@ test("de l'inscription à la première réponse d'un agent", async ({ page }) =>
   await expect(page.getByTestId("fil").getByText(/Bien reçu.*Anglet/)).toBeVisible();
   // Il se souvient de la conversation, même après la création de Léa (CopilotKit a redémarré entre-temps).
   await page.getByLabel("Écrivez à Alix").fill("Avec un balcon, si possible.");
+  await expect(page.getByRole("button", { name: "Envoyer" })).toBeEnabled(); // Alix a fini sa réponse précédente
   await page.getByLabel("Écrivez à Alix").press("Enter");
   await expect(page.getByTestId("fil").getByText(/Avec un balcon.*C'est votre 2e message\./)).toBeVisible();
   // Une panne du modèle se dit, sans rester muette.
   await page.getByLabel("Écrivez à Alix").fill("ESSAI-PANNE");
+  await expect(page.getByRole("button", { name: "Envoyer" })).toBeEnabled(); // comme une personne : le bouton grisé tant qu'Alix répond
   await page.getByLabel("Écrivez à Alix").press("Enter");
   await expect(page.getByText("Pas de réponse pour l'instant. Réessayez dans un instant.")).toBeVisible();
   await page.mouse.move(900, 400);

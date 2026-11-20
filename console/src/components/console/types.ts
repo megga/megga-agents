@@ -9,8 +9,11 @@ export type AgentVu = {
   creeLe: string;
 };
 
-/** Un message du fil, réduit à ce qui s'affiche. */
-export type Bulle = { id: string; role: "user" | "assistant"; texte: string };
+/** Un message du fil, réduit à ce qui s'affiche ; ou une question de l'agent à un collègue (`reponse` : null tant
+ * qu'elle n'est pas arrivée). */
+export type Bulle =
+  | { id: string; role: "user" | "assistant"; texte: string }
+  | { id: string; role: "echange"; collegue: string; question: string; reponse: string | null };
 
 /** Le fil d'un agent : son identifiant de conversation (l'agent y retrouve ce qui a été dit) et ses messages. */
 export type Memoire = { threadId: string; messages: { id: string; role: string; content?: unknown }[] };

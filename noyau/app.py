@@ -74,7 +74,10 @@ from . import stockage
 from . import suivi as suivi_agent
 from . import version as version_image
 from . import humeur as humeurs
-from .agent import construire, modele
+from .agent import construire, construire_collegue, modele
+from .config import PRINCIPAL
+from .echanges import Collegue as Poste
+from .echanges import Relais, collegue_agno
 from .environnement import charger
 from .oral import consignes as consignes_orales
 from .memoire import Memoire
@@ -119,7 +122,8 @@ def configuration_en_parties(env: dict) -> str | None:
     return "".join(parties)
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None) -> list:
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None,
+                     relais=None) -> list:
     """Les outils du noyau (rappels, et la mémoire si Memoire.outils) et ceux des packs que la configuration active ;
     `groupes` : ceux d'un rôle. `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py),
     s'ils sont branchés ; `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
@@ -145,7 +149,32 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         if not conf.catalogue:
             raise RuntimeError("pack immobilier sans catalogue")
         liste += outils_immobilier(Catalogue(conf.catalogue))
+    if "collegues" in groupes:  # poser une question à un collègue (noyau/echanges.py)
+        if relais is None:
+            raise RuntimeError("groupe d'outils « collegues » sans relais (Config.collegues)")
+        liste += relais.outils(PRINCIPAL)
     return liste
+
+
+def relais_des_collegues(conf, base, cles, url: str, journal=None, modele_des_collegues=None) -> Relais | None:
+    """Le relais d'un client qui a des collègues (Config.collegues), chacun construit et inscrit ; None sans eux.
+    Un collègue ne reçoit que les outils de sa fiche, et peut interroger les autres collègues."""
+    if not conf.collegues:
+        return None
+    relais = Relais(stockage.Echanges(url), journal=journal, noms={PRINCIPAL: conf.nom_agent})
+    fiches = {}
+    for ident, c in conf.collegues.items():  # d'abord les fiches : chacun connaît le prénom et le métier des autres
+        fiches[ident] = c
+
+        async def pas_encore(question, de, origine, conclure=False):
+            raise RuntimeError("collègue pas encore construit")
+
+        relais.inscrire(ident, Poste(c.prenom, c.metier, pas_encore))
+    for ident, c in fiches.items():
+        outils = (outils_du_client(conf, None, c.outils) if c.outils else []) + relais.outils(ident)
+        agent = construire_collegue(conf, ident, c, base, cles, outils, relais.consigne(ident), principal=modele_des_collegues)
+        relais.inscrire(ident, collegue_agno(agent, c.prenom, c.metier))
+    return relais
 
 
 def _reecriture(conf, cles):
@@ -265,6 +294,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
     cles = {k: env.get(k, "") for k in CLES}
     quitter = quitter or (lambda: os.kill(os.getpid(), signal.SIGTERM))
     construire_agents = agent is None
+    relais = None  # le relais des collègues (noyau/echanges.py), s'il y en a
     # Le Contexte du noyau (Conversations.contexte : prénom du profil, rappels prévus, souvenirs, vocal envoyé), lu à
     # chaque tour ; les conversations naissent après les agents.
     tenues: dict = {}
@@ -352,14 +382,23 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             juger = _juge(conf, cles)
         if decrire is None and conf.photos.decrire:
             decrire = _descripteur(conf, cles)
+        # Les collègues de l'agent (Config.collegues) et le relais qui leur porte ses questions (noyau/echanges.py).
+        relais = relais_des_collegues(conf, base, cles, env["DATABASE_URL"], journal)
+
+        async def des_collegues(personne: str) -> str:
+            return relais.consigne(PRINCIPAL)
+
         def fabriquer(c: configuration.Config):
             """L'agent de tous, et un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous,
-            et le Contexte de chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs).
+            et le Contexte de chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs ; ses
+            collègues, pour un rôle qui a le groupe « collegues »).
             Refait quand les réglages du client changent ses modèles (packs/immobilier/reglages.py)."""
             un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
-            par_role = {nom: construire(c, base, cles, outils=outils_du_client(c, rappels, role.outils, services, relations, memoire),
+            par_role = {nom: construire(c, base, cles,
+                                        outils=outils_du_client(c, rappels, role.outils, services, relations, memoire, relais),
                                         role=role, nom_role=nom,
-                                        contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None))
+                                        contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None,
+                                                          des_collegues if "collegues" in role.outils else None))
                         for nom, role in c.les_roles().items()}
             return un, par_role
 
@@ -376,6 +415,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
                                   juger=juger, decrire=decrire, role_de=personnes.role, memoire=memoire,
                                   seconde_passe=getattr(relations, "seconde_passe", None))
     tenues["conversations"] = conversations
+    if relais is not None:  # une question à un collègue compte dans le plafond du jour de la personne qui l'a provoquée
+        relais.permis = conversations.echange_permis
     # Les paramètres que le courtier règle lui-même dans sa gestion (packs/immobilier/reglages.py) : relus pendant l'attente
     # de chaque tour, posés par-dessus la version en service, sans redémarrer.
     if gestion is not None and personnes.gestionnaires:

@@ -27,6 +27,11 @@ OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("i
                                                                                 "vitrine", "accueil", "marche", "travail")}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
 OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
+# Les groupes d'outils qu'un collègue peut recevoir (Config.collegues), par métier : jamais ceux qui agissent au nom
+# d'un gestionnaire, ni ceux qui tiennent à une personne (rappels, mémoire).
+OUTILS_DES_COLLEGUES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
+# L'agent du client dans les échanges entre agents (noyau/echanges.py) : aucun collègue ne porte cet identifiant.
+PRINCIPAL = "principal"
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
 OUTILS_GESTION = ("annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
 
@@ -142,7 +147,7 @@ class Role(Strict):
     envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "memoire", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "memoire", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail", "collegues"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
     # Les phrases fixes du noyau (excuse, vocal non compris, trop de messages, rappel) au tutoiement (M4).
     tutoiement: bool = False
@@ -189,6 +194,24 @@ class Role(Strict):
                 raise ValueError("accueil : {code de langue: texte de 10 à 1500 caractères}")
             if re.search(r"[\u2014\u2013\u00b7]", texte):
                 raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+
+class Collegue(Strict):
+    """Un collègue de l'agent (Config.collegues) : un agent du même client, avec son prénom et son métier, à qui
+    l'agent pose des questions (noyau/echanges.py). Il n'a pas de numéro et n'écrit à personne."""
+
+    prenom: str = Field(pattern=r"^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'’ -]{0,39}$")
+    # Ce qu'il sait faire, en une phrase : c'est tout ce que l'agent sait de lui.
+    metier: str = Field(min_length=3, max_length=200)
+    consignes: str = Field(default="", max_length=8000)
+    outils: tuple[Literal["immobilier"], ...] = ()
+
+    @field_validator("metier", "consignes")
+    @classmethod
+    def sans_artefacts(cls, v: str) -> str:
+        if re.search(r"[\u2014\u2013\u00b7]", v):
+            raise ValueError("Pas de tiret long ni de point médian.")
         return v
 
 
@@ -411,6 +434,8 @@ class Config(Strict):
     gestion: Gestion | None = None
     # Les portails de son marché (outils du marché).
     marche: Marche | None = None
+    # Les collègues de l'agent : {identifiant: collègue}. Un rôle leur pose des questions s'il a le groupe « collegues ».
+    collegues: dict[str, Collegue] = Field(default={}, max_length=8)
 
     @model_validator(mode="before")
     @classmethod
@@ -424,13 +449,31 @@ class Config(Strict):
     def outils_du_metier(self):
         hors = [o for o in self.outils if o not in METIERS[self.metier]]
         for r in self.les_roles().values():
-            hors += [o for o in r.outils if o not in ("rappels", "memoire") and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
+            hors += [o for o in r.outils if o not in ("rappels", "memoire", "collegues") and o not in OUTILS_DES_ROLES[self.metier] and o not in hors]
+        for c in self.collegues.values():
+            hors += [o for o in c.outils if o not in OUTILS_DES_COLLEGUES[self.metier] and o not in hors]
         if hors:
             raise ValueError(f"Ces outils ne vont pas avec ce métier : {', '.join(hors)}.")
         # Les outils qui agissent au nom d'un compte de gestion ne vont qu'aux gestionnaires.
         for nom, r in self.les_roles().items():
             if nom != "gestionnaire" and (pris := [o for o in r.outils if o in OUTILS_GESTIONNAIRE]):
                 raise ValueError(f"Ces outils sont ceux des gestionnaires, pas du rôle {nom} : {', '.join(pris)}.")
+        return self
+
+    @model_validator(mode="after")
+    def collegues_valides(self):
+        for ident in self.collegues:
+            if not re.fullmatch(r"[a-z][a-z0-9-]{1,30}", ident) or ident == PRINCIPAL:
+                raise ValueError(f"Identifiant de collègue refusé : {ident}.")
+        prenoms = [c.prenom.strip().lower() for c in self.collegues.values()]
+        if len(set(prenoms)) != len(prenoms) or self.nom_agent.strip().lower() in prenoms:
+            raise ValueError("Chaque collègue a son prénom, différent de celui de l'agent.")
+        avec = [nom for nom, r in self.les_roles().items() if "collegues" in r.outils]
+        if avec and not self.collegues:
+            raise ValueError("Le groupe d'outils « collegues » attend au moins un collègue.")
+        # Pour commencer, seul l'agent des gestionnaires pose des questions à ses collègues (plan du 19.11.2026).
+        if [nom for nom in avec if nom != "gestionnaire"]:
+            raise ValueError("Seul le rôle gestionnaire peut recevoir le groupe d'outils « collegues ».")
         return self
 
     def les_roles(self) -> dict[str, Role]:
@@ -469,7 +512,7 @@ class Config(Strict):
 def manques(conf: Config) -> list[str]:
     """Ce qui empêche une configuration valide de servir (l'atelier et le pilotage la refusent)."""
     m = []
-    if ("immobilier" in conf.outils or any("immobilier" in r.outils for r in conf.les_roles().values())) and not conf.catalogue:
+    if ("immobilier" in conf.outils or any("immobilier" in r.outils for r in (*conf.les_roles().values(), *conf.collegues.values()))) and not conf.catalogue:
         m.append("le pack immobilier attend son catalogue (réglage de MEGGA)")
     if any(o in OUTILS_GESTION for r in conf.les_roles().values() for o in r.outils) and conf.gestion is None:
         m.append("les outils d'annonces, de partenaires et de visiteurs attendent la gestion du site (réglage de MEGGA)")

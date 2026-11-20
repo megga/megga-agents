@@ -12,13 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Epingle, HautBas, Loupe, Plus } from "./icones";
+import { Activite, Epingle, HautBas, Loupe, Plus } from "./icones";
 import { Tete } from "./tete";
 import type { AgentVu } from "./types";
 
 type Props = {
   agents: AgentVu[];
   actif: string | null;
+  vue: "activite" | null;
+  onActivite: () => void;
   nouveau: string | null;
   apercus: Record<string, string>;
   entreprise: string;
@@ -43,6 +45,21 @@ export function Rail(p: Props) {
 
       {p.agents.length > 0 && (
         <>
+          <div className="flex flex-none flex-col gap-px self-stretch px-2.5 pb-1 max-[760px]:items-center max-[760px]:px-0">
+            <button
+              type="button"
+              onClick={p.onActivite}
+              aria-current={p.vue === "activite" ? "page" : undefined}
+              title={T.activite}
+              className={
+                "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[14.5px] font-semibold text-ink max-[760px]:size-11 max-[760px]:justify-center max-[760px]:p-0 " +
+                (p.vue === "activite" ? "bg-bg shadow-doux" : "hover:bg-hover")
+              }
+            >
+              <Activite className="size-[19px] flex-none text-muted-ink" />
+              <span className="max-[760px]:hidden">{T.activite}</span>
+            </button>
+          </div>
           <TitreRail>{T.epingles}</TitreRail>
           {epingles.length ? (
             <div className="grid grid-cols-3 gap-2 px-3 pt-0.5 pb-1 max-[760px]:hidden">

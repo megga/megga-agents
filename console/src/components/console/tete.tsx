@@ -18,9 +18,21 @@ export function useSombre(): boolean {
 }
 
 /** La tête de la mascotte dans la couleur et les yeux de l'agent. */
-export function Tete({ couleur, yeux, className, style }: { couleur: number; yeux: number; className?: string; style?: React.CSSProperties }) {
+export function Tete({
+  couleur,
+  yeux,
+  endormie = false,
+  className,
+  style,
+}: {
+  couleur: number;
+  yeux: number;
+  endormie?: boolean;
+  className?: string;
+  style?: React.CSSProperties;
+}) {
   const sombre = useSombre();
-  const src = useMemo(() => teteUrl(couleur, yeux, sombre), [couleur, yeux, sombre]);
+  const src = useMemo(() => teteUrl(couleur, yeux, sombre, endormie), [couleur, yeux, sombre, endormie]);
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" className={"m " + (className ?? "")} style={style} draggable={false} />;
 }

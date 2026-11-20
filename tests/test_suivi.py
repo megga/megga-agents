@@ -280,6 +280,16 @@ def test_couts():
     assert c["total"] == 9.8 and c["devise"] == "USD"
     assert c["sans_tarif"] == ["deepseek-v4-pro", "ecoute"]  # rien n'est inventé
     assert couts({}, Tarifs())["total"] == 0
+    assert c["collegues"] == {}
+
+
+def test_le_cout_de_chaque_collegue():
+    lea = {"claude-sonnet-5-5": {"entree": 1_000_000, "sortie": 0}, "deepseek-v4-pro": {"entree": 10, "sortie": 5}}
+    activite = {"modeles": {"claude-sonnet-5-5": {"entree": 3_000_000, "sortie": 0}, "deepseek-v4-pro": {"entree": 10, "sortie": 5}},
+                "echanges": {"reponses": 2, "collegues": {"lea": {"reponses": 2, "modeles": lea}}}}
+    c = couts(activite, Tarifs.model_validate({"modeles": {"claude-sonnet-5-5": {"entree": 3, "sortie": 15}}}))
+    assert c["total"] == 9.0 and c["collegues"] == {"lea": 3.0}  # déjà compté dans le total, montré à part
+    assert c["sans_tarif"] == ["deepseek-v4-pro"]
 
 
 # L'atelier
