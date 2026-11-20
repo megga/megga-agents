@@ -18,7 +18,11 @@ export type JourReleve = {
   delais?: { lecture: Delai; reponse: Delai; lentes: number };
   journal?: Record<string, { nombre?: number; quantite?: number }>;
   outils?: Record<string, OutilJour>;
+  /** Les jetons de chaque modèle du jour (agno_runs). */
+  modeles?: Record<string, { tours: number; entree: number; sortie: number; cache_lecture: number; cache_ecriture: number }>;
   cout?: number;
+  /** Le coût du jour poste par poste (chaque modèle, la voix, l'écoute), depuis le 21.11.2026 : absent d'un atelier plus ancien. */
+  postes?: Record<string, number>;
 };
 export type ClientReleve = {
   id: string;

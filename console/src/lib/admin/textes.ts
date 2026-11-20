@@ -250,6 +250,15 @@ export const TA = {
   paysEnregistre: "Pays enregistré.",
   paysInvalide: "Choisissez un pays de la liste.",
 
+  // L'écran Analyses (lib/admin/analyses.ts)
+  analyses: "Analyses",
+  conversationsParJour: "Conversations par jour",
+  vocauxParJour: "Vocaux par jour",
+  coutParConversation: "Coût par conversation",
+  coutParConversationEn: (devise: string) => `Coût par conversation en ${devise}`,
+  videModeles: "Aucun modèle appelé sur la période.",
+  videParClient: "Aucun client actif sur la période.",
+
   // Les clients payants (lib/admin/payants.ts) : l'unité vendue est la conversation, une personne servie sur une journée
   clientsPayants: "Clients payants",
   forfaits: "Forfaits",

@@ -236,7 +236,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await rejoindre(externe, lien, EXTERNE_ESSAI);
 
   // Son rail : la vue d'ensemble et les clients, ni Comptes, ni Tarifs, ni Équipe, ni Journal. Aucun coût nulle part.
-  await expect(rail(externe).getByRole("link")).toHaveText([TA.vueEnsemble, TA.clients, TA.alertes, TA.installations]);
+  await expect(rail(externe).getByRole("link")).toHaveText([TA.vueEnsemble, TA.analyses, TA.clients, TA.alertes, TA.installations]);
   await expect(externe.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(externe.getByRole("main")).not.toContainText(TA.cout);
   await expect(externe.getByRole("heading", { name: TA.console, exact: true })).toHaveCount(0);
@@ -365,7 +365,7 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   expect((await rail(page).boundingBox())?.width).toBeCloseTo(76, 0);
   expect(await deborde(page)).toBe(false);
-  const entrees = [TA.vueEnsemble, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.clientsPayants, TA.tarifs, TA.equipe, TA.journal];
+  const entrees = [TA.vueEnsemble, TA.analyses, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.clientsPayants, TA.tarifs, TA.equipe, TA.journal];
   await expect(rail(page).getByRole("link")).toHaveText(entrees);
 
   for (const largeur of [390, 800]) {
