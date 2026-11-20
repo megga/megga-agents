@@ -238,7 +238,7 @@ def test_un_envoi_long_continue_et_son_echec_part_par_ecrit(fsp, monkeypatch):
 
     r = run(scenario())
     assert r["resultat"].startswith("C'est en route")
-    assert conv.envois == [(GREG, [{"texte": "Ce que je devais t'envoyer pendant l'appel n'est pas parti : aucun bien en ligne n'a ce slug."}], "appel")]
+    assert conv.envois == [(GREG, [{"texte": "Ce que je devais t'envoyer pendant l'appel n'est pas parti : aucun bien en ligne n'a ce slug."}], "texte")]
     assert set(ENVOIS) <= set(OUTILS)
 
 
@@ -314,7 +314,7 @@ def test_apres_l_appel_le_fil_le_resume_et_l_activite(fsp):
     assert lignes == [("envoye", "appel", "Salut Greg, c'est Alix."), ("recu", "appel", "Envoie-moi la fiche de la villa de Cologny."),
                       ("envoye", "appel", "(outils : fiche_pdf)"), ("envoye", "appel", "C'est parti, elle arrive dans la conversation.")]
     assert len(resumes) == 1 and "Greg : Envoie-moi la fiche" in resumes[0][1] and "tutoie" in resumes[0][0]
-    assert conv.envois == [(GREG, [{"texte": resumes and "On a parlé de Cologny.\n- Fiche de la villa de Cologny envoyée.\n- Rappel lundi à 9 h pour le client de Vandœuvres."}], "appel")]
+    assert conv.envois == [(GREG, [{"texte": resumes and "On a parlé de Cologny.\n- Fiche de la villa de Cologny envoyée.\n- Rappel lundi à 9 h pour le client de Vandœuvres."}], "resume_appel")]
     assert etats.lire(GREG, "dernier_appel")["duree"] == 252
     j = run(a.journal(1))
     assert len(j) == 1 and (j[0]["personne"], j[0]["nom"], j[0]["duree"], j[0]["statut"]) == (GREG, "Greg", 252, "libre")

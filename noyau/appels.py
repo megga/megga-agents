@@ -346,7 +346,7 @@ class Appels:
         except Exception as e:
             raison = str(e)[:300] if isinstance(e, ValueError) else "l'envoi a échoué"
             await self.conversations._sans_echec(self.conversations.envoyer_de_soi_meme(
-                personne, [{"texte": f"Ce que je devais t'envoyer pendant l'appel n'est pas parti : {raison}."}], "appel"))
+                personne, [{"texte": f"Ce que je devais t'envoyer pendant l'appel n'est pas parti : {raison}."}], "texte"))
 
     async def fin(self, corps: bytes, entete: str | None) -> tuple[int, dict]:
         """Le webhook de fin : vérifié, puis traité en arrière-plan (ElevenLabs attend un 200 rapide)."""
@@ -390,7 +390,8 @@ class Appels:
             for quand, sens, texte in repliques[:LIGNES_FIL]:
                 await asyncio.to_thread(self.fil.noter, personne, sens, "appel", texte, quand)
         resume = await self._resume(repliques, nom or "la personne", data, duree)
-        etat = await self.conversations.envoyer_de_soi_meme(personne, [{"texte": resume}], "appel", [resume[:900]])
+        # Son propre genre au fil : ce n'est pas une réplique de l'appel (le prochain décrochage ne le dit pas « au téléphone »).
+        etat = await self.conversations.envoyer_de_soi_meme(personne, [{"texte": resume}], "resume_appel", [resume[:900]])
         if self.etats is not None:
             await asyncio.to_thread(self.etats.ecrire, personne, "dernier_appel", {"quand": debut, "duree": duree, "resume": resume})
         await asyncio.to_thread(self.table.finir, conversation, resume, etat)
