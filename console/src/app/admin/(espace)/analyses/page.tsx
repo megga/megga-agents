@@ -74,7 +74,7 @@ export default async function PageAnalyses({ searchParams }: PageProps<"/admin/a
       )}
       <h2 className="m-0 text-[17px] font-extrabold">{TA.parClient}</h2>
       <Tableau
-        colonnes={[TA.client, TA.conversations, TA.tours, ...(cout ? [TA.coutEn(cout.devise), TA.coutParConversation] : [])]}
+        colonnes={[TA.client, TA.conversations, TA.tours, ...(cout ? [TA.coutEn(cout.devise), TA.coutParConversationEn(cout.devise)] : [])]}
         vide={TA.videParClient}
         replier={cout ? [2, 3, 4] : [2]}
         lignes={v.clients.map((c) => [
