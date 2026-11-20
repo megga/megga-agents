@@ -117,6 +117,23 @@ Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
 
+**Les alertes envoyées** (20.11.2026) : une règle se règle en trois temps, comme chez Langfuse, la mesure, les seuils, l'envoi. Toutes les 5 minutes, le déclencheur de la porte (`triggers.crons`) demande à l'atelier d'évaluer chaque règle sur chaque client actif, d'après le relevé chiffré : aucun conteneur réveillé, aucune conversation lue.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /alertes` | MEGGA | les mesures, les règles (les proposées tant qu'aucune n'est enregistrée), les destinations, adresse d'un webhook masquée, et l'état de chaque règle pour chaque client |
+| `PUT /alertes/regles` | MEGGA | remplace toutes les règles (20 au plus) |
+| `POST /alertes/destinations` | MEGGA | `{id, genre, adresse}` : `courriel`, `slack` (webhook entrant) ou `web` (https, nom d'hôte public) ; la clé de signature d'une adresse web est montrée une fois |
+| `DELETE /alertes/destinations/{id}` | MEGGA | refusé (`409`) tant qu'une règle l'utilise |
+| `POST /alertes/destinations/{id}/essai` | MEGGA | un message d'essai |
+| `POST /alertes/evaluer` | MEGGA | évalue et envoie ; appelée par la porte |
+
+Une règle : une mesure (`silencieux`, `pannes_en_cours`, `ecart`, `taux_echec` en %, `secours`, `tours`, `cout`, `reponses_lentes`, `plafond`, `envois_en_echec`, et deux signaux de sécurité, `secrets_masques` et `debit_depasse`), une comparaison, un seuil d'alerte et un d'avertissement facultatif, une fenêtre de 1 à 7 jours (1 : le jour en cours, UTC), le traitement de l'absence de données (compter bon, garder l'état d'avant, ou le signaler), les clients visés (tous par défaut), les destinations, un rappel en heures, une pause. L'état de chaque règle pour chaque client est rangé (`megga_alertes_etats`) ; un message part au changement d'état, puis en rappel, jamais en pause. Un envoi en échec est repris aux trois évaluations suivantes.
+
+Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et le seuil. Le courriel part par la porte (`POST /admin/courriel`, Cloudflare Email Service, expéditeur `COURRIEL_DE`, sur un sous-domaine à ouvrir à Email Sending) ; Slack et les adresses web, par l'atelier. Le corps d'une adresse web est signé : `x-megga-signature` vaut `sha256=` suivi du HMAC de `<x-megga-horodatage>.<corps>` avec sa clé.
+
+Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
+
 ## Les installations hors Cloudflare (lot 6.3)
 
 Chez le client (puis en zone suisse), aucun accès entrant : le pilote de l'installation appelle la porte chaque minute (`POST /pilotage/releve`), qui transmet à l'atelier sans réveiller personne si la requête n'est pas signée et récente. L'atelier vérifie la signature avec la clé publique enregistrée pour ce client, refuse une requête rejouée, garde le dernier relevé, et répond avec les ordres qui attendent. La signature couvre aussi l'installation que la requête dit être, et une clé ne sert qu'une installation. Un relevé est contrôlé avant d'être gardé (nombres finis, forme de l'état et du suivi) ; la porte refuse un corps sans longueur annoncée ou de plus de 256 Kio. Le pilote : `pilote/` ; le protocole : `noyau/pilotage.py` ; le guide côté client : `docs/installation-client.md`.

@@ -47,6 +47,8 @@ Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
   GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour (92 au plus),
                                                 avec coûts, écart et agents silencieux (aucun conteneur réveillé)
+  GET   /alertes, PUT /alertes/regles, …       MEGGA : les alertes envoyées (atelier/routes_alertes.py) : règles à
+                                                seuils sur le relevé, destinations, évaluation toutes les 5 minutes
 
 Installations hors Cloudflare (chez le client, zone suisse), pilotées par un canal sortant et signé :
   GET   /installations                          MEGGA : les installations et leur dernier état
@@ -87,7 +89,8 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
-from . import gabarits, regles
+from . import gabarits, regles, routes_alertes
+from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs, couts
 from .essai import essayer
 from .pilotage import TAILLE as TAILLE_RELEVE
@@ -121,7 +124,8 @@ async def bd(f, *a, **k):
     return await run_in_threadpool(f, *a, **k)
 
 
-def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
+def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None,
+          transport_alertes=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -673,15 +677,23 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         brut = requete.query_params.get("jours") or "7"
         if not re.fullmatch(r"[0-9]{1,2}", brut, re.ASCII) or not 1 <= int(brut) <= JOURS_LUS_MAX:
             raise Refus(400, f"jours : de 1 à {JOURS_LUS_MAX}")
+        return await rassembler_tout(int(brut))
+
+    async def rassembler_tout(jours: int) -> dict:
+        """Le relevé de tous les agents, avec coûts, écart et silence (aucun conteneur réveillé)."""
         if porte is None:
             raise Refus(503, "porte non réglée (PORTE_URL)")
         try:
-            lus = await porte.releves(int(brut))
+            lus = await porte.releves(jours)
         except PorteErreur as e:
             raise Refus(502, f"porte : {e.texte[:120]}") from e
         connus = {c["component_id"]: {"entreprise": c.get("description"), "version_en_service": c.get("current_version")}
                   for c in await bd(versions.clients)}
         return rassembler(lus, await bd(lire_tarifs), connus, time.time())
+
+    routes_alertes.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
+                          etats=EtatsAlertes(env["DATABASE_URL"]), porte=porte, rassembler_tout=rassembler_tout,
+                          transport=transport_alertes)
 
     @r.get("/installations")
     def installations(qui: Identite = Depends(identite)):

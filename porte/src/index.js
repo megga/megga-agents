@@ -28,6 +28,8 @@
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   POST /admin/clients/:id/oublier          {personne} sa conversation repart à neuf, le fil reste (jeton ADMIN_TOKEN)
 //   GET  /admin/clients/:id/rappels?personne= ses rappels en attente ; POST …/rappels/annuler {personne, id}
+//   POST /admin/courriel           {a, sujet, texte} un courriel d'alerte de l'atelier, par Cloudflare Email Service
+//                                  (liaison COURRIEL, expéditeur COURRIEL_DE ; jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
@@ -36,10 +38,13 @@
 //   POST /pilotage/…               le pilote d'une installation hors Cloudflare (chez le client, zone
 //                                  suisse) : requête signée de sa clé, transmise à l'atelier qui la vérifie
 //
+// Toutes les 5 minutes, son déclencheur fait évaluer les alertes par l'atelier (src/alertes.js).
+//
 // Elle ne garde aucun message et ne journalise ni texte ni numéro de personne.
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
 import { RefusAnnuaire, clientParId, clientParNumero, idValide, inscrire, lister } from "./annuaire.js";
 import { defiAbonnement, egal, numerosDe, signatureValide } from "./meta.js";
+import { envoyerCourriel, evaluerAlertes } from "./alertes.js";
 import { JOURS_LUS_MAX, lireReleves } from "./releves.js";
 import { agentDe } from "./zones.js";
 
@@ -84,6 +89,9 @@ export async function recevoir(requete, env, ctx) {
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
   if (url.pathname === "/admin/releves" && requete.method === "GET") return releves(requete, env, url.searchParams);
+  if (url.pathname === "/admin/courriel" && requete.method === "POST") {
+    return autorise(requete, env) ? envoyerCourriel(requete, env) : texte("refusé", 401);
+  }
   const entretien = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(oublier|rappels|rappels\/annuler)$/);
   if (entretien) return entretenir(requete, env, entretien[1], entretien[2], url);
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
@@ -438,4 +446,9 @@ async function secretsAtelier(requete, env) {
   }
 }
 
-export default { fetch: recevoir };
+/** Toutes les 5 minutes (triggers.crons) : l'évaluation des alertes. */
+export function declencher(_controle, env, ctx) {
+  ctx.waitUntil(evaluerAlertes(env, atelierDe(env)));
+}
+
+export default { fetch: recevoir, scheduled: declencher };
