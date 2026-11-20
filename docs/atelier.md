@@ -135,6 +135,18 @@ Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et
 
 **Le pays de chaque client** (20.11.2026), pour la carte du monde de la console : `PUT /clients/{id}/pays` (MEGGA) `{pays: "CH"}` ou `{pays: null}`, un code ISO à deux lettres. C'est un réglage de l'atelier (`megga_reglages`, clé `pays`), pas de la configuration : le changer ne crée aucune version et ne touche aucun conteneur. `GET /clients` et `GET /clients/{id}` le portent.
 
+**Les forfaits et les clients payants** (20.11.2026, décisions de Julien) : l'unité vendue est la conversation (une personne servie sur une journée UTC, les « personnes » du relevé), l'enveloppe vide se recharge seule sous un seuil, Stripe tiendra les paiements, le prix vise trois fois notre coût (`multiplicateur`, un repère, pas un prix). Routes MEGGA (`atelier/routes_forfaits.py`) :
+
+| Route | Effet |
+|---|---|
+| `GET /forfaits`, `PUT /forfaits` | le catalogue : devise, multiplicateur, forfaits (prix mensuel, conversations par mois, remise annuelle en %, paquet de recharge) ; un forfait encore pris ne se retire pas (`409`) |
+| `GET /abonnements` | chaque client abonné et son mois en cours : enveloppe (forfait plus recharges du mois), conversations, reste, proche de l'enveloppe vide (sous son seuil, sinon sous 10 %), revenu, coût, marge ; puis les totaux |
+| `PUT /clients/{id}/abonnement` | forfait, rythme (`mensuel`, `annuel`), statut (`essai`, `actif`, `retard`, `parti`), début (`AAAA-MM-JJ`), seuil de recharge |
+| `DELETE /clients/{id}/abonnement` | retire un abonnement saisi par erreur |
+| `POST /clients/{id}/recharges` | `{conversations, prix}` une recharge achetée hors Stripe |
+
+Le mois d'un abonnement court d'une date anniversaire à la suivante (le 31 tombe au dernier jour d'un mois plus court), même à l'année : un forfait annuel garde une enveloppe par mois, à son prix mensuel moins la remise. Seuls `actif` et `retard` encaissent ; une recharge compte dans le mois où elle est achetée. La marge n'est donnée que si le catalogue et les tarifs sont dans la même devise. Tant que Stripe n'est pas branché, rien ne se recharge seul : le seuil ne fait que signaler le client.
+
 Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
 
 ## Les installations hors Cloudflare (lot 6.3)
