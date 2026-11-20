@@ -165,6 +165,9 @@ appels:
   accepter: true
   qui: gestionnaires
   duree_max: 600
+  # Le +1 650 d'Alix, et le numéro de test de Meta (+1 555-141-7274) pour les essais ; un autre numéro relié par erreur à
+  # l'agent vocal est refusé.
+  numeros: ["1391058037432148", "1403253919537610"]
   agent: agent_5101m7v709c4fdnrj1grysk9pr93
   refus: "Bonjour, ici Alix, l'assistante de Greg. Je ne prends pas les appels sur ce numéro : écrivez-moi ici, je vous réponds
     vite. Hello, this is Alix, Greg's assistant: please write to me here on WhatsApp."

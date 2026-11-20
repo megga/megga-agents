@@ -98,8 +98,9 @@ class ReglagesDeLaGestion:
     async def rafraichir(self, forcer: bool = False) -> None:
         """`forcer` : relus même s'ils l'ont été il y a moins de trente secondes (au décrochage d'un appel, noyau/appels.py :
         Greg coupe les appels d'un clic, le suivant le sait)."""
-        if (not forcer and self.horloge() < self._prochain) or self._verrou.locked():
+        if not forcer and (self.horloge() < self._prochain or self._verrou.locked()):
             return
+        # Forcé, la relecture en cours (celle du démarrage) est attendue, puis refaite : sa réponse peut précéder le clic.
         async with self._verrou:
             self._prochain = self.horloge() + self.intervalle
             r = None

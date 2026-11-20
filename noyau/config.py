@@ -368,7 +368,10 @@ class Appels(Strict):
     accepter: bool = True
     # gestionnaires : les gens du client seulement ; tous : aussi les partenaires et les visiteurs (jamais un numéro bloqué).
     qui: Literal["gestionnaires", "tous"] = "gestionnaires"
-    duree_max: int = Field(default=600, ge=60, le=1800)
+    duree_max: int = Field(default=600, ge=60, le=600)  # dix minutes au plus (décision de Julien, 20.11.2026)
+    # Les numéros appelés permis (leur identifiant chez Meta) ; vide : tous. Un appel vers un autre numéro relié par erreur à
+    # l'agent vocal (Twilio, SIP, où l'appelant se falsifie) est refusé.
+    numeros: tuple[str, ...] = Field(default=(), max_length=5)
     # L'agent vocal d'ElevenLabs : une requête d'un autre agent est refusée.
     agent: str | None = Field(default=None, pattern=r"^agent_[a-z0-9]{10,40}$")
     # Ce que l'agent dit à un appel refusé, avant de raccrocher.
@@ -378,8 +381,15 @@ class Appels(Strict):
     @field_validator("refus")
     @classmethod
     def sans_artefacts(cls, v: str) -> str:
-        if re.search(r"[—–·]", v):
+        if re.search(r"[\u2014\u2013\u00b7]", v):
             raise ValueError("Pas de tiret long ni de point médian.")
+        return v
+
+    @field_validator("numeros")
+    @classmethod
+    def identifiants(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not re.fullmatch(r"\d{6,30}", n) for n in v):
+            raise ValueError("numeros : les identifiants des numéros chez Meta")
         return v
 
 

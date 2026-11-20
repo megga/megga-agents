@@ -77,7 +77,7 @@ def test_un_appel_de_greg_de_bout_en_bout(appel):
     lundi = (dt.datetime.now(ZoneInfo("Europe/Zurich")) + dt.timedelta(days=4)).replace(hour=9, minute=0).strftime("%Y-%m-%dT%H:%M")
     with TestClient(app) as t:
         def outil(nom, **args):
-            r = t.post(f"/appels/outils/{nom}", json={"appelant": "41790000001", "conversation": "conv_sim", **args}, headers=h)
+            r = t.post(f"/appels/outils/{nom}", json={"appelant": "41790000001", "numero": "1403253919537610", "conversation": "conv_sim", **args}, headers=h)
             return r.status_code, r.json()
 
         # Le décrochage.
@@ -102,7 +102,7 @@ def test_un_appel_de_greg_de_bout_en_bout(appel):
         # Ce qui reste à l'écrit n'existe pas au téléphone ; un autre numéro n'a aucun outil ; une erreur se dit simplement.
         assert outil("masquer_annonce", slug="cologny-villa-lac", masquer=True)[0] == 404
         assert outil("modifier_annonce", slug="cologny-villa-lac")[0] == 404
-        r = t.post("/appels/outils/chercher_biens", json={"appelant": INCONNU, "communes": ["Cologny"]}, headers=h).json()
+        r = t.post("/appels/outils/chercher_biens", json={"appelant": INCONNU, "numero": "1403253919537610", "communes": ["Cologny"]}, headers=h).json()
         assert "erreur" in r
         assert outil("voir_annonce", slug="inconnue")[1] == {"erreur": "la gestion du site refuse : annonce inconnue"}
         assert not any(m == "PUT" or m == "DELETE" for m, _, _ in site.appels)  # rien n'a changé dans la gestion
@@ -112,7 +112,7 @@ def test_un_appel_de_greg_de_bout_en_bout(appel):
         fin = {"type": "post_call_transcription", "data": {
             "agent_id": AGENT, "conversation_id": "conv_sim", "metadata": {"start_time_unix_secs": debut, "call_duration_secs": 251},
             "conversation_initiation_client_data": {"dynamic_variables": {"system__caller_id": "41790000001", "role": "gestionnaire",
-                                                                        "prenom": "Greg"}},
+                                                                        "prenom": "Greg", "system__called_number": "1403253919537610"}},
             "transcript": [
                 {"role": "agent", "message": "Salut Greg, c'est Alix.", "time_in_call_secs": 0},
                 {"role": "user", "message": "Qu'est-ce que j'ai à Cologny sous vingt millions ?", "time_in_call_secs": 3},
@@ -157,7 +157,7 @@ def test_un_numero_inconnu_est_refuse_au_decrochage_et_rien_ne_suit(appel):
         r = t.post("/appels/debut", json={"caller_id": INCONNU.lstrip("+"), "agent_id": AGENT}, headers={"authorization": f"Bearer {CLE}"})
         v = r.json()["dynamic_variables"]
         assert v["role"] == "refuse" and v["conversation_recente"] == "aucune" and v["rappels_du_jour"] == "aucun"
-        assert r.json()["conversation_config_override"]["conversation"]["max_duration_seconds"] == 20
+        assert r.json()["conversation_config_override"]["conversation"]["max_duration_seconds"] == 60
         fin = {"type": "post_call_transcription", "data": {
             "agent_id": AGENT, "conversation_id": "conv_refus", "metadata": {"start_time_unix_secs": time.time(), "call_duration_secs": 12},
             "conversation_initiation_client_data": {"dynamic_variables": {"system__caller_id": INCONNU.lstrip("+"), "role": "refuse"}},
