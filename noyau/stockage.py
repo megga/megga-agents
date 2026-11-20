@@ -1237,12 +1237,13 @@ class Journal:
             c.execute(insert(self._t).values(id=uuid.uuid4().hex, quand=quand or _t.time(), genre=genre[:30],
                                              quantite=quantite, detail=detail[:200]))
 
-    def totaux(self, depuis: float) -> dict[str, dict]:
+    def totaux(self, depuis: float, jusqu_a: float | None = None) -> dict[str, dict]:
         from sqlalchemy import func
 
         t = self._t
+        filtre = [t.c.quand >= depuis] + ([t.c.quand < jusqu_a] if jusqu_a is not None else [])
         with self._e.connect() as c:
-            lignes = c.execute(select(t.c.genre, func.count(), func.sum(t.c.quantite)).where(t.c.quand >= depuis).group_by(t.c.genre))
+            lignes = c.execute(select(t.c.genre, func.count(), func.sum(t.c.quantite)).where(*filtre).group_by(t.c.genre))
             return {g: {"nombre": n, "quantite": float(q or 0)} for g, n, q in lignes}
 
     def purger(self, avant: float) -> int:

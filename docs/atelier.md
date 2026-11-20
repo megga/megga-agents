@@ -100,6 +100,19 @@ D'où viennent les chiffres :
 
 **Le plafond du jour** : un visiteur, un partenaire ou une personne venue par API a au plus 100 tours de modèle par jour, et tous ensemble 2 000 par client (`noyau/garde.py`, `Plafond`) ; au-delà, une phrase polie, une fois, puis plus rien jusqu'au lendemain (429 par API), et l'alerte `plafond`. Les gestionnaires ne sont jamais arrêtés. Un tour appelle 25 outils au plus.
 
+**Le relevé chiffré** (20.11.2026) : la console de MEGGA suit tous les clients d'un coup, sans réveiller aucun conteneur et sans jamais voir une conversation.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /releves?jours=7` | MEGGA | chaque agent, jour par jour (UTC) : tours, tours par API, échecs, secours, personnes, jetons par modèle, totaux du journal, délais ; son coût de chaque jour, l'écart de version, son état au dernier relevé et `silencieux` (actif, sans relevé depuis 40 minutes) ; 92 jours au plus |
+
+D'où il vient :
+- le conteneur le calcule (`GET /interne/releve`, `noyau/suivi.py`, `releve`) : aujourd'hui et hier, d'après les tours d'Agno et le journal, plus les jours manqués depuis le dernier relevé rangé (deux semaines au plus ; le premier relevé reprend deux semaines d'historique) ; aucun texte, nom ni numéro, ni le détail technique du journal ;
+- à son alarme, au plus tous les quarts d'heure, l'objet du client à la porte le lit, le reconstruit champ par champ (`porte/src/releves.js`, `nettoyer` : seulement des nombres et des noms de modèle, de fournisseur, de genre ou de version permis ; un modèle au nom non permis garde ses jetons sous `inconnu`, que les coûts signalent sans tarif) et le range dans l'annuaire (tables `releves` et `etats`, migration `0004`), avec l'état du conteneur (démarré, genre et heure des pannes, sans leur message) ; 400 jours gardés ;
+- l'atelier les lit tous (`GET /admin/releves?jours=&apres=` de la porte, par pages de 50 clients) et ajoute ce que lui seul sait : l'entreprise, la version en service, les coûts aux tarifs de MEGGA.
+
+Un relevé en échec n'arrête pas les rappels et se retente au quart d'heure suivant. Il est gardé à part (`releve_echec` : depuis quand, combien d'essais, le dernier message technique), dans l'état que rend `GET /admin/clients`, jamais parmi les pannes du conteneur : il ne les chasse pas et ne se croit pas réparé quand le conteneur répond. Les installations hors Cloudflare n'y sont pas encore : leur suivi vient toujours de leur pilote.
+
 MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
 
 Les coûts reposent sur les prix d'achat de MEGGA : ils ne se montrent qu'à MEGGA, et un modèle sans tarif est signalé (`sans_tarif`) plutôt que compté à zéro sans le dire.
