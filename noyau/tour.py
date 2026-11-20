@@ -24,7 +24,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import accueil as accueils
-from . import phrases
+from . import flux, phrases
 from .api import DELAI_TOUR
 from .autour import Autour, _borner
 from .config import Config
@@ -456,9 +456,12 @@ class Conversations(Envois, Autour):
             return None
 
     async def _executer(self, personne: str, entendu: str, role: str = "public", images: list | None = None,
-                        brut: str | None = None) -> tuple[str, bool]:
+                        brut: str | None = None, sur_evenement=None) -> tuple[str, bool]:
         """Le tour du modèle (mémoire, outils) : (réponse, échec) ; l'excuse du noyau s'il échoue, jamais l'erreur. Une
-        réponse vide ou coupée : un dernier appel, sans outil (M1, M2)."""
+        réponse vide ou coupée : un dernier appel, sans outil (M1, M2).
+        `sur_evenement` : async f(genre, valeur), appelée au fil du premier appel (« texte » : un morceau brut du
+        modèle, « outil » : {outil, etat}) ; sans elle, le tour se fait d'un bloc, comme avant. Les derniers appels
+        (réponse vide, seconde passe, réponse coupée) ne passent pas par le flux : la réponse rendue fait foi."""
         self._entendus[personne] = brut if brut is not None else entendu
         _borner(self._entendus)
         self._roles.setdefault(personne, role)
@@ -467,7 +470,11 @@ class Conversations(Envois, Autour):
         try:
             session = await self._session(personne)
             options = {"images": images} if images else {}
-            sortie = await agent.arun(entendu, user_id=personne, session_id=session, **options)
+            if sur_evenement is None:
+                sortie = await agent.arun(entendu, user_id=personne, session_id=session, **options)
+            else:
+                sortie = await flux.suivre(agent.arun(entendu, user_id=personne, session_id=session, stream=True,
+                                                  stream_events=True, yield_run_output=True, **options), sur_evenement)
             if en_echec(sortie):
                 log.error("tour en échec (%s)", self.conf.id)
                 self.noter_journal("tour_echec", detail=str(getattr(sortie, "status", ""))[:60])
@@ -517,13 +524,19 @@ class Conversations(Envois, Autour):
         """Le dernier message de cette personne, tel qu'elle l'a écrit ou dit."""
         return self._entendus.get(personne, "")
 
-    async def repondre_api(self, personne: str, texte: str, role: str = "public") -> tuple[str, bool] | None:
+    async def repondre_api(self, personne: str, texte: str, role: str = "public", sur_evenement=None) -> tuple[str, bool] | None:
         """Un tour demandé par un logiciel (noyau/api.py) : la réponse est rendue, rien ne part sur WhatsApp.
 
         Pas de regroupement d'attente (le logiciel envoie un message entier), pas de rappels. Les tours d'une
         même personne passent l'un après l'autre. Rend (réponse, échec), ou None si le débit de la personne
         est dépassé : rien n'est alors noté, le logiciel renverra le même message.
+
+        Avec `sur_evenement` (async f(genre, valeur)), la réponse part aussi au fil de l'eau (noyau/flux.py) : les
+        morceaux de texte, masqués, et les outils. La réponse rendue à la fin reste celle qui fait foi. Au premier
+        message, avec l'accueil, le texte ne part qu'à la fin du tour, en entier : le modèle peut redire l'accueil. De
+        même pour un client qui a des remplacements (Config.remplacements) : aucun nom ne part avant son filtre.
         """
+        relais = flux.Relais(sur_evenement) if sur_evenement else None
         lance = asyncio.current_task()
         if lance is not None:  # un arrêt en douceur attend aussi les tours par API
             self.taches.add(lance)
@@ -537,13 +550,21 @@ class Conversations(Envois, Autour):
                 await self._sans_echec(self._noter(personne, time.time()))
                 self._noter_fil(personne, "recu", "texte", texte)
                 bienvenue = self._bienvenue(role, texte) if premier else ""
+                # Le texte du flux attend la conclusion quand la réponse n'est filtrée qu'en entier : l'accueil (le modèle
+                # peut le redire, apres_accueil) ou les remplacements du client (un motif peut tenir sur deux morceaux).
+                retenu = relais is not None and bool(bienvenue or self.remplaceur)
                 if bienvenue and accueils.est_salutation(texte):
                     brute, echec = bienvenue, False
                 else:
+                    suivi = relais
+                    if retenu:  # le texte attend la conclusion (plus bas) ; les outils partent pendant le tour
+                        async def suivi(genre, valeur):
+                            if genre != "texte":
+                                await relais(genre, valeur)
                     try:
                         brute, echec = await asyncio.wait_for(
-                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role, brut=texte),
-                            self.delai_api)
+                            self._executer(personne, f"{texte}\n{accueils.APRES_ACCUEIL}" if bienvenue else texte, role, brut=texte,
+                                           sur_evenement=suivi), self.delai_api)
                     except asyncio.TimeoutError:
                         log.error("tour par API trop long (%s), abandonné après %.0f s", self.conf.id, self.delai_api)
                         self.noter_journal("tour_echec", detail="delai")
@@ -551,6 +572,12 @@ class Conversations(Envois, Autour):
                     if bienvenue and not echec:  # l'accueil, puis la réponse, sans rien qui le redise
                         brute = "\n\n".join(p for p in (bienvenue, accueils.apres_accueil(brute, bienvenue, self._redit(role))) if p)
                 reponse = self.remplaceur.texte(nettoyer(masquer_secrets(brute)))
+                if relais is not None:
+                    # Le texte retenu (accueil ou filtre de noms) part en entier, filtré, une fois le tour réussi :
+                    # jamais l'accueil deux fois, ni affiché puis remplacé par l'excuse, ni un nom avant son filtre.
+                    if retenu and not echec:
+                        await relais("texte", self.remplaceur.texte(brute))
+                    await relais.finir()
                 self._noter_fil(personne, "envoye", "texte", reponse)
                 return reponse, echec
         finally:

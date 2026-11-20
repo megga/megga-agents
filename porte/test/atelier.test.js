@@ -168,7 +168,19 @@ function ctx({ running = false, secrets = {} } = {}) {
     setInactivityTimeout: async () => {},
     getTcpPort: () => ({ fetch: async () => new Response("ok") }),
   };
-  return { ctx: { id: { name: "megga" }, blockConcurrencyWhile: (f) => f(), storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) }, container: c }, journal, stock };
+  const attendus = [];
+  return {
+    ctx: {
+      id: { name: "megga" },
+      blockConcurrencyWhile: (f) => f(),
+      waitUntil: (p) => attendus.push(p),
+      storage: { get: async (k) => stock.get(k), put: async (k, v) => stock.set(k, v) },
+      container: c,
+    },
+    journal,
+    stock,
+    attendus,
+  };
 }
 
 test("l'atelier redémarre tout de suite, seulement s'il tourne", async () => {
@@ -317,6 +329,53 @@ test("l'atelier ne s'arrête qu'entre deux requêtes : une mise en service en co
   assert.deepEqual(await r.json(), { version_en_service: 2 }); // la réponse arrive entière
   assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
   assert.equal(await atelier.redemarrer(), false); // arrêté : plus rien à faire
+});
+
+test("un essai au fil de l'eau passe morceau par morceau, et l'atelier ne redémarre qu'à la fin du flux", async () => {
+  const a = ctx({ running: true });
+  let pousser;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () => new Response(new ReadableStream({ start: (c) => (pousser = c) }), { headers: { "content-type": "text/event-stream; charset=utf-8" } }),
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const r = await atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/essai", { method: "POST", headers: { accept: "text/event-stream" } }));
+  assert.equal(r.headers.get("content-type"), "text/event-stream; charset=utf-8");
+  const lecteur = r.body.getReader();
+  const morceau = new TextEncoder().encode('event: texte\ndata: {"texte": "Bon"}\n\n');
+  pousser.enqueue(morceau);
+  assert.deepEqual((await lecteur.read()).value, morceau); // rendu avant la fin de l'essai
+  assert.equal(await atelier.redemarrer(), true); // demandé pendant l'essai
+  assert.deepEqual(a.journal, []); // rien n'est coupé
+  pousser.close();
+  assert.equal((await lecteur.read()).done, true);
+  assert.deepEqual(a.journal, [["destroy"]]); // puis l'atelier repart
+});
+
+test("une console qui raccroche pendant un essai en flux : l'essai va au bout, puis l'atelier redémarre", async () => {
+  const a = ctx({ running: true });
+  let pousser;
+  let annule = false;
+  a.ctx.container.getTcpPort = () => ({
+    fetch: async () =>
+      new Response(new ReadableStream({ start: (c) => (pousser = c), cancel: () => (annule = true) }), { headers: { "content-type": "text/event-stream" } }),
+  });
+  const atelier = new Atelier(a.ctx, {});
+  atelier.demarrer = async () => {};
+  const r = await atelier.fetch(new Request("http://atelier/atelier/clients/x/versions/2/essai", { method: "POST" }));
+  assert.equal(await atelier.redemarrer(), true);
+  await r.body.cancel();
+  // L'essai n'est pas coupé : le flux du conteneur est encore lu, la requête toujours en cours
+  pousser.enqueue(new TextEncoder().encode('event: texte\ndata: {"texte": "Bon"}\n\n'));
+  await new Promise((fin) => setTimeout(fin, 0));
+  assert.equal(annule, false);
+  assert.deepEqual(a.journal, []);
+  assert.equal(atelier.enCours, 1);
+  // L'essai fini (versions.noter_essai écrit), l'atelier est libéré et repart
+  pousser.close();
+  await Promise.all(a.attendus);
+  assert.deepEqual(a.journal, [["destroy"]]);
+  assert.equal(atelier.enCours, 0);
 });
 
 test("le commit déployé (wrangler deploy --tag) est remis au conteneur", async () => {

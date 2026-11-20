@@ -63,10 +63,11 @@ import time
 from collections import OrderedDict
 
 from fastapi import FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse  # noqa: F401 (StreamingResponse : le type rendu par en_flux)
 
 from . import api as entree_api
 from . import config as configuration
+from . import flux
 from . import licence as licences
 from . import pilotage as pilotages
 from . import stockage
@@ -583,6 +584,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             attente = conversations.plafond.attente()
             return erreur(429, "plafond du jour atteint", attente=attente, entetes={"retry-after": str(attente)})
         debit_cles.permis(cle)
+        if flux.demande(requete.headers.get("accept")):
+            return en_flux(qui, texte.strip(), role, cle)
         tour = await conversations.repondre_api(qui, texte.strip(), role)
         if tour is None:  # une autre requête de la même personne est passée entre-temps : la place de la clé est rendue
             debit_cles.rendre(cle)
@@ -591,6 +594,31 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         if echec:  # le tour a échoué : le logiciel peut réessayer, ou montrer l'excuse
             return erreur(503, "l'agent n'a pas pu répondre", reponse=reponse)
         return {"reponse": reponse}
+
+    def en_flux(qui: str, texte: str, role: str, cle: dict) -> StreamingResponse:
+        """Le même tour, au fil de l'eau (noyau/flux.py). Les refus d'avant le tour restent des réponses JSON ; une
+        fois le flux ouvert, un refus ou un échec arrive en événement « erreur ». Le tour va au bout même si le
+        logiciel raccroche (lancé parmi les tâches que l'arrêt en douceur attend) : mémoire, fil et journal restent justes."""
+
+        async def tour(sur_evenement):
+            try:
+                return await conversations.repondre_api(qui, texte, role, sur_evenement=sur_evenement)
+            except Exception as e:  # jamais l'erreur telle quelle
+                log.error("tour par API en flux en échec (%s) : %s", conf.id, str(e)[:200])
+                return EXCUSE, True
+
+        def conclure(fini) -> str:
+            if fini is None:  # une autre requête de la même personne est passée entre-temps
+                debit_cles.rendre(cle)
+                conversations.noter_journal("api_debit", detail="personne")
+                return flux.evenement("erreur", {"erreur": "trop de messages pour cette personne", "statut": 429,
+                                                 "attente": conversations.debit.attente(qui)})
+            reponse, echec = fini
+            if echec:
+                return flux.evenement("erreur", {"erreur": "l'agent n'a pas pu répondre", "statut": 503, "reponse": reponse})
+            return flux.evenement("fin", {"reponse": reponse})
+
+        return flux.en_reponse(flux.diffuser(tour, conclure, conversations._lancer))
 
     async def site(requete: Request):
         """Une requête du site du client (lot 7.4) : sa clé, puis son corps JSON borné ; sinon la réponse de refus."""

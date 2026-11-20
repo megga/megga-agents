@@ -20,6 +20,7 @@ const VIDER_MS = 120 * 1000;
 const CACHE_SUIVI_MS = 5 * 60 * 1000;
 const CACHE_CONVERSATIONS_MS = 60 * 1000;
 const ALERTES_MAX = 10;
+const FLUX = /\btext\/event-stream\b/; // une réponse au fil de l'eau (noyau/flux.py)
 // Une alarme en échec (base ou conteneur indisponible) se repose elle-même, de plus en plus tard, sans jamais
 // s'arrêter : Cloudflare ne la retente que six fois, puis l'oublie (relecture du 16.11.2026, I8).
 const REESSAIS_ALARME_MS = [60_000, 120_000, 300_000, 600_000, 900_000];
@@ -455,16 +456,71 @@ export class Atelier extends Conteneur {
   /** L'atelier ne s'arrête qu'entre deux requêtes : une mise en service ou un essai en cours va au bout. */
   async fetch(requete) {
     this.enCours = (this.enCours ?? 0) + 1;
+    let r;
     try {
-      const r = await super.fetch(requete);
+      r = await super.fetch(requete);
+    } catch (e) {
+      await this.finRequete();
+      throw e;
+    }
+    if (FLUX.test(r.headers.get("content-type") ?? "") && r.body) return this.enFlux(r);
+    try {
       // Lue en entier avant de rendre la main : un redémarrage ne coupe pas une réponse en route.
       return new Response(await r.arrayBuffer(), r);
     } finally {
-      this.enCours -= 1;
-      if (this.enCours === 0 && this.aRedemarrer) {
-        this.aRedemarrer = false;
-        await this.ctx.container?.destroy().catch(() => {});
-      }
+      await this.finRequete();
+    }
+  }
+
+  /**
+   * Un essai au fil de l'eau : rendu morceau par morceau, et compté en cours jusqu'à la fin du flux, pour qu'un
+   * redémarrage ne le coupe pas non plus. Si la console raccroche, le flux du conteneur est lu jusqu'au bout en
+   * arrière-plan : l'essai va au bout (et compte), la requête n'est décomptée qu'à sa fin.
+   */
+  enFlux(r) {
+    const lecteur = r.body.getReader();
+    const ctx = this.ctx;
+    let fini = false;
+    let annule = false;
+    const finir = async () => {
+      if (fini) return;
+      fini = true;
+      await this.finRequete();
+    };
+    const corps = new ReadableStream({
+      async pull(c) {
+        try {
+          const { done, value } = await lecteur.read();
+          if (done) {
+            if (!annule) c.close();
+            await finir();
+          } else if (!annule) c.enqueue(value);
+        } catch (e) {
+          if (!annule) c.error(e);
+          await finir();
+        }
+      },
+      cancel() {
+        annule = true;
+        const vider = (async () => {
+          try {
+            while (!(await lecteur.read()).done);
+          } catch {
+            // le conteneur a coupé : l'essai est fini de toute façon
+          }
+          await finir();
+        })();
+        ctx.waitUntil?.(vider);
+      },
+    });
+    return new Response(corps, { status: r.status, headers: r.headers });
+  }
+
+  async finRequete() {
+    this.enCours -= 1;
+    if (this.enCours === 0 && this.aRedemarrer) {
+      this.aRedemarrer = false;
+      await this.ctx.container?.destroy().catch(() => {});
     }
   }
 

@@ -54,7 +54,46 @@ Toujours en JSON : `{"erreur": "..."}`.
 - Par clé : 30 messages par minute par défaut ; MEGGA peut en régler davantage, jusqu'à 600.
 - Par personne : 20 messages par 10 minutes, comme sur WhatsApp.
 - Les messages d'une même personne passent l'un après l'autre : ne pas en envoyer un second avant la réponse au premier.
-- Pas encore : les vocaux, la réponse au fil de l'eau, les rappels (l'agent dit qu'il ne peut pas en programmer ici).
+- Pas encore : les vocaux, les rappels (l'agent dit qu'il ne peut pas en programmer ici).
+
+## La réponse au fil de l'eau
+
+Avec `Accept: text/event-stream`, la réponse arrive par morceaux (Server-Sent Events) au lieu d'un bloc : de quoi afficher le texte pendant qu'il s'écrit, et ce que l'agent est en train de faire.
+
+```bash
+curl -N https://api.megga.ai/api/<client>/messages \
+  -H "Authorization: Bearer $MEGGA_CLE" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"personne": "patient-42", "texte": "Quels créneaux mardi ?"}'
+```
+
+```
+event: outil
+data: {"outil": "chercher_creneaux", "etat": "debut"}
+
+event: outil
+data: {"outil": "chercher_creneaux", "etat": "fin"}
+
+event: texte
+data: {"texte": "Mardi, j'ai "}
+
+event: texte
+data: {"texte": "9 h et 14 h 30. "}
+
+event: fin
+data: {"reponse": "Mardi, j'ai 9 h et 14 h 30. Lequel vous convient ?"}
+```
+
+- `texte` : un morceau à ajouter à ce qui est affiché. Les clés et jetons y sont masqués comme dans la réponse entière ; un morceau peut tarder le temps qu'un mot soit complet.
+  Au premier message d'une conversation, quand l'agent se présente, le texte arrive d'un coup à la fin du tour (la présentation, puis la réponse) ; les `outil`, eux, arrivent pendant le tour.
+  De même pour un client qui a des remplacements (un nom qui ne doit jamais sortir, `remplacements` dans sa configuration) : son texte arrive d'un coup, déjà filtré.
+- `outil` : l'agent commence (`debut`) ou finit (`fin`) une action, par son nom ; jamais ses arguments.
+- `fin` : la réponse complète, mise en forme comme sur WhatsApp. **C'est elle qui fait foi** : remplacer par elle ce qui a été affiché.
+- `erreur` : `{"erreur", "statut", ...}`, avec `reponse` (l'excuse à montrer) pour un échec du tour (`statut` 503), ou `attente` en secondes pour un message de trop (`statut` 429).
+- Une ligne qui commence par `:` arrive toutes les 15 secondes quand l'agent travaille sans rien dire : elle garde la connexion ouverte, à ignorer.
+
+Les refus d'avant le tour (clé, corps, débit) restent des réponses JSON avec leur statut, comme ci-dessus. Le tour va au bout même si la connexion est coupée : la mémoire et le fil restent justes. Comme pour l'autre forme, appeler depuis un serveur, jamais depuis un navigateur.
 
 ## Les données
 
