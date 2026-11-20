@@ -205,6 +205,31 @@ class PorteEssai:
             return {"personne": personne, "messages": fils(ident, maintenant).get(personne, [])[-limite:]}
         raise PorteErreur(404, "introuvable")
 
+    async def releves(self, jours):
+        """Le relevé chiffré de l'annuaire (porte/src/releves.js, lireReleves) : un jour de PAR_JOUR par jour de la période,
+        les échecs de son jour ; un conteneur injoignable n'a jamais rangé de relevé (silencieux), une panne qui dure se voit."""
+        maintenant = time.time()
+        debut = int(maintenant // JOUR) * JOUR
+        clients = []
+        for c, v in self.annuaire.items():
+            if c not in PAR_JOUR:
+                clients.append({"id": c, "zone": "europe", "actif": 1, "version": v, "etat": None, "releve_le": None, "jours": {}})
+                continue
+            par_jour = {}
+            for k in range(jours):
+                d = debut - (jours - 1 - k) * JOUR
+                a = activite(c, maintenant - JOUR, maintenant)
+                a["tours_en_echec"] = sum(1 for e in echecs(c, maintenant) if e["genre"] == "tour_echec" and d <= e["quand"] < d + JOUR)
+                a["delais"] = {"lecture": {"nombre": a["tours"], "moyenne": 2.0}, "reponse": {"nombre": a["tours"], "moyenne": 7.5}, "lentes": 0}
+                par_jour[time.strftime("%Y-%m-%d", time.gmtime(d))] = {k2: a[k2] for k2 in
+                    ("tours", "tours_api", "tours_en_echec", "secours", "personnes", "modeles", "journal", "delais")}
+            etat = conteneur(c, maintenant)
+            en_cours = [{"quoi": p["quoi"], "quand": p["quand"]} for p in etat["alertes"] if not p["resolue"]]
+            clients.append({"id": c, "zone": "europe", "actif": 1, "version": v, "releve_le": (maintenant - 300) * 1000,
+                            "etat": {"demarre": etat["demarre"], "pannes_en_cours": en_cours}, "jours": par_jour})
+        return {"depuis": time.strftime("%Y-%m-%d", time.gmtime(debut - (jours - 1) * JOUR)), "jours": jours, "clients": clients,
+                "suivant": None}
+
     async def cles(self, ident, methode="GET", chemin="", corps=None):
         liste = self.gardees.setdefault(ident, [])
         if methode == "POST":

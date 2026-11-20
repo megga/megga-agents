@@ -221,6 +221,17 @@ export const TA = {
   aSurveiller: "À surveiller",
   activiteParClient: "Activité par client",
   console: "Console",
+  // La santé d'après le relevé chiffré (lib/admin/releves.ts)
+  sante: "Santé",
+  santes: { silencieux: "Silencieux", panne: "En panne", ecart: "Écart de version", soucis: "Des soucis", ok: "En bonne santé",
+    installation: "Installation, suivie à part" },
+  personnesParJour: "Personnes par jour",
+  clientsIllisibles: "La liste des clients ne répond pas : les installations et les clients sans relevé manquent ici.",
+  reponseMoyenne: "Réponse",
+  secondes: (n: number) => `${NOMBRE.format(n)} s`,
+  toursParJour: "Tours par jour",
+  coutParJour: (devise: string) => `Coût par jour en ${devise}`,
+  videSante: "Aucun client en service.",
 
   // Les gestes
   nouveauClient: "Nouveau client",
@@ -589,6 +600,7 @@ export const TA = {
     envoi_refuse: "Envoi refusé par Meta",
     message_ancien: "Message reçu trop tard",
     plafond: "Plafond du jour atteint",
+    reponse_lente: "Réponse lente",
     conteneur_demarrage: "Panne au démarrage du conteneur",
     conteneur_transmission: "Panne de transmission au conteneur",
     conteneur_rappels: "Panne des rappels du conteneur",

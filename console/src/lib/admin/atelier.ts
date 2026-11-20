@@ -1,6 +1,7 @@
 import "server-only";
 import { Refus } from "@/lib/agents";
 import { estChamp, type ChampErreur } from "./champs";
+import type { Releves } from "./releves";
 import { TA } from "./textes";
 
 // Le client de l'atelier, côté serveur seulement : il détient le jeton de MEGGA, que le navigateur ne voit jamais.
@@ -206,6 +207,7 @@ export const atelier = {
   enregistrerInstallation: (id: string, corps: Corps) => ecrire<{ client: string; cle: string }>(`${c(id)}/installation`, "PUT", corps),
   revoquerInstallation: (id: string) => ecrire<{ client: string; revoquee: boolean }>(`${c(id)}/installation`, "DELETE"),
   proposerImage: (id: string, corps: Corps) => ecrire<Corps>(`${c(id)}/installation/image`, "POST", corps),
+  releves: (jours: Jours) => lire<Releves>(`/releves?jours=${jours}`),
   tarifs: () => lire<Tarifs>("/tarifs"),
   reglerTarifs: (corps: Corps) => ecrire<Tarifs>("/tarifs", "PUT", corps),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
@@ -220,5 +222,5 @@ export function ouRefus<T>(lecture: Promise<T>): Promise<T | RefusChamps> {
   });
 }
 
-/** Ce que le suivi lit (suivi.ts, lireTout) : remplaçable dans les essais. */
+/** Ce que le suivi lit (suivi.ts, lireSuivis et lireAlertes) : remplaçable dans les essais. */
 export type Lecteur = Pick<typeof atelier, "clients" | "suivi" | "alertes">;

@@ -86,7 +86,7 @@ Ce que la console montrera de chaque agent. Rien n'est copié hors du client : l
 
 | Route | Rôle | Effet |
 |---|---|---|
-| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours (dont `tours_api`, venus d'un logiciel), tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente, refus de débit par API (`api_debit` du journal) ; **coûts pour MEGGA seulement** |
+| `GET /clients/{id}/suivi?jours=7` | tous | état (version en service, annuaire, conteneur), activité de la période : tours (dont `tours_api`, venus d'un logiciel), tours en échec, recours au secours, personnes, jetons par modèle, voix et vocaux, rappels en attente, refus de débit par API (`api_debit` du journal), `delais` (temps moyen jusqu'aux coches bleues et jusqu'à la réponse, en secondes depuis l'envoi du message, et le nombre de réponses lentes : plus de 30 s pour lire, 120 s pour répondre, notées `reponse_lente` aux alertes) ; **coûts pour MEGGA seulement** |
 | `GET /clients/{id}/conversations` | tous | les personnes qui ont écrit, la plus récente d'abord |
 | `GET /clients/{id}/conversations/{personne}` | tous | (un numéro, ou `api:<logiciel>:<identifiant>`) ses derniers messages, tels qu'elle les a vécus : reçus (texte, vocal transcrit) et envoyés (réponses, vocaux, rappels, messages du noyau), clés et jetons masqués |
 | `GET /clients/{id}/alertes?jours=7` | tous | tours, envois, vocaux, voix ou rappels en échec ; envois refusés après coup par Meta (`envoi_refuse`, son code d'erreur) ; messages reçus trop tard pour une réponse (`message_ancien`) ; pannes du conteneur, avec l'heure où elles ont été résolues ; écart avec l'annuaire ; porte ou conteneur injoignable |
@@ -99,6 +99,19 @@ D'où viennent les chiffres :
 - les pannes d'un conteneur (démarrage, transmission, rappels) : les dix dernières, gardées par son objet à la porte, marquées résolues quand il répond de nouveau. Une alarme en échec se repose elle-même (1, 2, 5, 10, puis 15 minutes) au lieu de s'arrêter ; un webhook que le conteneur n'a pas reçu est gardé par son objet (un jour, 200 au plus) et rejoué quand il répond, lu alors jusqu'à 24 heures après son envoi. Les simples accusés de Meta (envoyé, remis, lu) ne réveillent plus le conteneur.
 
 **Le plafond du jour** : un visiteur, un partenaire ou une personne venue par API a au plus 100 tours de modèle par jour, et tous ensemble 2 000 par client (`noyau/garde.py`, `Plafond`) ; au-delà, une phrase polie, une fois, puis plus rien jusqu'au lendemain (429 par API), et l'alerte `plafond`. Les gestionnaires ne sont jamais arrêtés. Un tour appelle 25 outils au plus.
+
+**Le relevé chiffré** (20.11.2026) : la console de MEGGA suit tous les clients d'un coup, sans réveiller aucun conteneur et sans jamais voir une conversation.
+
+| Route | Rôle | Effet |
+|---|---|---|
+| `GET /releves?jours=7` | MEGGA | chaque agent, jour par jour (UTC) : tours, tours par API, échecs, secours, personnes, jetons par modèle, totaux du journal, délais ; son coût de chaque jour, l'écart de version, son état au dernier relevé et `silencieux` (actif, sans relevé depuis 40 minutes) ; 92 jours au plus |
+
+D'où il vient :
+- le conteneur le calcule (`GET /interne/releve`, `noyau/suivi.py`, `releve`) : aujourd'hui et hier, d'après les tours d'Agno et le journal, plus les jours manqués depuis le dernier relevé rangé (deux semaines au plus ; le premier relevé reprend deux semaines d'historique) ; aucun texte, nom ni numéro, ni le détail technique du journal ;
+- à son alarme, au plus tous les quarts d'heure, l'objet du client à la porte le lit, le reconstruit champ par champ (`porte/src/releves.js`, `nettoyer` : seulement des nombres et des noms de modèle, de fournisseur, de genre ou de version permis ; un modèle au nom non permis garde ses jetons sous `inconnu`, que les coûts signalent sans tarif) et le range dans l'annuaire (tables `releves` et `etats`, migration `0004`), avec l'état du conteneur (démarré, genre et heure des pannes, sans leur message) ; 400 jours gardés ;
+- l'atelier les lit tous (`GET /admin/releves?jours=&apres=` de la porte, par pages de 50 clients) et ajoute ce que lui seul sait : l'entreprise, la version en service, les coûts aux tarifs de MEGGA.
+
+Un relevé en échec n'arrête pas les rappels et se retente au quart d'heure suivant. Il est gardé à part (`releve_echec` : depuis quand, combien d'essais, le dernier message technique), dans l'état que rend `GET /admin/clients`, jamais parmi les pannes du conteneur : il ne les chasse pas et ne se croit pas réparé quand le conteneur répond. Les installations hors Cloudflare n'y sont pas encore : leur suivi vient toujours de leur pilote.
 
 MEGGA lit les conversations d'un client comme le client lui-même, pour l'aider et reprendre la main (décision de Julien, 15.11.2026).
 

@@ -1,18 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { RefusChamps, type Alerte, type ClientAtelier, type Jours, type Lecteur, type Suivi } from "@/lib/admin/atelier";
 import {
-  agreger,
-  classerASurveiller,
   estEnCours,
   etatClient,
   GENRES_CONNUS,
   GENRES_DE_L_INSTANT,
-  gravite,
   horsCloudflare,
   joursDe,
   lireAlertes,
   lireSuivis,
-  lireTout,
   modelesSansTarif,
   sansCouts,
   type LectureClient,
@@ -100,16 +96,6 @@ describe("les soucis", () => {
     for (const g of GENRES_DE_L_INSTANT) expect(GENRES_CONNUS, g).toContain(g);
   });
 
-  it("un souci en cours pèse plus qu'un fait passé ; le plus grave d'abord", () => {
-    const passe = { client: "x", genre: "tour_echec", enCours: false, quand: 1 };
-    const enCours = { client: "x", genre: "ecart", enCours: true, quand: 1 };
-    expect(gravite(enCours)).toBeGreaterThan(gravite(passe));
-    expect(classerASurveiller([{ client: "b", soucis: [passe] }, { client: "a", soucis: [enCours] }, { client: "c", soucis: [passe, passe] }])
-      .map((l) => l.client)).toEqual(["a", "c", "b"]);
-    expect(classerASurveiller([{ client: "z", soucis: [] }, { client: "b", soucis: [passe] }, { client: "a", soucis: [passe] }])
-      .map((l) => l.client)).toEqual(["a", "b"]);
-  });
-
   it("chaque genre connu se dit en clair ; un genre inconnu, avec son nom", () => {
     for (const g of GENRES_CONNUS) expect(TA.genres[g], g).toBeTruthy();
     expect(texteGenre("tour_echec")).toBe(TA.genres.tour_echec);
@@ -192,60 +178,17 @@ describe("les coûts", () => {
 });
 
 describe("la lecture de tous les clients", () => {
-  it("un membre limité : l'atelier n'est jamais lu pour un autre client, et rien n'en est compté", async () => {
-    const limite = acces({ droits: ["clients.voir", "couts.voir"], perimetre: ["a1"] });
-    const { l, appels } = lecteur(["a1", "b2"]);
-    const { lectures, porte } = await lireTout(limite, 7, l);
-    expect(appels.sort()).toEqual(["alertes a1", "suivi a1"]);
-    expect([lectures.map((x) => x.client.id), porte]).toEqual([["a1"], true]);
-    const v = agreger(lectures, limite);
-    expect([v.tuiles.tours, v.tuiles.personnes, v.tuiles.enService, v.tuiles.cout?.total]).toEqual([10, 3, 1, 1.5]);
-    expect(v.activite.map((x) => x.client)).toEqual(["a1"]);
-    expect(v.aSurveiller.map((x) => x.client)).toEqual(["a1"]);
-  });
 
   it("jamais plus de 4 lectures en même temps", async () => {
     const ids = Array.from({ length: 10 }, (_, i) => `c${i}`);
     const { l, appels, max } = lecteur(ids);
-    const { lectures } = await lireTout(tous, 30, l);
+    const { lectures } = await lireSuivis(tous, 30, l);
     expect(lectures.map((x) => x.client.id)).toEqual(ids);
-    expect(appels).toHaveLength(20);
+    expect(appels).toHaveLength(10);
     expect(max()).toBe(4);
     const deux = lecteur(ids);
-    await lireTout(tous, 30, deux.l, 2);
+    await lireSuivis(tous, 30, deux.l, 2);
     expect(deux.max()).toBe(2);
-  });
-
-  it("un client dont le suivi ne répond pas : injoignable, mais ses alertes sont lues et ses soucis comptés", async () => {
-    const { l, appels } = lecteur(["a1", "b2", "c3"], { echec: "b2" });
-    const { lectures } = await lireTout(tous, 7, l);
-    const b2 = lectures.find((x) => x.client.id === "b2")!;
-    expect([b2.erreur, b2.suivi, b2.alertes?.map((x) => x.genre)]).toEqual([TA.atelierLent, undefined,
-      ["tour_echec", "conteneur_transmission", "conteneur_injoignable"]]);
-    expect(appels.filter((x) => x.endsWith("b2"))).toEqual(["suivi b2", "alertes b2"]); // l'un après l'autre
-    const v = agreger(lectures, tous);
-    expect(v.injoignables).toEqual(["b2"]);
-    expect(v.activite.map((x) => x.client)).toEqual(["a1", "c3"]);
-    expect([v.tuiles.tours, v.tuiles.enService, v.tuiles.soucisEnCours]).toEqual([20, 3, 4]);
-    expect(v.aSurveiller.map((x) => x.client)).toEqual(["b2", "a1", "c3"]); // le plus en danger en tête
-  });
-
-  it("un client muet (ni suivi ni alertes) : injoignable, sans soucis inventés", async () => {
-    const { l } = lecteur(["a1", "b2"], { muet: "b2" });
-    const { lectures } = await lireTout(tous, 7, l);
-    expect(lectures[1]).toEqual({ client: client("b2"), erreur: TA.atelierLent });
-    const v = agreger(lectures, tous);
-    expect([v.injoignables, v.aSurveiller.map((x) => x.client), v.tuiles.soucisEnCours]).toEqual([["b2"], ["a1"], 1]);
-  });
-
-  it("un client jamais mis en service n'est pas lu : ni panne, ni injoignable, ni activité", async () => {
-    const { l, appels } = lecteur(["a1", "j1"], { jamais: ["j1"] });
-    const { lectures } = await lireTout(tous, 7, l);
-    expect(appels.some((x) => x.endsWith("j1"))).toBe(false);
-    expect(lectures[1]).toEqual({ client: client("j1", { version_en_service: null }) });
-    const v = agreger(lectures, tous);
-    expect([v.injoignables, v.aSurveiller.map((x) => x.client), v.activite.map((x) => x.client), v.tuiles.enService])
-      .toEqual([[], ["a1"], ["a1"], 1]);
   });
 
   it("l'écran Alertes ne lit que les alertes, des seuls clients en service", async () => {
@@ -260,33 +203,6 @@ describe("la lecture de tous les clients", () => {
     expect(seul.appels).toEqual(["alertes a1"]);
   });
 
-  it("les coûts : retirés sans couts.voir ; avec, le total des clients lus, la devise, les modèles sans tarif", async () => {
-    const { l } = lecteur(["a1", "b2"], { sansTarif: { a1: ["voix", "deepseek-v4-pro"], b2: ["deepseek-v4-pro", "ecoute"] } });
-    const sans = agreger((await lireTout(sansCout, 7, l)).lectures, sansCout);
-    expect("cout" in sans.tuiles).toBe(false);
-    expect(sans.activite.every((x) => !("cout" in x))).toBe(true);
-    const lues = (await lireTout(tous, 7, l)).lectures;
-    expect(lues.every((x) => x.suivi?.couts)).toBe(true);
-    const avec = agreger(lues, tous);
-    expect(avec.tuiles.cout).toEqual({ devise: "USD", total: 3, sansTarif: ["deepseek-v4-pro", "ecoute", "voix"] });
-    expect(avec.activite.map((x) => x.cout)).toEqual([1.5, 1.5]);
-    // Même si une lecture avait gardé ses coûts, agreger ne les montre pas sans le droit.
-    expect("cout" in agreger(lues, sansCout).tuiles).toBe(false);
-  });
-
-  it("les coûts illisibles ({ erreur }) : les clients nommés, avec couts.voir seulement", () => {
-    const lues: LectureClient[] = [
-      { client: client("a1"), suivi: suiviDe("a1", 7, 1.5) },
-      { client: client("b2"), suivi: { ...suiviDe("b2", 7), couts: { erreur: "activité illisible" } } },
-      { client: client("c3"), erreur: TA.atelierLent },
-    ];
-    expect(agreger(lues, tous).coutsIllisibles).toEqual(["b2"]);
-    expect(agreger(lues, tous).tuiles.cout?.total).toBe(1.5);
-    expect(agreger(lues, sansCout).coutsIllisibles).toEqual([]);
-    expect(agreger([lues[1]], tous)).toMatchObject({ coutsIllisibles: ["b2"] });
-    expect("cout" in agreger([lues[1]], tous).tuiles).toBe(false);
-  });
-
   it("la lecture des seuls suivis (l'écran Tarifs) : aucune alerte lue, le périmètre et les clients jamais mis en service tenus", async () => {
     const { l, appels, max } = lecteur(["a1", "b2", "j1", "c3", "d4", "e5"], { echec: "b2", jamais: ["j1"] });
     const { lectures, porte } = await lireSuivis(tous, 30, { clients: l.clients, suivi: l.suivi });
@@ -298,13 +214,5 @@ describe("la lecture de tous les clients", () => {
     const seul = lecteur(["a1", "b2"]);
     await lireSuivis(acces({ droits: ["clients.voir", "couts.voir"], perimetre: ["a1"] }), 7, seul.l);
     expect(seul.appels).toEqual(["suivi a1"]);
-  });
-
-  it("la vue d'ensemble : les soucis en cours comptés, à surveiller le plus grave d'abord", async () => {
-    const { l } = lecteur(["a1", "b2"]);
-    const v = agreger((await lireTout(tous, 7, l)).lectures, tous);
-    expect(v.tuiles.soucisEnCours).toBe(2);
-    expect(v.aSurveiller.map((x) => x.client)).toEqual(["a1", "b2"]);
-    expect(v.activite[0]).toMatchObject({ client: "a1", entreprise: "Entreprise a1", tours: 10, personnes: 3, echecs: 2, secours: 1 });
   });
 });

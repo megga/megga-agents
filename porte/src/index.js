@@ -21,6 +21,9 @@
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
+//   GET  /admin/releves[?jours=&apres=]
+//                                  le relevé chiffré des clients, jour par jour (92 jours au plus), par pages de 50,
+//                                  lu dans l'annuaire seul (jeton ADMIN_TOKEN) ; chaque objet l'y range à son alarme
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   POST /admin/clients/:id/oublier          {personne} sa conversation repart à neuf, le fil reste (jeton ADMIN_TOKEN)
@@ -37,6 +40,7 @@
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
 import { RefusAnnuaire, clientParId, clientParNumero, idValide, inscrire, lister } from "./annuaire.js";
 import { defiAbonnement, egal, numerosDe, signatureValide } from "./meta.js";
+import { JOURS_LUS_MAX, lireReleves } from "./releves.js";
 import { agentDe } from "./zones.js";
 
 export { AgentEtatsUnis, AgentEurope, Atelier } from "./agent.js";
@@ -79,6 +83,7 @@ export async function recevoir(requete, env, ctx) {
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
+  if (url.pathname === "/admin/releves" && requete.method === "GET") return releves(requete, env, url.searchParams);
   const entretien = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(oublier|rappels|rappels\/annuler)$/);
   if (entretien) return entretenir(requete, env, entretien[1], entretien[2], url);
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
@@ -318,6 +323,16 @@ async function clients(requete, env, seul) {
     tous.map((c) => (agentDe(env, c)?.etat() ?? Promise.resolve(null)).catch(() => null)),
   );
   return json({ clients: tous.map((c, i) => ({ ...c, conteneur: etats[i] })) });
+}
+
+/** Les relevés chiffrés de tous les clients (releves.js), lus dans l'annuaire seul : aucun conteneur n'est réveillé. */
+async function releves(requete, env, params) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const jours = params.get("jours") ?? "7";
+  const apres = params.get("apres") ?? "";
+  if (!/^[0-9]{1,2}$/.test(jours) || Number(jours) < 1 || Number(jours) > JOURS_LUS_MAX) return texte(`jours : de 1 à ${JOURS_LUS_MAX}`, 400);
+  if (apres && !idValide(apres)) return texte("apres : un identifiant de client", 400);
+  return json(await lireReleves(env.ANNUAIRE, Number(jours), apres));
 }
 
 /** Le suivi d'un client : la porte ne lit rien elle-même, elle transmet à son conteneur et rend la réponse. */
