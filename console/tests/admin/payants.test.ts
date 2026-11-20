@@ -19,9 +19,9 @@ const vue = (clients: LignePayant[], devise_couts = "USD"): VuePayants => ({
 describe("clients payants", () => {
   const lignes = [ligne("garage-essai", "actif", 290, 40), ligne("agence-essai", "retard", 290, 100, true), ligne("chalet-essai", "essai", 0, 5)];
 
-  it("les totaux : revenu, coût des seuls payants, marge, proches", () => {
+  it("les totaux : revenu, coût de tous les abonnés (essais compris), marge, proches", () => {
     const t = totauxDe(lignes, true);
-    expect(t).toMatchObject({ actif: 1, retard: 1, essai: 1, parti: 0, revenu: 580, cout: 140, marge: 440, proches: 1 });
+    expect(t).toMatchObject({ actif: 1, retard: 1, essai: 1, parti: 0, revenu: 580, cout: 145, marge: 435, proches: 1 });
     expect(totauxDe(lignes, false).marge).toBeNull();
   });
 

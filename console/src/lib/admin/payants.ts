@@ -6,13 +6,13 @@ import { TA } from "./textes";
 // membre ne voit pas et refait les totaux sur ceux qui restent. Fonctions pures.
 
 const STATUTS: readonly StatutAbonnement[] = ["essai", "actif", "retard", "parti"];
-const PAYANTS: ReadonlySet<StatutAbonnement> = new Set(["actif", "retard"]);
 const arrondi = (n: number) => Math.round(n * 100) / 100;
 
 export function totauxDe(lignes: readonly LignePayant[], margeConnue: boolean): TotauxPayants {
   const compte = Object.fromEntries(STATUTS.map((s) => [s, lignes.filter((l) => l.abonnement.statut === s).length])) as Record<StatutAbonnement, number>;
   const revenu = arrondi(lignes.reduce((n, l) => n + l.revenu, 0));
-  const cout = arrondi(lignes.filter((l) => PAYANTS.has(l.abonnement.statut)).reduce((n, l) => n + l.cout, 0));
+  // Le coût de tous les abonnés, essais compris, comme l'atelier : un essai coûte sans rapporter.
+  const cout = arrondi(lignes.reduce((n, l) => n + l.cout, 0));
   return { ...compte, revenu, cout, marge: margeConnue ? arrondi(revenu - cout) : null, proches: lignes.filter((l) => l.proche).length };
 }
 
