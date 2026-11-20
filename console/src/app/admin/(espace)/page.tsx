@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Barres } from "@/components/admin/barres";
+import { Carte } from "@/components/admin/carte";
 import { Bandeau } from "@/components/admin/erreurs";
 import { Pastille, type Etat } from "@/components/admin/pastille";
 import { ChoixPeriode } from "@/components/admin/periode";
@@ -9,14 +10,16 @@ import { peut, type Acces } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type Jours } from "@/lib/admin/atelier";
 import { totauxConsole } from "@/lib/admin/comptes";
 import { gardePage } from "@/lib/admin/garde";
+import { vueMonde } from "@/lib/admin/monde";
+import { nomPays } from "@/lib/admin/pays";
 import { agregerReleves, completer, type Sante } from "@/lib/admin/releves";
 import { joursDe, texteGenre } from "@/lib/admin/suivi";
 import { TA } from "@/lib/admin/textes";
 import { pret } from "@/lib/base";
 
 // La vue d'ensemble. Le bloc du moteur (clients.voir) : la période, les tuiles, les tours et le coût jour par jour, la santé de
-// chaque client, la pire d'abord ; tout vient du relevé chiffré (une lecture pour tous les clients, aucun conteneur réveillé,
-// jamais une conversation), borné au périmètre du membre. Avec couts.voir, le coût. Le bloc de la console (comptes.voir,
+// chaque client, la pire d'abord, puis les clients par pays sur la carte du monde ; tout vient du relevé chiffré (une lecture
+// pour tous les clients, aucun conteneur réveillé, jamais une conversation), borné au périmètre du membre. Avec couts.voir, le coût. Le bloc de la console (comptes.voir,
 // jamais un externe) : ses tuiles et ses barres, à la même période, mise alors en tête de page.
 
 const COULEUR: Record<Sante, Etat> = { silencieux: "accent", panne: "accent", ecart: "warn", soucis: "warn", ok: "ok", installation: "faint" };
@@ -32,6 +35,7 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
   const v = illisible ? agregerReleves(r, a) : completer(agregerReleves(r, a), r, liste.clients, a);
   const voitCouts = peut(a, "couts.voir");
   const cout = v.tuiles.cout;
+  const monde = illisible ? null : vueMonde(v.lignes, liste.clients);
   return (
     <>
       {periode && <ChoixPeriode jours={jours} chemin="/admin" />}
@@ -71,6 +75,24 @@ async function BlocMoteur({ jours, a, periode }: { jours: Jours; a: Acces; perio
           ...(voitCouts && cout ? [<span key="cout" className="whitespace-nowrap tabular-nums">{l.cout === undefined ? TA.inconnu : TA.montant(l.cout)}</span>] : []),
         ])}
       />
+      {monde && (
+        <>
+          <h2 className="m-0 text-[17px] font-extrabold">{TA.monde}</h2>
+          {monde.pays.length > 0 && <Carte pays={monde.pays} />}
+          <Tableau
+            colonnes={[TA.pays, TA.clients, TA.tours, TA.aSurveiller]}
+            vide={TA.videMonde}
+            replier={[2, 3]}
+            lignes={monde.pays.map((p) => [
+              <b key="pays" className="font-bold">{nomPays(p.code)}</b>,
+              <span key="clients" className="tabular-nums">{TA.nombre(p.clients)}</span>,
+              <span key="tours" className="tabular-nums">{TA.nombre(p.tours)}</span>,
+              <span key="surveiller" className={"tabular-nums " + (p.aSurveiller > 0 ? "font-semibold text-warn" : "")}>{TA.nombre(p.aSurveiller)}</span>,
+            ])}
+          />
+          {monde.pays.length > 0 && monde.sansPays > 0 && <p className="m-0 text-[13px] text-muted-ink">{TA.sansPays(monde.sansPays)}</p>}
+        </>
+      )}
       {v.outils.length > 0 && (
         <>
           <h2 className="m-0 text-[17px] font-extrabold">{TA.outils}</h2>

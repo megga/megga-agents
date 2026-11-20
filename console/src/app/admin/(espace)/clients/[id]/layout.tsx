@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { PastillesEtat } from "@/components/admin/pastille";
-import { ongletsClient } from "@/lib/admin/acces";
+import { ongletsClient, peut } from "@/lib/admin/acces";
 import { atelier, ouRefus, RefusChamps, type ClientAtelier } from "@/lib/admin/atelier";
 import { gardePage } from "@/lib/admin/garde";
+import { nomPays, paysTries } from "@/lib/admin/pays";
 import { etatClient, horsCloudflare, zoneClient } from "@/lib/admin/suivi";
 import { OngletsClient } from "./onglets";
+import { ChoixPays } from "./pays";
 
 /** La configuration de la dernière version, quand aucune n'est en service (pour sa zone) ; sinon rien à lire. */
 async function derniereConfig(id: string, c: (ClientAtelier & { config: Record<string, unknown> | null }) | null) {
@@ -13,7 +15,7 @@ async function derniereConfig(id: string, c: (ClientAtelier & { config: Record<s
   return v instanceof RefusChamps ? null : (v.config ?? null);
 }
 
-// La fiche d'un client : son en-tête (entreprise, agent, identifiant, état) et ses onglets. Hors périmètre ou inconnu de
+// La fiche d'un client : son en-tête (entreprise, agent, identifiant, pays, état) et ses onglets. Hors périmètre ou inconnu de
 // l'atelier : 404. L'atelier injoignable : l'en-tête se contente de l'identifiant, la page dit pourquoi.
 export default async function FicheClient({ children, params }: LayoutProps<"/admin/clients/[id]">) {
   const { id } = await params;
@@ -31,6 +33,7 @@ export default async function FicheClient({ children, params }: LayoutProps<"/ad
         <p className="m-0 flex flex-wrap gap-x-3 text-[14px] text-muted-ink">
           {lu?.nom_agent && <span className="font-semibold text-ink">{lu.nom_agent}</span>}
           <span>{id}</span>
+          {lu && peut(a, "clients.creer") ? <ChoixPays id={id} pays={lu.pays ?? null} liste={paysTries()} /> : lu?.pays && <span>{nomPays(lu.pays)}</span>}
         </p>
         {lu && <PastillesEtat etat={etatClient(lu)} />}
       </header>

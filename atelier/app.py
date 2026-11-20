@@ -20,6 +20,7 @@ Routes (toutes sous /atelier) :
   POST  /clients                                MEGGA : un nouveau client, d'une configuration complète
                                                 ou d'un modèle par métier (gabarit, identité, prénom)
   GET   /clients/{id}                           un client, sa version en service et sa configuration
+  PUT   /clients/{id}/pays                      MEGGA : le pays du client (code ISO à deux lettres, ou null)
   GET   /clients/{id}/versions                  l'historique
   GET   /clients/{id}/versions/{v}              une version et sa configuration
   POST  /clients/{id}/valider                   valide des changements sans rien enregistrer
@@ -89,7 +90,7 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
-from . import gabarits, regles, routes_alertes
+from . import gabarits, pays, regles, routes_alertes
 from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs, couts
 from .essai import essayer
@@ -264,7 +265,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         dernieres = await bd(versions.dernieres, {c["component_id"] for c in tous}) if tous else {}
         courantes = {c["component_id"]: c.get("current_version") for c in tous}
         installations = {i["client"]: i for i in await bd(canal.toutes, courantes)}
-        return {"clients": [resume(c, dernieres.get(c["component_id"]), etats, installations.get(c["component_id"])) for c in tous],
+        lus = await bd(pays.tous, reglages)
+        return {"clients": [{**resume(c, dernieres.get(c["component_id"]), etats, installations.get(c["component_id"])),
+                             "pays": lus.get(c["component_id"])} for c in tous],
                 "porte": etats is not None}
 
     @r.get("/gabarits")
@@ -289,9 +292,17 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         courante = c.get("current_version")
         config = (await bd(version_de, ident, courante))["config"] if courante else None
         derniere = (await bd(versions.dernieres, {ident})).get(ident)
+        le_pays = (await bd(pays.tous, reglages)).get(ident)
         if ((config or {}).get("zone") or await bd(zone_de, ident)) in regles.ZONES_PORTE:
-            return {**resume(c, derniere, await etats_porte(ident)), "config": config}
-        return {**resume(c, derniere, None, await bd(installation_de, ident, courante)), "config": config}
+            return {**resume(c, derniere, await etats_porte(ident)), "pays": le_pays, "config": config}
+        return {**resume(c, derniere, None, await bd(installation_de, ident, courante)), "pays": le_pays, "config": config}
+
+    @r.put("/clients/{ident}/pays")
+    def regler_pays(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """MEGGA : le pays du client sur la carte du monde (un code ISO à deux lettres, ou null)."""
+        megga(qui)
+        client_de(qui, ident)
+        return {"client": ident, "pays": pays.regler(reglages, ident, corps.get("pays"))}
 
     @r.get("/clients/{ident}/versions")
     def historique(ident: str, qui: Identite = Depends(identite)):
