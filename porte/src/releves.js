@@ -20,6 +20,8 @@ const NOM_MODELE = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/;
 const NOM_COURT = /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/;
 const GENRE = /^[a-z][a-z0-9_]{0,29}$/;
 const REVISION = /^[0-9a-f]{7,40}$/;
+// Le nom d'un outil de l'agent (une fonction du code) ; un autre nom garde ses chiffres sous « autre ».
+const NOM_OUTIL = /^[A-Za-z_][A-Za-z0-9_.-]{0,59}$/;
 
 const nombre = (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
 const ou = (v, motif) => (typeof v === "string" && motif.test(v) ? v : null);
@@ -39,10 +41,18 @@ function nettoyerJour(j) {
   for (const [g, v] of Object.entries(objet(j.journal)).slice(0, 60)) {
     if (GENRE.test(g)) journal[g] = { nombre: nombre(objet(v).nombre), quantite: nombre(objet(v).quantite) };
   }
+  const outils = {};
+  for (const [nom, o] of Object.entries(objet(j.outils)).slice(0, 40)) {
+    const x = objet(o);
+    const e = (outils[NOM_OUTIL.test(nom) && nom !== "autre" ? nom : "autre"] ??= { appels: 0, echecs: 0, duree: 0, mesures: 0 });
+    for (const k of ["appels", "echecs", "duree", "mesures"]) e[k] += nombre(x[k]);
+  }
   const d = objet(j.delais);
-  const delai = (x) => ({ nombre: nombre(objet(x).nombre), moyenne: objet(x).moyenne == null ? null : nombre(objet(x).moyenne) });
+  const ouNul = (v) => (v == null ? null : nombre(v));
+  const delai = (x) => ({ nombre: nombre(objet(x).nombre), moyenne: ouNul(objet(x).moyenne), mediane: ouNul(objet(x).mediane), p95: ouNul(objet(x).p95) });
   return { tours: nombre(j.tours), tours_api: nombre(j.tours_api), tours_en_echec: nombre(j.tours_en_echec), secours: nombre(j.secours),
-    personnes: nombre(j.personnes), modeles, journal, delais: { lecture: delai(d.lecture), reponse: delai(d.reponse), lentes: nombre(d.lentes) } };
+    personnes: nombre(j.personnes), modeles, journal, outils,
+    delais: { lecture: delai(d.lecture), reponse: delai(d.reponse), lentes: nombre(d.lentes) } };
 }
 
 /** Le relevé tel qu'il est rangé : seulement des nombres et des noms permis. Rend null s'il n'a pas la forme attendue. */
