@@ -1,0 +1,36 @@
+name: déployer la console
+
+# La console de MEGGA (console.megga.ai), construite et déployée ici plutôt que depuis le Mac : sur un Mac Apple,
+# Docker imite le processeur des serveurs (amd64) et la compilation de Next.js y plante par intermittence
+# (erreur de segmentation, 20.11.2026). Seulement à la main, depuis la branche de la console, et seulement si
+# l'on écrit « Fusionne et déploie ».
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: "Écrire : Fusionne et déploie"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deployer:
+    if: ${{ github.event.inputs.confirmation == 'Fusionne et déploie' && github.ref == 'refs/heads/megga/console-vitesse' }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console/hebergement
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - run: npm test
+      # Le jeton de Cloudflare seulement à l'étape de wrangler : ni npm ci ni les essais ne le voient.
+      - name: La console et son image
+        run: npx wrangler deploy --tag "${GITHUB_SHA::7}" --containers-rollout immediate
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
