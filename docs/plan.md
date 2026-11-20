@@ -168,6 +168,7 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
    - la vue MEGGA : tous les clients, les réglages avancés et la reprise en main.
 9. **Les fonctionnalités du lancement** (étude de marché du 16.11.2026) : approbations et journal d'audit, base de connaissances, transfert vers un humain, leads et connecteurs, le client et ses chiffres, banc d'essai par pack. Une PR par sous-lot (`docs/lot9.md`).
 10. **Les modèles d'accueil par métier** (décidé avec Thomas, 16.11.2026) : huit modèles (généraliste, immobilier, santé, hôtellerie, juridique, commerce, fiduciaire, garage), un métier par secteur dans le moteur, une garde pour les installations restées sur l'image précédente, une alerte WhatsApp à l'équipe quand l'agent note une demande, et des cas du banc par métier. Textes d'après agency-agents (MIT). Reste avant la fusion : le banc avec les vrais modèles (`docs/lot10.md`).
+11. **Le catalogue complet** (Julien, 20.11.2026) : les 283 agents d'agency-agents installés comme modèles prêts à l'emploi, rangés par catégorie, pour que la plateforme réponde à n'importe quelle demande d'un client ; garde-fous sécurité (strictement défensif), santé et juridique (aucun avis). Le lot 10 n'en reprenait que six. L'agent sur mesure, installé chez un client, reste à part (`docs/lot11.md`).
 
 ## Décidé
 

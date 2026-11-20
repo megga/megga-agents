@@ -24,7 +24,7 @@ def atelier(tmp_path):
 @pytest.mark.parametrize("zone", ["suisse", "europe", "etats-unis"])
 def test_chaque_gabarit_donne_un_agent_complet(zone):
     for g in gabarits.lister():
-        if zone == "etats-unis" and g["id"] in ("sante", "garage"):  # leurs numéros d'urgence sont suisses et européens
+        if zone == "etats-unis" and g["id"] in gabarits.PAS_AUX_ETATS_UNIS:  # leurs numéros d'urgence sont suisses et européens
             with pytest.raises(regles.Refus, match="zone États-Unis"):
                 gabarits.nouvelle_config(g["id"], {**IDENTITE, "zone": zone}, "Lea")
             continue
@@ -41,7 +41,7 @@ def test_le_client_choisit_un_metier_et_un_prenom(atelier):
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": IDENTITE, "nom_agent": "Lea"})
     assert r.status_code == 201, r.text
     client = jeton_client(t, "agence-lac")
-    assert [g["id"] for g in t.get("/atelier/gabarits", headers=client).json()["gabarits"]] == list(gabarits.GABARITS)
+    assert [g["id"] for g in t.get("/atelier/gabarits", headers=client).json()["gabarits"]] == list(gabarits.MODELES)
 
     v2 = t.post("/atelier/clients/agence-lac/gabarit", headers=client, json={"gabarit": "immobilier", "nom_agent": "Iris"})
     assert v2.status_code == 201, v2.text
@@ -70,7 +70,7 @@ def test_refus_en_clair(atelier):
     t = atelier
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "boulangerie", "client": IDENTITE, "nom_agent": "Lea"})
     titres = ", ".join(g["titre"].lower() for g in gabarits.GABARITS.values())
-    assert r.status_code == 400 and r.json()["erreur"] == f"Choisissez un modèle : {titres}." and "généraliste, immobilier" in titres
+    assert r.status_code == 400 and r.json()["erreur"] == f"Choisissez un modèle : {titres}, ou un modèle du catalogue." and "généraliste, immobilier" in titres
     r = t.post("/atelier/clients", headers=MEGGA, json={"gabarit": "generaliste", "client": {"id": "x1"}, "nom_agent": "Lea"})
     assert r.json()["erreur"] == "Il manque : entreprise, zone."
     assert t.post("/atelier/clients", headers=jeton_client_cree(t), json={"gabarit": "generaliste", "client": IDENTITE}).status_code == 403

@@ -34,6 +34,8 @@ Chaque modèle est un fichier (`atelier/gabarits/<id>.md`) : un en-tête (titre,
 
 **Provenance et licence.** Six des huit textes s'inspirent d'agents du dépôt [agency-agents](https://github.com/msitarzewski/agency-agents) (licence MIT, commit `8ae6164602c95ca78828b148b9052460ee426885`) : `lister()` rend leur `source` (dépôt, chemins, commit, licence). `fiduciaire` et `garage` sont écrits par MEGGA, sans source. Le texte de la licence est gardé dans `atelier/gabarits/LICENCE-agency-agents.txt`.
 
+**Le catalogue** (lot 11) : les 283 agents d'agency-agents sont aussi des modèles, `atelier/gabarits/catalogue/<catégorie>/<id>.md`, écrits par `scripts/catalogue_agency_agents.py`. Ils se choisissent comme les huit (même `gabarit`, mêmes routes) ; `GET /gabarits` les rend après eux, avec `categorie` et `garde_fous`. Voir `docs/lot11.md`.
+
 **L'alerte des demandes.** Quand l'agent note une demande (`enregistrer_lead`), chaque gestionnaire en est prévenu sur WhatsApp. Le réglage est `leads.alerte` (vrai par défaut, que le client peut couper). Hors des 24 heures, le modèle Meta `lead` annonce l'alerte, s'il est réglé. L'agent ne dit « l'équipe est prévenue » que si un gestionnaire peut la recevoir maintenant. La même personne qui complète sa demande dans les 30 minutes garde la même demande, sans seconde alerte. Voir `docs/lot10.md`.
 
 **Un métier que l'installation ne connaît pas.** Mettre en service, hors Cloudflare, une version dont le métier n'est pas dans le dernier relevé de l'installation est refusé (`409`) : il faut d'abord installer une image récente.
