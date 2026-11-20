@@ -5,7 +5,8 @@ import { acces } from "./aides";
 
 // La vue d'ensemble d'après le relevé chiffré, sans réseau.
 
-const jour = (tours: number, cout: number, reponse: { nombre: number; moyenne: number | null } = { nombre: 0, moyenne: null }): JourReleve => ({
+type DelaiEssai = { nombre: number; moyenne: number | null; mediane?: number | null; p95?: number | null };
+const jour = (tours: number, cout: number, reponse: DelaiEssai = { nombre: 0, moyenne: null }): JourReleve => ({
   tours, tours_api: 0, tours_en_echec: 0, secours: 0, personnes: 1, cout,
   delais: { lecture: { nombre: 0, moyenne: null }, reponse, lentes: 0 },
 });
@@ -49,6 +50,21 @@ describe("la vue d'ensemble des relevés", () => {
     expect(v.lignes.map((l) => [l.client, l.sante])).toEqual([["alpha", "silencieux"], ["beta", "ok"]]);
     expect(v.lignes[1].reponse).toBe(9); // (2 × 6 + 3 × 11) / 5
     expect(v.parJour).toEqual([{ jour: "2026-11-19", tours: 8, cout: 1 }, { jour: "2026-11-20", tours: 12, cout: 2 }]);
+  });
+
+  it("le cas lent du pire jour, et les outils de tous les clients, les plus appelés d'abord", () => {
+    const avec = (p95: number | null, outils: JourReleve["outils"]) => ({ ...jour(3, 0, { nombre: 3, moyenne: 5, mediane: 4, p95 }), outils });
+    const alpha = client("alpha", { jours: {
+      "2026-11-19": avec(30, { rappeler: { appels: 2, echecs: 1, duree: 1, mesures: 2 } }),
+      "2026-11-20": avec(12, { rappeler: { appels: 1, echecs: 0, duree: 0, mesures: 0 }, chercher: { appels: 4, echecs: 0, duree: 2, mesures: 4 } }),
+    } });
+    const v = agregerReleves(releves([alpha, client("beta")]), tous);
+    expect(v.lignes.find((l) => l.client === "alpha")?.reponseLente).toBe(30);
+    expect(v.lignes.find((l) => l.client === "beta")?.reponseLente).toBeNull(); // un relevé d'avant les centiles
+    expect(v.outils).toEqual([
+      { nom: "chercher", appels: 4, echecs: 0, dureeMoyenne: 0.5 },
+      { nom: "rappeler", appels: 3, echecs: 1, dureeMoyenne: 0.5 },
+    ]);
   });
 
   it("sans couts.voir, aucun coût nulle part", () => {

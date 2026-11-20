@@ -5,7 +5,10 @@ import type { ClientAtelier } from "./atelier";
 // sans réveiller aucun conteneur, et jamais une conversation. Fonctions pures : le périmètre filtre les clients avant tout
 // calcul, et les coûts disparaissent sans couts.voir.
 
-type Delai = { nombre: number; moyenne: number | null };
+/** mediane et p95 (95 % des cas en dessous), depuis le 20.11.2026 : absents ou nuls d'un relevé plus ancien. */
+type Delai = { nombre: number; moyenne: number | null; mediane?: number | null; p95?: number | null };
+/** Un outil de l'agent sur un jour : appels, échecs, durée totale des appels qui l'ont dite (mesures), en secondes. */
+type OutilJour = { appels: number; echecs: number; duree: number; mesures: number };
 export type JourReleve = {
   tours: number;
   tours_api: number;
@@ -14,6 +17,7 @@ export type JourReleve = {
   personnes: number;
   delais?: { lecture: Delai; reponse: Delai; lentes: number };
   journal?: Record<string, { nombre?: number; quantite?: number }>;
+  outils?: Record<string, OutilJour>;
   cout?: number;
 };
 export type ClientReleve = {
@@ -77,6 +81,8 @@ export type LigneSante = {
   secours: number;
   /** Le temps moyen jusqu'à la réponse, en secondes, sur la période ; null sans réponse mesurée. */
   reponse: number | null;
+  /** Le cas lent (95 % des réponses en dessous) du pire jour de la période, en secondes ; null sans mesure. */
+  reponseLente: number | null;
   releveLe: number | null;
   cout?: number;
 };
@@ -89,7 +95,15 @@ export type VueReleves = {
   sansTarif: string[];
   /** Jour par jour, tous les clients du périmètre ensemble : tours, et coût avec couts.voir. */
   parJour: { jour: string; tours: number; cout: number }[];
+  /** Les outils de tous les clients du périmètre sur la période, les plus appelés d'abord ; dureeMoyenne en secondes. */
+  outils: { nom: string; appels: number; echecs: number; dureeMoyenne: number | null }[];
 };
+
+/** Le cas lent du pire jour : des centiles ne s'additionnent pas d'un jour à l'autre. */
+function reponseLente(jours: JourReleve[]): number | null {
+  const v = jours.map((j) => j.delais?.reponse?.p95).filter((x): x is number => typeof x === "number");
+  return v.length ? Math.max(...v) : null;
+}
 
 /** Le temps moyen jusqu'à la réponse sur la période : la moyenne des jours, pondérée par leur nombre de réponses. */
 function reponseMoyenne(jours: JourReleve[]): number | null {
@@ -120,13 +134,23 @@ export function agregerReleves(r: Releves, a: Acces): VueReleves {
       echecs: c.totaux.tours_en_echec,
       secours: c.totaux.secours,
       reponse: reponseMoyenne(Object.values(c.jours)),
+      reponseLente: reponseLente(Object.values(c.jours)),
       releveLe: c.releve_le,
       ...(voitCouts ? { cout: c.totaux.cout } : {}),
     }));
   trier(lignes);
   const jours = new Map<string, { tours: number; cout: number; personnes: number }>();
+  const outils = new Map<string, OutilJour>();
   for (const c of actifs) {
     for (const [jour, j] of Object.entries(c.jours)) {
+      for (const [nom, o] of Object.entries(j.outils ?? {})) {
+        const e = outils.get(nom) ?? { appels: 0, echecs: 0, duree: 0, mesures: 0 };
+        e.appels += o.appels;
+        e.echecs += o.echecs;
+        e.duree += o.duree;
+        e.mesures += o.mesures;
+        outils.set(nom, e);
+      }
       const t = jours.get(jour) ?? { tours: 0, cout: 0, personnes: 0 };
       t.tours += j.tours;
       t.personnes += j.personnes;
@@ -148,6 +172,9 @@ export function agregerReleves(r: Releves, a: Acces): VueReleves {
     lignes,
     sansTarif: voitCouts ? [...new Set(actifs.flatMap((c) => c.totaux.sans_tarif))].sort() : [],
     parJour: [...jours.entries()].sort(([x], [y]) => x.localeCompare(y)).map(([jour, t]) => ({ jour, tours: t.tours, cout: arrondi(t.cout) })),
+    outils: [...outils.entries()]
+      .map(([nom, o]) => ({ nom, appels: o.appels, echecs: o.echecs, dureeMoyenne: o.mesures ? Math.round((o.duree / o.mesures) * 100) / 100 : null }))
+      .sort((x, y) => y.appels - x.appels || x.nom.localeCompare(y.nom)),
   };
 }
 
@@ -165,7 +192,8 @@ export function completer(v: VueReleves, r: Releves, clients: readonly ClientAte
     .map((c) => {
       const i = c.installation;
       const sante: Sante = !i ? "ecart" : i.revoquee != null ? "panne" : i.silencieuse ? "silencieux" : i.ecart === true ? "ecart" : "installation";
-      return { client: c.id, entreprise: c.entreprise, sante, soucis: [], horsReleve: true, tours: 0, echecs: 0, secours: 0, reponse: null, releveLe: null };
+      return { client: c.id, entreprise: c.entreprise, sante, soucis: [], horsReleve: true, tours: 0, echecs: 0, secours: 0, reponse: null,
+        reponseLente: null, releveLe: null };
     });
   if (!manquants.length) return v;
   const lignes = trier([...v.lignes, ...manquants]);
