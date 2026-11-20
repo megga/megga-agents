@@ -25,6 +25,9 @@ REGLES = (
     "Rappels : seulement quand la personne le demande. Jamais de message spontané. Donne l'heure au format AAAA-MM-JJTHH:MM, à l'heure locale.",
 )
 
+# Le marqueur de cache d'Anthropic (5 minutes) : modele().
+CACHE = {"type": "ephemeral"}
+
 TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.2026, I7)
 
 
@@ -36,10 +39,16 @@ def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool =
     if nom.startswith("claude-"):
         from agno.models.anthropic import Claude
 
+        # Le cache d'Anthropic (21.11.2026) : sans marque, rien n'est gardé, et chaque appel d'un tour renvoyait tout au prix
+        # plein (Four Seasons : 2,4 millions de jetons d'entrée par jour, aucun lu en cache). Le marqueur automatique se pose
+        # sur la fin de chaque requête : l'appel suivant du même tour (après un outil) relit tout ce début au dixième du prix.
+        # Les outils, qui ne changent pas d'un tour à l'autre, ont leur propre marque. Les consignes changent à chaque tour
+        # (l'heure, le Contexte) : rien d'autre ne se relit d'un tour au suivant.
         return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=jetons,
                       thinking={"type": "adaptive"} if reflexion else None,
                       output_config={"effort": effort} if effort else None,
-                      temperature=None if reflexion else temperature)
+                      temperature=None if reflexion else temperature,
+                      cache_tools=True, request_params={"cache_control": CACHE})
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
