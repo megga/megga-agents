@@ -133,6 +133,8 @@ Une règle : une mesure (`silencieux`, `pannes_en_cours`, `ecart`, `taux_echec` 
 
 Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et le seuil. Le courriel part par la porte (`POST /admin/courriel`, Cloudflare Email Service, expéditeur `COURRIEL_DE`, sur un sous-domaine à ouvrir à Email Sending) ; Slack et les adresses web, par l'atelier. Le corps d'une adresse web est signé : `x-megga-signature` vaut `sha256=` suivi du HMAC de `<x-megga-horodatage>.<corps>` avec sa clé.
 
+**Le pays de chaque client** (20.11.2026), pour la carte du monde de la console : `PUT /clients/{id}/pays` (MEGGA) `{pays: "CH"}` ou `{pays: null}`, un code ISO à deux lettres. C'est un réglage de l'atelier (`megga_reglages`, clé `pays`), pas de la configuration : le changer ne crée aucune version et ne touche aucun conteneur. `GET /clients` et `GET /clients/{id}` le portent.
+
 Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
 
 ## Les installations hors Cloudflare (lot 6.3)
