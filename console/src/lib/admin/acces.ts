@@ -159,7 +159,6 @@ export function ongletsClient(a: Acces, id: string, horsCloudflare: boolean): { 
   const onglets = [
     { href: fiche, texte: TA.suivi, periode: true, ouvert: peut(a, "clients.voir") },
     { href: `${fiche}/alertes`, texte: TA.alertes, periode: true, ouvert: peut(a, "clients.voir") },
-    { href: `${fiche}/conversations`, texte: TA.conversations, periode: false, ouvert: peut(a, "conversations.lire") },
     { href: `${fiche}/versions`, texte: TA.versions, periode: false, ouvert: peut(a, "clients.voir") },
     { href: `${fiche}/acces`, texte: TA.acces, periode: false, ouvert: peut(a, "acces.gerer") || peut(a, "clients.piloter") },
     { href: `${fiche}/installation`, texte: TA.installation, periode: false, ouvert: horsCloudflare && peut(a, "clients.voir") },

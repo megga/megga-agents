@@ -64,8 +64,6 @@ export type Tarifs = {
   par_vocal_entendu: number | null;
 };
 export type Gabarit = { id: string; titre: string; description: string; metier: string; reglages: Record<string, unknown> };
-export type Personne = { personne: string; messages: number; derniere: number | string | null };
-export type Message = { quand: number | string; sens: "recu" | "envoye"; genre: string; texte: string };
 export type Corps = Record<string, unknown>;
 
 export function atelierBranche(): boolean {
@@ -199,9 +197,6 @@ export const atelier = {
   retirerCle: (id: string, cle: string) => ecrire<Corps>(`${c(id)}/cles/${encodeURIComponent(cle)}`, "DELETE"),
   suivi: (id: string, jours: Jours) => lire<Suivi>(`${c(id)}/suivi?jours=${jours}`),
   alertes: (id: string, jours: Jours) => lire<{ periode_jours: number; alertes: Alerte[] }>(`${c(id)}/alertes?jours=${jours}`),
-  conversations: (id: string) => lire<{ conversations: Personne[] }>(`${c(id)}/conversations`),
-  echanges: (id: string, personne: string) =>
-    lire<{ personne: string; messages: Message[] }>(`${c(id)}/conversations/${encodeURIComponent(personne)}`),
   installations: () => lire<{ installations: (Corps & { client: string })[]; cle_pilotage: boolean }>("/installations"),
   installation: (id: string) => lire<Corps>(`${c(id)}/installation`),
   enregistrerInstallation: (id: string, corps: Corps) => ecrire<{ client: string; cle: string }>(`${c(id)}/installation`, "PUT", corps),

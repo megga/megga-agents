@@ -259,20 +259,9 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
     await expect(externe.getByText(BOULANGERIE.entreprise)).toHaveCount(0);
   }
 
-  // Ses conversations : l'adresse d'un fil porte une clé opaque, jamais le numéro.
+  // Aucune conversation, même la sienne : MEGGA ne lit jamais ce qui se dit (20.11.2026).
   await externe.goto(`/admin/clients/${GARAGE.id}`);
-  await externe.getByRole("link", { name: TA.conversations, exact: true }).click();
-  await expect(externe).toHaveURL(new RegExp(`/admin/clients/${GARAGE.id}/conversations$`));
-  const personne = externe
-    .getByRole("table")
-    .filter({ has: externe.getByRole("columnheader", { name: TA.personne, exact: true }) })
-    .getByRole("link")
-    .first();
-  const numero = (await personne.innerText()).trim();
-  await personne.click();
-  await expect(externe).toHaveURL(new RegExp(`/admin/clients/${GARAGE.id}/conversations/[0-9a-f]{16}$`));
-  await expect(externe.getByRole("heading", { name: numero, level: 2 })).toBeVisible();
-  expect(externe.url()).not.toContain(numero.replace("+", ""));
+  await expect(externe.getByRole("link", { name: "Conversations", exact: true })).toHaveCount(0);
 
   // Ses versions : un brouillon d'après la version en service, sans choix de base ni modèle par métier, limité aux réglages
   // simples ; il n'a ni « Mettre en service » ni « Forcer ».
@@ -397,7 +386,7 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
     // Chaque onglet de la fiche d'un client installé hors Cloudflare se voit (aucun caché hors du cadre) et mène à sa page.
     await page.goto(`/admin/clients/${CHALET.id}`);
     await expect(titre(page, CHALET.entreprise)).toBeVisible();
-    for (const onglet of [TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.acces, TA.installation]) {
+    for (const onglet of [TA.suivi, TA.alertes, TA.versions, TA.acces, TA.installation]) {
       const lien = page.getByRole("main").getByRole("link", { name: onglet, exact: true });
       await expect(lien).toBeInViewport();
       await lien.click();

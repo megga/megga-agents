@@ -76,12 +76,12 @@ describe("les appels", () => {
 
   it("passent les segments par encodeURIComponent, la période et le corps", async () => {
     fetchSimule.mockImplementation(async () => reponse({}));
-    await atelier.echanges("garage-essai", "api:dossier:client/42");
+    await atelier.versions("garage-essai/x");
     await atelier.suivi("garage-essai", 30);
     await atelier.activer("garage-essai", 2, { forcer: true });
     const appels = fetchSimule.mock.calls as [string, RequestInit][];
     expect(appels.map(([u]) => u)).toEqual([
-      "http://atelier.test/atelier/clients/garage-essai/conversations/api%3Adossier%3Aclient%2F42",
+      "http://atelier.test/atelier/clients/garage-essai%2Fx/versions",
       "http://atelier.test/atelier/clients/garage-essai/suivi?jours=30",
       "http://atelier.test/atelier/clients/garage-essai/versions/2/activer",
     ]);
