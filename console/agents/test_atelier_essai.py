@@ -66,7 +66,8 @@ def test_conteneur_injoignable(essai):
     """Le suivi du fleuriste ne répond pas ; ses alertes, si : la panne gardée par la porte et « conteneur injoignable »."""
     t = essai.t
     assert t.get("/atelier/clients/fleuriste-essai/suivi?jours=7").status_code == 502
-    assert t.get("/atelier/clients/fleuriste-essai/conversations").status_code == 502
+    # Les conversations d'un client ne se lisent jamais par MEGGA (atelier, 20.11.2026) : refusées avant la porte.
+    assert t.get("/atelier/clients/fleuriste-essai/conversations").status_code == 403
     r = t.get("/atelier/clients/fleuriste-essai/alertes?jours=7")
     assert r.status_code == 200
     genres = {a["genre"]: a for a in r.json()["alertes"]}

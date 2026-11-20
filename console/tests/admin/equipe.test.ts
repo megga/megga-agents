@@ -198,7 +198,7 @@ describe("les membres", () => {
     expect(await modifierMembre(db, s, "n", { role: "superadmin" }, T0)).toMatchObject({ role: "superadmin", perimetre: "tous", finAcces: null });
     const a = (await accesDe(db, { id: "n", email: "n@megga.test", name: "N" }, T0))!;
     expect(a).toMatchObject({ superadmin: true, perimetre: "tous", role: { id: "superadmin", nom: TA.roleSuperadmin } });
-    expect(a.droits.size).toBe(12);
+    expect(a.droits.size).toBe(13);
   });
 
   it("un compte suspendu ne devient pas superadmin : 409, rien ne change ; réactivé, il le peut", async () => {
