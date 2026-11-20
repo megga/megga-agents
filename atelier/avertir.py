@@ -9,12 +9,14 @@ L'adresse d'un webhook est un secret : elle n'est plus jamais rendue en entier, 
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import ipaddress
 import json
 import re
 import secrets
+import socket
 import time
 from typing import Literal
 from urllib.parse import urlsplit
@@ -45,6 +47,15 @@ def adresse_web_permise(url: str) -> bool:
     except ValueError:
         pass
     return "." in hote and not hote.endswith((".local", ".internal", ".localhost")) and hote != "localhost"
+
+
+async def hote_public(hote: str) -> bool:
+    """Le nom résout-il seulement vers des adresses publiques ? Un nom qui pointe vers le réseau interne est refusé."""
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(hote, 443, type=socket.SOCK_STREAM)
+    except OSError:
+        return False
+    return bool(infos) and all(ipaddress.ip_address(i[4][0]).is_global for i in infos)
 
 
 class Destination(BaseModel):
@@ -93,9 +104,13 @@ async def envoyer(d: Destination, m: dict, porte, transport: httpx.AsyncBaseTran
             await porte.courriel(d.adresse, m["sujet"], m["texte"])
             return None
         if d.genre == "slack":
-            corps = json.dumps({"text": m["texte"]}, ensure_ascii=False).encode()
+            # Les trois caractères de commande de Slack : un nom ne peut ni mentionner ni lier.
+            texte = m["texte"].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            corps = json.dumps({"text": texte}, ensure_ascii=False).encode()
             entetes = {"content-type": "application/json"}
         else:
+            if not await hote_public(urlsplit(d.adresse).hostname or ""):
+                return "adresse privée refusée"
             corps = json.dumps(m["donnees"], ensure_ascii=False).encode()
             horodatage = str(int(time.time()))
             entetes = {"content-type": "application/json", "x-megga-horodatage": horodatage,
@@ -116,7 +131,7 @@ async def evaluer(regles: list[Regle], destinations: list[Destination], rassembl
     avant = await bd(etats.tous)
     await bd(etats.oublier, {r.id for r in regles})
     devise = rassemble.get("devise") or ""
-    envois, evaluees = [], 0
+    envois, evaluees, vus = [], 0, set()
     for client in rassemble.get("clients") or []:
         if not client.get("actif"):
             continue
@@ -124,6 +139,7 @@ async def evaluer(regles: list[Regle], destinations: list[Destination], rassembl
             if r.clients and client["id"] not in r.clients:
                 continue
             evaluees += 1
+            vus.add((r.id, client["id"]))
             ancien = avant.get((r.id, client["id"]))
             valeur = mesurer(client, r.mesure, r.fenetre_jours, maintenant)
             etat, genre = decider(r, ancien, gravite(r, valeur), maintenant)
@@ -152,4 +168,7 @@ async def evaluer(regles: list[Regle], destinations: list[Destination], rassembl
                 envois.append({"regle": r.id, "client": client["id"], "etat": etat, "envoi": genre,
                                "parties": parties, "echecs": echecs})
             await bd(etats.ecrire, r.id, client["id"], nouvel, ancien is not None)
+    partis = [k for k in avant if k not in vus and k[0] in {r.id for r in regles}]
+    if partis:
+        await bd(etats.retirer, partis)
     return {"evaluees": evaluees, "envois": envois}

@@ -12,6 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from atelier.alertes import PROPOSEES, Regle, decider, gravite, message, mesurer, regles_de
+from atelier import avertir
 from atelier.app import creer as creer_atelier
 from atelier.avertir import Destination, adresse_web_permise, signature
 from noyau.garde import Debit
@@ -80,6 +81,8 @@ def test_gravite_et_decision():
     assert decider(garder, avant, "sans_donnees", MAINTENANT) == ("alerte", None)
     signaler = r.model_copy(update={"sans_donnees": "signaler"})
     assert decider(signaler, avant, "sans_donnees", MAINTENANT) == ("sans_donnees", "nouveau")
+    # Aucun envoi parti (destinations en panne) : le rappel compte depuis le changement d'état.
+    assert decider(r, {"etat": "alerte", "envoye_le": None, "depuis": MAINTENANT - 3700}, "alerte", MAINTENANT) == ("alerte", "rappel")
     pause = r.model_copy(update={"en_pause": True})
     assert decider(pause, None, "alerte", MAINTENANT) == ("alerte", None)
 
@@ -92,6 +95,8 @@ def test_le_message_n_a_que_des_chiffres():
     for interdit in ("—", "–", "·"):
         assert interdit not in m["texte"] + m["sujet"]
     assert set(m["donnees"]) >= {"regle", "client", "valeur", "etat", "envoi"}
+    m = message(r, "nouveau", "alerte", client(entreprise="Exemple\r\nBcc: x@y.ch"), 12.5, "USD")
+    assert "\n" not in m["sujet"] and "\r" not in m["sujet"]
 
 
 def test_destinations():
@@ -127,7 +132,11 @@ class PorteAlertes(FaussePorte):
 
 
 @pytest.fixture
-def atelier(tmp_path):
+def atelier(tmp_path, monkeypatch):
+    async def public(hote):
+        return hote != "interne.example.com"
+
+    monkeypatch.setattr(avertir, "hote_public", public)  # sans réseau dans les tests
     porte = PorteAlertes()
     envoyes, panne = [], {"slack": False}
 
@@ -247,3 +256,38 @@ def test_signaux_de_securite():
     asyncio.run(tourner(c, entrant("Un", "w1")))
     asyncio.run(tourner(c, entrant("Deux", "w2")))
     assert journal.genres.count("debit_depasse") == 1 and "secret_masque" not in journal.genres
+
+
+def test_slack_echappe_et_adresse_privee_refusee(atelier):
+    t = atelier
+    t.post("/atelier/alertes/destinations", headers=MEGGA, json={"id": "slack", "genre": "slack", "adresse": SLACK})
+    t.post("/atelier/alertes/destinations", headers=MEGGA, json={"id": "web", "genre": "web", "adresse": "https://interne.example.com/x"})
+    t.put("/atelier/alertes/regles", headers=MEGGA,
+          json=[{"id": "echecs", "nom": "Échecs <!channel>", "mesure": "taux_echec", "alerte": 5, "destinations": ["slack", "web"]}])
+    r = t.post("/atelier/alertes/evaluer", headers=MEGGA).json()
+    assert r["envois"][0]["echecs"] == {"web": "adresse privée refusée"}
+    assert "<!channel>" not in t.envoyes[0][1]["text"] and "&lt;!channel&gt;" in t.envoyes[0][1]["text"]
+
+
+def test_un_client_inactif_repart_de_zero(atelier):
+    t = atelier
+    t.post("/atelier/alertes/destinations", headers=MEGGA, json={"id": "slack", "genre": "slack", "adresse": SLACK})
+    t.put("/atelier/alertes/regles", headers=MEGGA,
+          json=[{"id": "echecs", "nom": "Échecs", "mesure": "taux_echec", "alerte": 5, "destinations": ["slack"]}])
+    t.post("/atelier/alertes/evaluer", headers=MEGGA)
+    assert len(t.get("/atelier/alertes", headers=MEGGA).json()["etats"]) == 1
+    actif = PorteAlertes.releves
+
+    async def inactif(self, jours):
+        d = await actif(self, jours)
+        d["clients"][0]["actif"] = 0
+        return d
+
+    PorteAlertes.releves = inactif
+    try:
+        t.post("/atelier/alertes/evaluer", headers=MEGGA)
+    finally:
+        PorteAlertes.releves = actif
+    assert t.get("/atelier/alertes", headers=MEGGA).json()["etats"] == []
+    t.post("/atelier/alertes/evaluer", headers=MEGGA)  # de retour : l'alerte repart
+    assert len(t.envoyes) == 2

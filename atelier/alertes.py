@@ -149,7 +149,8 @@ def decider(r: Regle, avant: dict | None, brute: str, maintenant: float) -> tupl
         return etat, None
     if etat != precedent:
         return etat, "retabli" if etat == "ok" else "nouveau"
-    envoye = (avant or {}).get("envoye_le")
+    # Le rappel compte depuis le dernier envoi, ou depuis le changement d'état si aucun n'est parti (destinations en panne).
+    envoye = (avant or {}).get("envoye_le") or (avant or {}).get("depuis")
     if etat != "ok" and r.rappel_heures and envoye and maintenant - envoye >= r.rappel_heures * 3600:
         return etat, "rappel"
     return etat, None
@@ -168,7 +169,7 @@ def message(r: Regle, genre: str, etat: str, client: dict, valeur: float | None,
     """Le message d'un envoi : des chiffres et le nom de l'entreprise, jamais une conversation."""
     libelle, unite = MESURES[r.mesure]
     unite_lue = devise if unite == "devise" else unite
-    qui = client.get("entreprise") or client.get("id")
+    qui = " ".join(str(client.get("entreprise") or client.get("id")).split())[:80]  # une ligne : le sujet d'un courriel
     titre = {"alerte": "Alerte", "avertissement": "Avertissement", "sans_donnees": "Sans données", "ok": "Rétabli"}[etat]
     if genre == "rappel":
         titre = f"Rappel, {titre.lower()}"
@@ -219,6 +220,13 @@ class Etats:
                 c.execute(update(t).where(t.c.regle == regle, t.c.client == client).values(**v))
             else:
                 c.execute(insert(t).values(regle=regle, client=client, **v))
+
+    def retirer(self, cles: list[tuple[str, str]]) -> None:
+        """Les états d'un client qui n'est plus évalué (inactif, parti, sorti d'une règle) : il repartira de zéro."""
+        t = self._t
+        with self._e.begin() as c:
+            for regle, client in cles:
+                c.execute(delete(t).where(t.c.regle == regle, t.c.client == client))
 
     def oublier(self, regles_gardees: set[str]) -> None:
         """Les états des règles retirées s'effacent."""
