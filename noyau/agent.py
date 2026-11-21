@@ -25,8 +25,11 @@ REGLES = (
     "Rappels : seulement quand la personne le demande. Jamais de message spontané. Donne l'heure au format AAAA-MM-JJTHH:MM, à l'heure locale.",
 )
 
-# Le marqueur de cache d'Anthropic (5 minutes) : modele().
-CACHE = {"type": "ephemeral"}
+# Le marqueur de cache d'Anthropic, gardé une heure (21.11.2026) : une conversation WhatsApp a des silences de plus de
+# 5 minutes, et le cache de 5 minutes expirait entre deux messages ; tout se réécrivait (444 000 jetons en 11 tours pour
+# Four Seasons). Écrire coûte 2 fois le prix au lieu de 1,25, relire toujours le dixième. Toutes les marques d'une
+# requête ont la même durée : Anthropic refuse une marque d'une heure après une marque de 5 minutes.
+CACHE = {"type": "ephemeral", "ttl": "1h"}
 
 TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.2026, I7)
 
@@ -53,8 +56,8 @@ def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool =
                       thinking={"type": "adaptive"} if reflexion else None,
                       output_config={"effort": effort} if effort else None,
                       temperature=None if reflexion else temperature,
-                      cache_tools=cache, cache_system_prompt=cache,
-                      request_params={"cache_control": CACHE} if cache else None)
+                      cache_tools=cache, cache_system_prompt=cache, extended_cache_time=cache,
+                      request_params={"cache_control": dict(CACHE)} if cache else None)
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
@@ -78,7 +81,7 @@ def marquer_le_tour(messages: list) -> list:
             texte = bloc.get("text") if isinstance(bloc, dict) and bloc.get("type") == "text" else None
             if texte and CONTEXTE_DU_TOUR in texte:
                 avant, apres = texte.split(CONTEXTE_DU_TOUR, 1)
-                message["content"] = [*blocs[:i], {"type": "text", "text": avant or ".", "cache_control": CACHE},
+                message["content"] = [*blocs[:i], {"type": "text", "text": avant or ".", "cache_control": dict(CACHE)},
                                       {"type": "text", "text": CONTEXTE_DU_TOUR.lstrip("\n") + apres}, *blocs[i + 1:]]
                 return messages
     return messages
@@ -137,6 +140,11 @@ def claude_du_tour():
         from agno.models.anthropic import Claude
 
         class ClaudeDuTour(Claude):
+            def _apply_cache_tools(self, request_kwargs):
+                # La marque des outils, d'une heure comme les autres (celle d'Agno est de 5 minutes).
+                if self.cache_tools and request_kwargs.get("tools"):
+                    request_kwargs["tools"][-1]["cache_control"] = dict(CACHE)
+
             def get_client(self):
                 return _Requetes(super().get_client())
 
