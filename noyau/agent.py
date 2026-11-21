@@ -183,7 +183,11 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         from .memoire import CONSIGNES as CONSIGNES_MEMOIRE
 
         base.append(CONSIGNES_MEMOIRE)
-    if role is not None and set(role.outils) - {"rappels", "memoire", "immobilier"}:  # la façon de se servir des outils du pack
+    if "connecteurs" in (role.outils if role is not None else config.outils):  # les outils de Composio (noyau/composio.py)
+        from .composio import CONSIGNES as CONSIGNES_CONNECTEURS
+
+        base.append(CONSIGNES_CONNECTEURS)
+    if role is not None and set(role.outils) - {"rappels", "memoire", "immobilier", "connecteurs"}:  # les outils du pack
         from packs.immobilier.relations import consignes_des_groupes
 
         base += consignes_des_groupes(role.outils, config, role)

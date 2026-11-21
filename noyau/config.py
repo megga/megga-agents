@@ -15,16 +15,18 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .composio import ReglageComposio
+
 VERSION = 1
 # Une image sert une configuration sans WhatsApp (entrée par API seulement) à partir de la version 2 de
 # nos tables (stockage.SCHEMA_VERSION, que /sante donne) : le même lot, quel que soit son numéro de version.
 SANS_WHATSAPP_SCHEMA = 2
 ZONES = ("suisse", "europe", "etats-unis", "client")
 # Les métiers, et les packs d'outils que chacun permet.
-METIERS: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier",)}
+METIERS: dict[str, tuple[str, ...]] = {"general": ("connecteurs",), "immobilier": ("immobilier", "connecteurs")}
 # Les groupes d'outils qu'un rôle peut recevoir, par métier (en plus des rappels).
-OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": (), "immobilier": ("immobilier", "annonces", "partenaires", "visiteurs",
-                                                                                "vitrine", "accueil", "marche", "travail")}
+OUTILS_DES_ROLES: dict[str, tuple[str, ...]] = {"general": ("connecteurs",), "immobilier": ("immobilier", "annonces", "partenaires",
+                                                 "visiteurs", "vitrine", "accueil", "marche", "travail", "connecteurs")}
 # Les groupes d'outils qui agissent au nom du compte d'un gestionnaire : seulement pour le rôle gestionnaire.
 OUTILS_GESTIONNAIRE = ("annonces", "partenaires", "visiteurs", "marche", "travail")
 # Les groupes qui lisent la gestion du site (packs/immobilier/gestion.py).
@@ -132,7 +134,7 @@ class WhatsApp(Strict):
 #   accueil      chercher les biens publics, transmettre un contact, poser une question au courtier : ceux d'un visiteur
 #   marche       les portails, la veille, le carnet des prix au m², le suivi des zones (lot 7.5), pour un gestionnaire
 #   travail      les règles apprises en le corrigeant, le point, ses capacités (lot 7.6), pour un gestionnaire
-GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail")
+GROUPES_OUTILS = ("rappels", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail", "connecteurs")
 
 
 class Role(Strict):
@@ -142,7 +144,7 @@ class Role(Strict):
     envoyé par le noyau (noyau/accueil.py), seule retouche permise : son prénom après le premier mot."""
 
     consignes: str = Field(default="", max_length=12000)
-    outils: tuple[Literal["rappels", "memoire", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail"], ...] = ("rappels",)
+    outils: tuple[Literal["rappels", "memoire", "immobilier", "annonces", "partenaires", "visiteurs", "vitrine", "accueil", "marche", "travail", "connecteurs"], ...] = ("rappels",)
     accueil: dict[str, str] = {}
     # Les phrases fixes du noyau (excuse, vocal non compris, trop de messages, rappel) au tutoiement (M4).
     tutoiement: bool = False
@@ -401,8 +403,9 @@ class Config(Strict):
     bonjour: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     # Le métier de l'agent ; il borne les packs qu'on peut lui activer.
     metier: Literal["general", "immobilier"] = "general"
-    # Les packs actifs (aujourd'hui : « immobilier »).
-    outils: tuple[Literal["immobilier"], ...] = ()
+    # Les packs actifs (« immobilier »), et les outils de Composio choisis par MEGGA (« connecteurs », noyau/composio.py).
+    outils: tuple[Literal["immobilier", "connecteurs"], ...] = ()
+    composio: ReglageComposio | None = None
     # Le catalogue du pack immobilier : « demo:<nom> » ou un flux https de l'agence.
     catalogue: str | None = Field(default=None, pattern=r"^(demo:[a-z0-9-]{1,60}|https://\S{4,500})$")
     # Les rôles des personnes (gestionnaires, partenaires, visiteurs) ; sans eux, un seul agent pour tous.
@@ -475,6 +478,8 @@ def manques(conf: Config) -> list[str]:
         m.append("les outils d'annonces, de partenaires et de visiteurs attendent la gestion du site (réglage de MEGGA)")
     if any("marche" in r.outils for r in conf.les_roles().values()) and conf.marche is None:
         m.append("les outils du marché attendent les portails de ses régions (réglage de MEGGA)")
+    if ("connecteurs" in conf.outils or any("connecteurs" in r.outils for r in conf.les_roles().values())) and conf.composio is None:
+        m.append("les connecteurs attendent leurs outils Composio (réglage de MEGGA)")
     return m
 
 

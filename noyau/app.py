@@ -119,10 +119,12 @@ def configuration_en_parties(env: dict) -> str | None:
     return "".join(parties)
 
 
-def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None) -> list:
+def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, services=None, relations=None, memoire=None,
+                     connecteurs=None) -> list:
     """Les outils du noyau (rappels, et la mémoire si Memoire.outils) et ceux des packs que la configuration active ;
     `groupes` : ceux d'un rôle. `services` : ce dont les outils d'annonces ont besoin (packs/immobilier/annonces.py),
-    s'ils sont branchés ; `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py)."""
+    s'ils sont branchés ; `relations` : les partenaires et les visiteurs (packs/immobilier/relations.py) ; `connecteurs` :
+    les outils de Composio du client (noyau/composio.py), sans lesquels le groupe « connecteurs » ne donne rien."""
     du_role = groupes is not None
     groupes = ("rappels", *conf.outils) if groupes is None else groupes
     liste = outils_rappels(rappels, conf.fuseau, conf.rappels.heure) if "rappels" in groupes else []
@@ -139,6 +141,8 @@ def outils_du_client(conf, rappels, groupes: tuple[str, ...] | None = None, serv
         if relations is None:
             raise RuntimeError("outils de partenaires et de visiteurs sans gestion du site (Config.gestion et GESTION_CLE)")
         liste += relations.outils(groupes)
+    if "connecteurs" in groupes and connecteurs is not None:
+        liste += connecteurs.outils()
     if "immobilier" in groupes:
         from packs.immobilier import Catalogue, outils as outils_immobilier
 
@@ -235,7 +239,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
           quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
-          fil_tenu=None, juger=None, decrire=None, memoire=None) -> FastAPI:
+          fil_tenu=None, juger=None, decrire=None, memoire=None, connecteurs=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -352,12 +356,18 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             juger = _juge(conf, cles)
         if decrire is None and conf.photos.decrire:
             decrire = _descripteur(conf, cles)
+        # Les outils de Composio choisis par MEGGA (Config.composio), avec la clé du projet Composio de MEGGA.
+        if connecteurs is None and conf.composio is not None and env.get("COMPOSIO_API_KEY"):
+            from .composio import Composio
+
+            connecteurs = Composio(env["COMPOSIO_API_KEY"], conf.id, conf.composio)
         def fabriquer(c: configuration.Config):
             """L'agent de tous, et un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous,
             et le Contexte de chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs).
             Refait quand les réglages du client changent ses modèles (packs/immobilier/reglages.py)."""
-            un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
-            par_role = {nom: construire(c, base, cles, outils=outils_du_client(c, rappels, role.outils, services, relations, memoire),
+            un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire, connecteurs=connecteurs), contexte=ensemble(du_fil, du_noyau))
+            par_role = {nom: construire(c, base, cles, outils=outils_du_client(c, rappels, role.outils, services, relations, memoire,
+                                                                         connecteurs),
                                         role=role, nom_role=nom,
                                         contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None))
                         for nom, role in c.les_roles().items()}
