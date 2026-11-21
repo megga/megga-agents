@@ -51,9 +51,13 @@ def traiter(evenement: dict, abonnements: Abonnements) -> str:
     recharge = meta.get("type") == "recharge"
     if genre == "checkout.session.completed" and o.get("mode") == "subscription":
         abonnements.ecrire_stripe(client, {**s, "client": o.get("customer"), "abonnement": o.get("subscription")})
-        abonnements.statut(client, "actif")
+        # Actif seulement une fois payé : un paiement encore en attente passe par invoice.paid.
+        if o.get("payment_status") in ("paid", "no_payment_required"):
+            abonnements.statut(client, "actif")
         return "abonnement relié"
     if genre == "invoice.paid" and recharge:
+        if int(o.get("amount_paid") or 0) <= 0:  # une facture à zéro n'achète rien (un brouillon resté vide)
+            return "recharge à zéro ignorée"
         devise = (o.get("currency") or "usd").upper()
         abonnements.recharger(client, int(meta.get("conversations") or 0), montant(int(o.get("amount_paid") or 0), devise),
                               "stripe", reference=o.get("id"))
@@ -110,6 +114,9 @@ def monter(app, r: APIRouter, *, identite, megga, bd, reglages, abonnements: Abo
         a = (await bd(abonnements.tous)).get(ident)
         if a is None:
             raise Refus(409, "aucun abonnement : choisissez d'abord un forfait")
+        if (await bd(abonnements.stripe, ident)).get("abonnement"):
+            # Un second lien créerait un second abonnement, payé deux fois : le portail change la carte ou résilie.
+            raise Refus(409, "déjà abonné par Stripe : passez par le portail du client")
         catalogue = await bd(lire_catalogue, reglages)
         f = next((x for x in catalogue.forfaits if x.id == a.forfait), None)
         if f is None:

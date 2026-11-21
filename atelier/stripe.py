@@ -131,7 +131,8 @@ class Stripe:
         """Une facture d'un paquet de recharge, prélevée tout de suite sur la carte de l'abonnement. Chaque étape porte sa
         clé d'idempotence : rejouée après une coupure, elle ne crée ni ne prélève une seconde fois."""
         facture = await self._appel("POST", "/invoices", {
-            "customer": client_stripe, "collection_method": "charge_automatically", "auto_advance": True,
+            # Finalisée seulement par nous, une fois sa ligne posée : un brouillon resté vide ne part jamais seul.
+            "customer": client_stripe, "collection_method": "charge_automatically", "auto_advance": False,
             "pending_invoice_items_behavior": "exclude", "currency": devise.lower(), "description": description,
             "default_payment_method": moyen, "metadata": metadata,
         }, idem=f"{idem}-facture")
@@ -139,5 +140,5 @@ class Stripe:
             "customer": client_stripe, "invoice": facture["id"], "amount": centimes(montant, devise), "currency": devise.lower(),
             "description": description,
         }, idem=f"{idem}-ligne")
-        await self._appel("POST", f"/invoices/{facture['id']}/finalize", {"auto_advance": True}, idem=f"{idem}-finale")
+        await self._appel("POST", f"/invoices/{facture['id']}/finalize", {}, idem=f"{idem}-finale")
         return await self._appel("POST", f"/invoices/{facture['id']}/pay", {}, idem=f"{idem}-paiement")
