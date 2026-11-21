@@ -272,3 +272,38 @@ test("le journal des conversations, pour la gestion du site : lu, jamais gardé"
   assert.equal((await lire("/site/inconnu/journal")).status, 404);
   assert.deepEqual(journal, []);
 });
+
+test("les appels WhatsApp : la clé des appels ou la signature d'ElevenLabs, transmises au conteneur, qui les vérifie", async () => {
+  const recus = [];
+  const annuaire = d1();
+  await inscrire(annuaire, "cabinet", { version: 1, config: { version: 1, id: "cabinet", zone: "europe", nom_agent: "Alix" } });
+  const objet = { jurisdiction: () => ({ getByName: (nom) => ({ fetch: async (r) => {
+    recus.push({ nom, chemin: new URL(r.url).pathname, auth: r.headers.get("authorization"), signature: r.headers.get("elevenlabs-signature"), corps: await r.text() });
+    return Response.json({ ok: true });
+  } }) }) };
+  const e = { ADMIN_TOKEN: "admin", ANNUAIRE: annuaire, AGENTS_EUROPE: objet, AGENTS_ETATS_UNIS: objet };
+  const appel = (chemin, entetes, corps = "{}", methode = "POST") =>
+    recevoir(new Request(`https://porte/appels/${chemin}`, { method: methode, ...(methode === "POST" ? { body: corps } : {}), headers: entetes }), e);
+  const cle = { authorization: `Bearer ${CLE_SITE}` };
+  const signature = `t=${Math.floor(Date.now() / 1000)},v0=${"a".repeat(64)}`;
+
+  assert.equal((await appel("cabinet/debut", cle, '{"caller_id":"41790000001"}')).status, 200);
+  assert.equal((await appel("cabinet/outils/chercher_biens", cle, '{"appelant":"41790000001"}')).status, 200);
+  assert.equal((await appel("cabinet/fin", { "elevenlabs-signature": signature }, '{"type":"post_call_transcription"}')).status, 200);
+  assert.deepEqual(recus.map((r) => [r.nom, r.chemin, r.auth, r.signature]), [
+    ["cabinet", "/appels/debut", `Bearer ${CLE_SITE}`, null],
+    ["cabinet", "/appels/outils/chercher_biens", `Bearer ${CLE_SITE}`, null],
+    ["cabinet", "/appels/fin", null, signature],
+  ]);
+  assert.equal(recus[1].corps, '{"appelant":"41790000001"}');
+  recus.length = 0;
+  // Sans en-tête bien formé, d'un client inconnu, trop gros ou d'un autre chemin : rien ne réveille le conteneur.
+  assert.equal((await appel("cabinet/debut", { authorization: "Bearer court" })).status, 401);
+  assert.equal((await appel("cabinet/fin", cle)).status, 401);
+  assert.equal((await appel("cabinet/fin", { "elevenlabs-signature": "t=1,v0=faux" })).status, 401);
+  assert.equal((await appel("inconnu/debut", cle)).status, 404);
+  assert.equal((await appel("cabinet/debut", cle, "{}", "GET")).status, 405);
+  assert.equal((await appel("cabinet/outils/Masquer-Annonce", cle)).status, 404);
+  assert.equal((await appel("cabinet/outils/chercher_biens", cle, "x".repeat(17 * 1024))).status, 413);
+  assert.deepEqual(recus, []);
+});

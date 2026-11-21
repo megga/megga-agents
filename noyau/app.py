@@ -17,6 +17,8 @@ Variables d'environnement (jamais dans le dépôt) :
   GESTIONNAIRES, GESTION_CLE  les gens du client et la clé de la gestion de son site (lot 7.1)
   SITE_CLE             facultatif : la clé du site du client pour /site/… (32 caractères au moins, lot 7.4)
   VOCAL_CLE            facultatif : la clé de /vocal, un vocal que l'agent dit de lui-même à un gestionnaire (32 caractères au moins)
+  APPELS_CLE, APPELS_SIGNATURE  facultatifs : la clé des routes /appels/… (32 caractères au moins) et le secret de signature
+                       du webhook de fin d'ElevenLabs, avec Config.appels (noyau/appels.py)
 Chaque secret peut aussi venir d'un fichier : <NOM>_FILE (noyau/environnement.py).
 
   PILOTAGE             le réglage du pilotage chez le client (non, suivi, complet), le même que celui du pilote
@@ -35,6 +37,7 @@ Routes :
   POST /site/demande   une demande d'information laissée sur une fiche du site (clé SITE_CLE)
   GET  /site/journal   qui a écrit à l'agent, pour la page « Alix » de la gestion ([?jours=], clé SITE_CLE)
   POST /vocal          {numero, texte} un vocal que l'agent dit de lui-même à un gestionnaire (clé VOCAL_CLE)
+  POST /appels/debut, /appels/outils/{nom}, /appels/fin   les appels WhatsApp décrochés par ElevenLabs (noyau/appels.py)
   GET  /interne/cles             les clés des logiciels, sans empreinte (jeton INTERNE_TOKEN)
   POST /interne/cles             {id, logiciel, empreinte, par_minute} une clé créée par l'atelier
   DELETE /interne/cles/{id}      retire une clé
@@ -235,7 +238,7 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
           reecrire=None, attente: float = 2.5, seuil_regard: float = 8.0, rappels=None,
           delai_vider: float = 100.0, journal=None, lecture=None, fil=None, cle_licence=None, cle_pilotage=None,
           quitter=None, cles_api=None, agents=None, personnes=None, medias=None, relations=None, differes=None,
-          fil_tenu=None, juger=None, decrire=None, memoire=None) -> FastAPI:
+          fil_tenu=None, juger=None, decrire=None, memoire=None, appels=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais) ; `cle_licence` et `cle_pilotage`, les clés
     publiques des licences et des ordres de MEGGA ; `quitter`, l'arrêt de l'agent pour relire sa configuration."""
     env = charger(dict(os.environ if env is None else env))
@@ -345,6 +348,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             fil_tenu = TenueDuFil(fil, stockage.Etats(env["DATABASE_URL"]), _resumeur(conf, cles), conf.fuseau,
                                   dans_l_historique=2 * conf.historique.tours)
         du_fil = fil_tenu.contexte if fil_tenu is not None else None
+        # Le dernier appel de la personne, pour l'écrit (noyau/appels.py) : une seule Alix, une seule mémoire.
+        from .appels import contexte_appel
+
+        du_appel = contexte_appel(stockage.Etats(env["DATABASE_URL"]), conf.fuseau) if conf.appels is not None else None
         # La mémoire par les outils du noyau (Memoire.outils), dans la base d'Agno.
         if memoire is None and conf.memoire.outils:
             memoire = Memoire(base, conf.fuseau, conf.memoire.montres)
@@ -356,10 +363,10 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             """L'agent de tous, et un agent par rôle (noyau/roles.py) : ses consignes et ses outils en plus de ceux de tous,
             et le Contexte de chaque tour (le fil ; celui du noyau ; les demandes, les questions, les règles des packs).
             Refait quand les réglages du client changent ses modèles (packs/immobilier/reglages.py)."""
-            un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau))
+            un = construire(c, base, cles, outils=outils_du_client(c, rappels, memoire=memoire), contexte=ensemble(du_fil, du_noyau, du_appel))
             par_role = {nom: construire(c, base, cles, outils=outils_du_client(c, rappels, role.outils, services, relations, memoire),
                                         role=role, nom_role=nom,
-                                        contexte=ensemble(du_fil, du_noyau, relations.contexte(role.outils) if relations else None))
+                                        contexte=ensemble(du_fil, du_noyau, du_appel, relations.contexte(role.outils) if relations else None))
                         for nom, role in c.les_roles().items()}
             return un, par_role
 
@@ -392,9 +399,20 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
             if fabriquer is not None and nouvelle.modeles != avant.modeles:
                 conversations.agent, conversations.agents = fabriquer(nouvelle)
 
-        conversations.avant_le_tour = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir).rafraichir
+        reglages_gestion = ReglagesDeLaGestion(gestion, list(personnes.gestionnaires.values()), conf, servir)
+        conversations.avant_le_tour = reglages_gestion.rafraichir
+        conversations.reglages_gestion = reglages_gestion  # relus aussi au décrochage d'un appel (noyau/appels.py)
     if relations is not None:  # les outils qui préviennent quelqu'un d'autre passent par les conversations
         relations.reseau.s.conversations = conversations
+    # Les appels WhatsApp (noyau/appels.py) : avec leur réglage et leur clé, et les outils du rôle gestionnaire.
+    if appels is None and conf.appels is not None and len(env.get("APPELS_CLE", "")) >= 32 and construire_agents:
+        from .appels import Appels, TableAppels
+
+        gerant = conf.les_roles().get("gestionnaire")
+        outils_appel = outils_du_client(conf, rappels, gerant.outils, services, relations, memoire) if gerant else []
+        appels = Appels(conversations, personnes, {f.__name__: f for f in outils_appel}, TableAppels(env["DATABASE_URL"]),
+                        rappels=rappels, fil=fil, etats=stockage.Etats(env["DATABASE_URL"]), contacts=contacts,
+                        resumer=_resumeur(conf, cles), cle=env["APPELS_CLE"], signature=env.get("APPELS_SIGNATURE", ""))
     jeton_interne = env.get("INTERNE_TOKEN", "")
     cle_site = env.get("SITE_CLE", "")
     secret = env.get("META_APP_SECRET")
@@ -654,6 +672,8 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
         j = await relations.visiteurs.journal(jours, maximum=200)
         if j is None:
             return erreur(503, "journal hors service")
+        if appels is not None:  # les appels, à côté des messages (noyau/appels.py)
+            j = {**j, "appels": await appels.journal(min(max(int(jours or 1), 1), 30))}
         return JSONResponse(j, headers={"cache-control": "no-store"})
 
     cle_vocal = env.get("VOCAL_CLE", "")
@@ -686,6 +706,11 @@ def creer(env: dict[str, str] | None = None, agent=None, expediteur=None, voie=N
 
         etat = await conversations.vocal_de_soi_meme(f"+{chiffres(numero)}", texte)
         return JSONResponse({"etat": etat}, status_code=200 if etat in ("parti", "attente") else 503)
+
+    if appels is not None:
+        from .appels_routes import routes as routes_appels
+
+        routes_appels(app, appels, licence_echue)
 
     def interne(requete: Request) -> bool:
         jeton = requete.headers.get("x-megga-interne", "")

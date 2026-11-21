@@ -45,6 +45,14 @@ def appliquer(base: Config, reglages: dict) -> Config:
     roles = d.get("roles") or {}
     if "humeur" in r and roles.get("gestionnaire"):
         roles["gestionnaire"]["humeur"] = r["humeur"]
+    # Les appels (noyau/appels.py) : seulement pour un client qui les a ; la durée se règle en minutes.
+    appels = d.get("appels")
+    if appels is not None:
+        for cle, champ in (("appels", "accepter"), ("appels_qui", "qui")):
+            if cle in r:
+                appels[champ] = r[cle]
+        if "appels_duree" in r:
+            appels["duree_max"] = int(r["appels_duree"]) * 60
     accueil = r.get("accueil")
     if isinstance(accueil, dict) and roles.get("visiteur"):
         roles["visiteur"]["accueil"] = {**(roles["visiteur"].get("accueil") or {}),
@@ -57,14 +65,14 @@ def appliquer_au_mieux(base: Config, reglages: dict) -> tuple[Config, list[str]]
     faux n'emporte pas les autres."""
     try:
         return appliquer(base, reglages), []
-    except (ValidationError, KeyError, TypeError):
+    except (ValidationError, ValueError, KeyError, TypeError):
         pass
     gardes, refuses = {}, []
     for cle, valeur in reglages.items():
         try:
             appliquer(base, {**gardes, cle: valeur})
             gardes[cle] = valeur
-        except (ValidationError, KeyError, TypeError):
+        except (ValidationError, ValueError, KeyError, TypeError):
             refuses.append(cle)
     return appliquer(base, gardes), refuses
 
@@ -87,9 +95,12 @@ class ReglagesDeLaGestion:
         self._prochain = 0.0
         self._verrou = asyncio.Lock()
 
-    async def rafraichir(self) -> None:
-        if self.horloge() < self._prochain or self._verrou.locked():
+    async def rafraichir(self, forcer: bool = False) -> None:
+        """`forcer` : relus même s'ils l'ont été il y a moins de trente secondes (au décrochage d'un appel, noyau/appels.py :
+        Greg coupe les appels d'un clic, le suivant le sait)."""
+        if not forcer and (self.horloge() < self._prochain or self._verrou.locked()):
             return
+        # Forcé, la relecture en cours (celle du démarrage) est attendue, puis refaite : sa réponse peut précéder le clic.
         async with self._verrou:
             self._prochain = self.horloge() + self.intervalle
             r = None

@@ -210,3 +210,12 @@ def test_les_rappels_et_le_mot_du_matin_relisent_les_reglages():
     c.avant_le_tour, c.echeances = avant, [echeance]
     run(c.envoyer_rappels_echus(1000.0))
     assert vus == ["relu", "echeance"]
+
+
+def test_au_decrochage_d_un_appel_les_reglages_se_relisent_sans_attendre():
+    """noyau/appels.py relit les réglages à chaque décrochage (forcer) : Greg coupe les appels d'un clic, l'appel suivant le sait."""
+    r, servies, appels, _ = _reglages([(200, {"reglages": {"appels": True}}), (200, {"reglages": {"appels": False}})])
+    run(r.rafraichir())
+    run(r.rafraichir())  # dans les trente secondes : rien
+    run(r.rafraichir(forcer=True))
+    assert len(appels) == 2 and servies[-1].appels.accepter is False

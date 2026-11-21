@@ -339,6 +339,11 @@ class Contacts:
         with self._e.connect() as c:
             return c.execute(select(self._t.c.dernier_entrant).where(self._t.c.personne == personne)).scalar()
 
+    def nom(self, personne: str) -> str:
+        """Le nom que la personne s'est donné sur WhatsApp, ou « » (un appel n'en apporte pas, noyau/appels.py)."""
+        with self._e.connect() as c:
+            return c.execute(select(self._t.c.nom).where(self._t.c.personne == personne)).scalar() or ""
+
 
 class Rappels:
     """Les rappels demandés à l'agent (« rappelle-moi jeudi de… »), table megga_rappels.
