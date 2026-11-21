@@ -13,6 +13,7 @@ Variables d'environnement (jamais dans le dépôt) :
 Rôles, par le jeton (Authorization: Bearer …) :
   MEGGA   ADMIN_TOKEN : tous les clients, tous les réglages
   client  un jeton délivré par MEGGA : son seul agent, les réglages simples
+  client  aussi : ADMIN_TOKEN avec l'en-tête X-Megga-Client (la console, au nom d'un client, avec ses droits)
 
 Routes (toutes sous /atelier) :
   GET   /catalogue                              métiers, outils, zones, modèles, réglages du client
@@ -172,6 +173,12 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     def identite(requete: Request) -> Identite:
         jeton = (requete.headers.get("authorization") or "").removeprefix("Bearer ").strip()
         if jeton and hmac.compare_digest(jeton.encode(), admin.encode()):
+            # La console de MEGGA agit au nom d'un client (son espace client) : avec les droits de ce client, rien de plus.
+            pour = requete.headers.get("x-megga-client")
+            if pour is not None:
+                if not ID.fullmatch(pour):
+                    raise Refus(400, "X-Megga-Client : l'identifiant d'un client")
+                return Identite("client", pour)
             return Identite("megga")
         client = jetons.client(jeton)
         if client:
