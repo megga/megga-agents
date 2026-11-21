@@ -28,10 +28,12 @@ requires = ["setuptools>=70"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["noyau", "atelier", "pilote", "packs", "packs.immobilier"]
+packages = ["noyau", "atelier", "atelier.gabarits", "pilote", "packs", "packs.immobilier"]
 
 [tool.setuptools.package-data]
 "packs.immobilier" = ["demo/*.json"]
+# Le catalogue des modèles (lot 11) et la licence des textes repris d'agency-agents (atelier/gabarits).
+"atelier.gabarits" = ["*.txt", "catalogue/*.md", "catalogue/*/*.md"]
 # Les clés publiques des licences, du pilotage et des images (scripts/licence.py cle, scripts/pilotage.py cle,
 # scripts/cle_signature.sh, copiée de socle/cosign.pub à la construction), quand elles existent.
 "noyau" = ["licence.pub", "pilotage.pub", "cosign.pub"]
