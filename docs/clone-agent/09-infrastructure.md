@@ -157,7 +157,7 @@ Les longues tâches (ingestion) avancent par lots de quelques minutes, chaque lo
 
 ### Les modèles et les services autour
 
-- Les appels aux modèles partent du pool, par une voie de la zone (Claude en direct, ou par AWS Bedrock en Europe quand un titulaire l'exige), sans journal de contenu chez un intermédiaire. Pas de passerelle qui garderait les requêtes.
+- Les appels aux modèles ne partent **que par la passerelle des modèles** de la zone (12) : les conteneurs du clone n'ont aucune autre sortie vers un fournisseur. Elle envoie les données brutes au **pool de modèles maison** (des cartes graphiques dans la zone, deux au moins pour la disponibilité) et seulement du texte pseudonymisé à un modèle extérieur (Claude en direct, ou par AWS Bedrock en Europe), sans journal de contenu ni chez elle ni chez un intermédiaire.
 - Composio : un projet par zone si Composio le permet (sinon, son traitement et ses régions à vérifier avant le premier titulaire de chaque zone, comme pour ElevenLabs dans le plan). Chaque titulaire y est un utilisateur, sous son identifiant opaque.
 - Pas de secours chez un fournisseur que la zone n'autorise pas (voir 02, « Les modèles »).
 

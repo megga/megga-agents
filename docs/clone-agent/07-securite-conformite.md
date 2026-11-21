@@ -68,9 +68,13 @@ Ce qu'on en retient pour le clone, à faire confirmer par le juriste :
 - Le clone ne prend aucune décision médicale, juridique ou financière importante seul (les garde-fous santé et juridique du catalogue, lot 11, s'appliquent aux réponses du clone).
 - Une personne en détresse : le clone le dit, donne les numéros d'urgence de sa zone (déjà fait pour les agents de santé du catalogue), et ne prend pas le rôle d'un proche.
 
+## Les modèles de langue : rien en clair vers l'extérieur
+
+La stratégie complète est dans [12-confidentialite.md](12-confidentialite.md) : trois classes de données, des modèles maison dans chaque zone pour les données brutes, un sas de pseudonymisation avant tout modèle extérieur, une passerelle unique qui échoue fermée. Une donnée sensible ne sort jamais, même pseudonymisée.
+
 ## Questions pour le juriste (à rassembler avant C4)
 
-1. Rôle de MEGGA et base légale pour les données des tiers.
+1. Rôle de MEGGA et base légale pour les données des tiers ; statut des données pseudonymisées chez le fournisseur extérieur (12).
 2. AIPD : périmètre et calendrier.
 3. AI Act : transparence des textes envoyés par le clone ; marquage des contenus.
 4. Voix et avatar : forme du consentement, vérification d'identité, durée de conservation.

@@ -67,7 +67,7 @@ Un petit module du noyau, sur la machine, décide pour **chaque étape** d'une t
 
 **Le contrôle de qualité** : quand la machine a produit un brouillon qui part vers un tiers, un contrôle rapide (le même petit modèle ou une règle) vérifie qu'il tient debout (destinataire, faits, ton, longueur). S'il doute, l'étape repart vers le cloud. Le titulaire ne voit que le bon résultat.
 
-**Ce qui part dans le cloud** : seulement le dossier de l'étape (04, « Le dossier du tour »), jamais tout le modèle de soi, chiffré en transit, traité dans la zone du titulaire comme pour les offres cloud, rien de gardé après l'étape. La politique de confidentialité le dit clairement : l'offre Local n'est pas « rien ne sort jamais ».
+**Ce qui part dans le cloud** : seulement le dossier de l'étape (04, « Le dossier du tour »), jamais tout le modèle de soi, et selon la règle de [12-confidentialite.md](12-confidentialite.md) : **une donnée sensible (classe A) ne quitte jamais la machine** ; le reste va aux modèles maison de MEGGA dans la zone, ou pseudonymisé sur la machine avant d'en sortir s'il doit aller à un modèle extérieur. Rien n'est gardé après l'étape. La politique de confidentialité le dit clairement : l'offre Local n'est pas « rien ne sort jamais », sauf en réglage « Tout sur ma machine ».
 
 **Pour qui veut que rien ne sorte** : un réglage avancé, « Tout sur ma machine », coupe le renfort et le veilleur. Le clone fait alors ce que la machine sait faire, et le dit quand il ne peut pas. Ce réglage est éteint par défaut.
 

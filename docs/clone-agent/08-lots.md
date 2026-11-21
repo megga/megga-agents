@@ -29,6 +29,7 @@ flowchart LR
 ## C1. Les fondations grand public
 
 - Le métier `clone` dans `noyau/config.py` (configuration en version 2, section `clone`), son gabarit dans l'atelier.
+- La confidentialité ([12-confidentialite.md](12-confidentialite.md)) : la passerelle unique des modèles, la sortie réseau fermée des conteneurs, les trois classes de données dans le schéma, le premier pool de modèles maison en zone Europe, les canaris.
 - Le socle d'identité commun à tous les clones : aucun modèle nommé, ni dans les réponses, ni dans l'interface, ni dans le journal ; l'essai des vingt questions sur le modèle ([11-offre-locale.md](11-offre-locale.md)).
 - Les vérifications de [09-infrastructure.md](09-infrastructure.md) (conteneurs, Durable Objects, Neon, service de clés, Exoscale), avant d'écrire le reste.
 - Le noyau qui sert plusieurs titulaires depuis un même conteneur : configuration et outils chargés au début du tour, cache court, rien de propre à un titulaire dans l'état du processus ; le mode `MEGGA_SERVICE=clone`.
@@ -60,6 +61,7 @@ flowchart LR
 - Le dossier du tour (relecture du modèle de soi, budget de jetons, cache).
 - Le premier service pendant l'onboarding (tri, trois brouillons).
 - Le jeu « Qui a écrit ça ? ».
+- Le sas de pseudonymisation et de ré-identification, le classement des données à l'ingestion ([12-confidentialite.md](12-confidentialite.md)) ; le jeu « Qui a écrit ça ? » mesure aussi l'écart de qualité dû à la pseudonymisation.
 - **Fini quand** : sur une boîte mail d'essai, les brouillons ressemblent assez pour que le jeu soit perdu une fois sur deux par son propriétaire.
 - **Essais** : boîtes mail synthétiques (avec tiers, langues, contextes) ; aucune donnée d'un titulaire dans les extraits d'un autre ; un mail piégé qui tente d'écrire dans le modèle de soi n'y écrit rien ; coût d'ingestion mesuré.
 
@@ -77,6 +79,7 @@ flowchart LR
 - Le coût par mission, dans le relevé chiffré.
 - **Fini quand** : un titulaire d'essai vit une semaine avec son clone sur ses mails et son agenda, avec au moins un domaine en « agir », sans aucune action hors permission.
 - **Essais** : chaque combinaison du curseur ; le banc d'injections (aucune action provoquée par un contenu) ; une action non confirmée par le service n'est jamais dite faite ; pause immédiate.
+- Les niveaux de confidentialité Standard et Strict, le journal de confidentialité dans l'app, la règle WhatsApp (aucune donnée sensible écrite sur WhatsApp).
 - **Avant de commencer** : l'avis du juriste sur les points de [07-securite-conformite.md](07-securite-conformite.md).
 
 ## C5. L'apprentissage
@@ -127,6 +130,8 @@ flowchart LR
 2. **Le secours de modèle d'un clone** : pas DeepSeek par défaut ; un autre Claude ou Claude par une autre voie ?
 3. **Le nom public** : Clone, Double ou Twin ? (à tester auprès d'utilisateurs, n'empêche pas C1)
 4. **Les tarifs** : la grille de [10-tarifs.md](10-tarifs.md) et ses cinq questions (prix du crédit, prix TTC égaux aux prix HT, ouverture de Pro, connecteurs directs, sauvegarde de l'offre Local). Les poids des crédits se recalent sur les coûts mesurés après C4.
+
+5. **La confidentialité** ([12-confidentialite.md](12-confidentialite.md)) : le principe (rien en clair vers l'extérieur, la classe A jamais dehors), le coût fixe des modèles maison, l'hébergeur des cartes graphiques par zone.
 
 ### Avant C4 (Julien, Thomas, juriste)
 

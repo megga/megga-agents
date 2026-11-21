@@ -32,6 +32,7 @@ Trois briques nouvelles, posées sur le socle existant :
 | Ressemblance | **Complète** : style d'écriture et décisions, voix clonée, avatar vidéo (dans cet ordre) |
 | Offres | **Free, Plus (20), Pro (100), Ultra (200), et Local (5)** pour un clone sur sa propre machine ; chaque abonnement couvre son coût cloud ([10-tarifs.md](10-tarifs.md)) |
 | Identité | **Aucun modèle nommé**, sur aucune offre : on voit son clone et MEGGA, jamais la technique ([11-offre-locale.md](11-offre-locale.md)) |
+| Confidentialité | **Rien en clair vers un modèle extérieur** : données brutes traitées par des modèles maison dans la zone, texte pseudonymisé seulement vers l'extérieur, données sensibles jamais dehors ([12-confidentialite.md](12-confidentialite.md)) |
 | Local | **Hybride et sans couture** : la machine fait ce qu'elle peut, le cloud prend le relais et veille quand elle dort, sans que le titulaire le voie |
 | Infrastructure | **Confiée à Claude** : calcul partagé sans état, un coordinateur endormi par titulaire, données en cellules isolées par la base et le chiffrement ([09-infrastructure.md](09-infrastructure.md), à valider par Julien) |
 
@@ -50,11 +51,12 @@ Trois briques nouvelles, posées sur le socle existant :
 | [09-infrastructure.md](09-infrastructure.md) | l'infrastructure cloud du grand public : pools, coordinateurs, cellules, clés, zone Suisse, dimensionnement, pannes |
 | [10-tarifs.md](10-tarifs.md) | les offres Free, Plus, Pro, Ultra et Local, le crédit, la disponibilité et le temps de travail, les coûts unitaires, la rentabilité, les machines |
 | [11-offre-locale.md](11-offre-locale.md) | l'offre Local hybride (orchestrateur, renfort cloud, veilleur), et l'identité unique du clone sur toutes les offres |
+| [12-confidentialite.md](12-confidentialite.md) | la confidentialité : trois classes de données, modèles maison, sas de pseudonymisation, passerelle unique, canaris |
 
 ## Les principes qui ne bougent pas
 
 1. **La personne garde la main.** Elle voit tout ce que son clone a fait, peut tout arrêter d'un geste, et règle elle-même son autonomie.
-2. **Ses données sont à elle.** Une personne ne voit jamais les données d'une autre ; MEGGA suit la santé et les chiffres de chaque clone, jamais ce qu'il lit ni ce qu'il écrit (comme la décision de Julien du 20.11.2026 pour les conversations). Tout s'exporte et tout s'efface.
+2. **Ses données sont à elle.** Aucun texte brut ne part vers un modèle extérieur, et une donnée sensible ne quitte jamais la zone (12). Une personne ne voit jamais les données d'une autre ; MEGGA suit la santé et les chiffres de chaque clone, jamais ce qu'il lit ni ce qu'il écrit (comme la décision de Julien du 20.11.2026 pour les conversations). Tout s'exporte et tout s'efface.
 3. **Le clone ne ment pas sur ce qu'il est** quand la loi ou la situation demandent de le dire : une voix ou une vidéo de synthèse est toujours signalée.
 4. **Rien n'est dit fait sans preuve** : une action n'est annoncée que si l'outil l'a confirmée (règle déjà en place pour Composio).
 5. **Une seule identité** : le clone dit qu'il est une IA, jamais sur quel modèle il tourne ; il se tait plutôt que de mentir.

@@ -99,10 +99,12 @@ Une tâche, c'est en général trois appels au modèle (lire, décider, agir et 
 
 | Modèle | Une tâche | Part visée |
 |---|---|---|
-| Haiku 5.5 (trier, résumer, réponses simples, extraction) | environ 0,003 $ | 70 % |
+| Travail simple : trier, résumer, réponses simples, extraction (modèles maison depuis [12](12-confidentialite.md), Haiku 5.5 sert d'étalon de coût) | environ 0,003 $ | 70 % |
 | Sonnet 5.5 (rédiger comme le titulaire, agir avec des outils) | environ 0,05 $ | 28 % |
 | Opus 5.5 (décisions difficiles, compté à part : 5 crédits) | environ 0,10 $ | 2 % |
 | **Moyenne** | **environ 0,018 $** | |
+
+**Avec la confidentialité de 12** : ce travail simple, et tout ce qui touche une donnée sensible, passe par les modèles maison de MEGGA, et Sonnet ne reçoit que du texte pseudonymisé. Au lancement, les cartes graphiques à moitié vides coûtent plus cher que Haiku (un coût fixe d'environ 10 800 $ par mois pour trois zones) ; à plein régime, moins cher. Les poids des crédits ne changent pas.
 
 **La condition** : un routage qui envoie à Haiku tout ce qu'il fait aussi bien. Haiku 5.5 coûte vingt fois moins que Sonnet 5.5 ; c'est la décision d'architecture qui pèse le plus sur la rentabilité. Le jeu « Qui a écrit ça ? » et les mesures de ressemblance (C3, C5) diront quelles tâches Haiku tient sans que le titulaire voie la différence. Si la part de Haiku tombe à 40 %, une tâche coûte environ 0,03 $ : on passe la tâche à 1,5 crédit, et la marge ne bouge pas.
 
@@ -144,6 +146,8 @@ C'est réaliste pour un produit d'IA grand public, à condition de tenir l'offre
 - pas de navigateur, pas de voix, pas de WhatsApp sortant.
 
 ### Les coûts fixes à couvrir (hors titulaires)
+
+Depuis [12-confidentialite.md](12-confidentialite.md), le premier d'entre eux est **le pool de modèles maison** : deux cartes graphiques par zone au moins, environ 10 800 $ par mois pour trois zones au départ (environ 1 $ par titulaire et par mois à 10 000 titulaires, 0,11 $ à 100 000).
 
 Ce que la marge doit payer avant d'être un bénéfice : l'équipe, le support, la validation de sécurité annuelle de Google pour Gmail, le juriste et l'AIPD, le test d'intrusion, la zone Suisse chez Exoscale (environ 263 € par mois au départ, dans le plan), les forfaits de base des fournisseurs (Composio, ElevenLabs), le programme de signalement des failles. **Le seuil de rentabilité, c'est les coûts fixes du mois divisés par la contribution d'un payant** : par exemple, 50 000 $ de coûts fixes par mois demandent environ 2 600 payants à 5 % de conversion (exemple, pas une estimation des coûts fixes).
 

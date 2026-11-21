@@ -154,10 +154,13 @@ Ces tâches passent par une file tenue dans Postgres, la même dans toutes les z
 
 | Usage | Modèle proposé | Pourquoi |
 |---|---|---|
-| Le clone, chaque tour | Claude Sonnet 5.5 | le défaut de la plateforme |
-| Extraction, tri, classement, consolidation | Claude Haiku 5.5 | volume énorme pendant l'ingestion |
-| Décisions délicates, rédaction difficile | Claude Opus 5.5, à la demande | rare, cher, à mesurer |
-| Le navigateur (computer use) | un modèle Claude qui pilote un écran | voir 05 |
+| Extraction, tri, classement, consolidation, embeddings, transcription, tâches simples | **modèles maison** (ouverts, servis par MEGGA dans la zone) | les données brutes ne sortent pas ; volume énorme |
+| Tout ce qui touche une donnée sensible (classe A) | **modèles maison**, dont un grand modèle pour les tâches difficiles | jamais dehors, même pseudonymisé |
+| Rédiger comme le titulaire, agir, décider (classe B) | Claude Sonnet 5.5, **sur du texte pseudonymisé seulement** ; ou modèles maison en niveau Strict | la meilleure qualité, sans données en clair |
+| Décisions délicates, rédaction difficile | Claude Opus 5.5, à la demande, pseudonymisé | rare, cher, à mesurer |
+| Le navigateur | recettes sans modèle ; sinon page pseudonymisée pour Claude, ou vision maison sur les sites sensibles | voir 05 et 12 |
+
+Tout passe par **une passerelle unique**, seule sortie permise vers un modèle, qui classe, pseudonymise et refuse en cas de doute : la stratégie complète est dans [12-confidentialite.md](12-confidentialite.md).
 
 **Le secours DeepSeek** (`deepseek-v4-pro`, défaut des agents d'entreprise) n'est **pas** proposé par défaut pour un clone : les données d'une personne (mails, santé, finances, proches) ne doivent partir que chez un fournisseur que sa zone permet. Le secours d'un clone est un autre modèle Claude, ou Claude par une autre voie (AWS Bedrock en Europe). À trancher par Julien.
 
