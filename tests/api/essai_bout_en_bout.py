@@ -41,7 +41,9 @@ class FauxClaude(BaseHTTPRequestHandler):
         d = json.loads(self.rfile.read(int(self.headers["content-length"])))
         tours = [m for m in d.get("messages", []) if m.get("role") == "user"]
         dernier = tours[-1]["content"] if tours else ""
-        texte = dernier if isinstance(dernier, str) else " ".join(b.get("text", "") for b in dernier if isinstance(b, dict))
+        # Le texte de la personne seul : le Contexte du tour (l'heure, ses demandes) le suit dans un bloc à part.
+        blocs = [dernier] if isinstance(dernier, str) else [b.get("text", "") for b in dernier if isinstance(b, dict)]
+        texte = " ".join(b for b in blocs if not b.startswith("<additional context>"))
         FauxClaude.vus.append(texte)
         reponse = {"id": "msg_essai", "type": "message", "role": "assistant", "model": d.get("model"),
                    "content": [{"type": "text", "text": f"Reçu {len(tours)} message(s) de vous."}],
