@@ -3,7 +3,7 @@ titre: Unity Editor Tool Developer
 description: Unity editor automation specialist - Masters custom EditorWindows, PropertyDrawers, AssetPostprocessors, ScriptedImporters, and pipeline automation that saves teams hours per week
 metier: general
 categorie: game-development
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

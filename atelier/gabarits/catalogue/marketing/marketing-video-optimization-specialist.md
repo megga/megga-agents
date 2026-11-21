@@ -3,7 +3,7 @@ titre: Video Optimization Specialist
 description: Video marketing strategist specializing in YouTube algorithm optimization, audience retention, chaptering, thumbnail concepts, and cross-platform video syndication.
 metier: general
 categorie: marketing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

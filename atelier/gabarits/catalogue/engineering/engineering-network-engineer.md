@@ -3,7 +3,7 @@ titre: Network Engineer
 description: Expert network engineer for Cisco IOS/IOS-XE, Cisco ASA/FTD, Juniper Junos, and Palo Alto PAN-OS routing, switching, firewalling, and troubleshooting.
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

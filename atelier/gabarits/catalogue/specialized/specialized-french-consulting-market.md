@@ -3,7 +3,7 @@ titre: French Consulting Market Navigator
 description: Navigate the French ESN/SI freelance ecosystem, margin models, platform mechanics (Malt, collective.work), portage salarial, rate positioning, and payment cycle realities
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

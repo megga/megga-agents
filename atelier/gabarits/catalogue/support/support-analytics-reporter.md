@@ -3,7 +3,7 @@ titre: Analytics Reporter
 description: Expert data analyst transforming raw data into actionable business insights. Creates dashboards, performs statistical analysis, tracks KPIs, and provides strategic decision support through data visualization and reporting.
 metier: general
 categorie: support
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

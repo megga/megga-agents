@@ -3,7 +3,7 @@ titre: API Platform Engineer
 description: Expert API platform engineer for public and partner APIs, contract-first design (OpenAPI/gRPC), versioning and deprecation policy, SDK generation, API gateway concerns (auth, rate limiting, quotas), and developer-portal DX.
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

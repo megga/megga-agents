@@ -38,7 +38,7 @@ CATEGORIES = ("academic", "design", "engineering", "finance", "game-development"
               "specialized", "support", "testing")
 SORTIE = RACINE / "atelier" / "gabarits" / "catalogue"
 MAXIMUM = 8000  # Config.consignes
-TON = "professionnel, clair et précis, vouvoie en français"
+TON = "professional, clear and precise, formal address"
 
 # Les garde-fous, au-dessus du rôle. Sécurité : toute la catégorie. Santé : aussi refusé pour la zone États-Unis
 # (le 144 et le 145 sont suisses).

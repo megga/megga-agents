@@ -27,6 +27,7 @@ Les 283 agents du commit `8ae6164602c95ca78828b148b9052460ee426885`, un fichier 
 
 - **L'en-tête** : le nom et la description de la source (en anglais), `metier: general`, la catégorie, le ton, les garde-fous, la source (dépôt, chemin, commit, MIT) et, s'il a fallu changer le texte, `adapte`.
 - **Les consignes** : le socle `catalogue/_catalogue.md`, les garde-fous de l'en-tête, puis le rôle. Le rôle est le texte de l'agent, en anglais, raccourci pour que le tout tienne dans les 8 000 caractères de `Config` : sans blocs de code, emojis, filets ni tirets longs (`noyau.typographie`) ; d'abord l'introduction, l'identité, les règles et la mission, puis le reste tant qu'il y a la place.
+- **En anglais** : les agents servent dans toutes les langues, donc tout ce qu'ils lisent est en anglais, comme le rôle de la source : le socle, les garde-fous et le ton (« professional, clear and precise, formal address »). L'agent répond toujours dans la langue de la personne (décision de Julien, 21.11.2026).
 - **Le socle** : répondre dans la langue de la personne, d'après ce qu'on sait de l'entreprise et ce que rendent les outils ; ne jamais faire comme si une action avait eu lieu ; ne confirmer ni commande, ni rendez-vous, ni paiement ; aucun avis médical ni juridique ; le 112 en cas de danger ; ni attaquer, ni surveiller, ni tromper quelqu'un, ni contourner une protection ; aucune donnée bancaire, aucun mot de passe.
 - **Les réglages** : ceux du généraliste (métier `general`, aucun pack, voix par défaut). Sur `main`, l'agent n'a ni le transfert à un humain ni les demandes notées : le socle ne promet donc pas de « transmettre » une question, il invite la personne à s'adresser à l'équipe. Quand ces outils arriveront, le socle les nommera et le script réécrira le catalogue.
 - **Les routes** : les mêmes que pour les autres modèles (`POST /clients`, `POST /clients/{id}/gabarit`) ; `GET /gabarits` rend les deux modèles écrits dans le code puis le catalogue, avec `categorie`, `garde_fous` et `source`. Les consignes d'un modèle du catalogue sont reconnues comme celles d'un modèle (`regles.consignes_de_gabarit`) : un client peut passer de l'un à l'autre.
@@ -52,7 +53,6 @@ Les 283 agents du commit `8ae6164602c95ca78828b148b9052460ee426885`, un fichier 
 
 ## Ce qui reste
 
-- Les agents de finance (`finance-investment-researcher`, `loan-officer-assistant`, `chief-financial-officer`...) n'ont pas de garde-fou propre. À trancher avec Julien.
+- Les agents de finance (`finance-investment-researcher`, `loan-officer-assistant`, `chief-financial-officer`...) restent sans garde-fou propre : décision de Julien, 21.11.2026.
 - Le banc d'essai avec les vrais modèles n'existe pas sur `main` (il vient du lot 9.6) : le catalogue n'est vérifié que par les tests et l'essai de l'atelier.
-- Les titres, descriptions et rôles sont ceux de la source, en anglais ; l'agent répond dans la langue de la personne.
 - `GET /gabarits` rend 285 modèles avec leurs consignes entières (environ 2 Mo) : un filtre par catégorie pourra servir à la console.

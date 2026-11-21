@@ -3,7 +3,7 @@ titre: XR Cockpit Interaction Specialist
 description: Specialist in designing and developing immersive cockpit-based control systems for XR environments
 metier: general
 categorie: spatial-computing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

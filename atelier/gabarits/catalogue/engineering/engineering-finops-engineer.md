@@ -3,7 +3,7 @@ titre: FinOps Engineer
 description: Expert cloud cost engineer for AWS/GCP/Azure, cost allocation and tagging, rightsizing, commitment planning (reserved instances/savings plans), egress and storage optimization, and unit-economics dashboards that tie spend to business value.
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

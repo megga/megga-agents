@@ -3,7 +3,7 @@ titre: Discovery Coach
 description: Coaches sales teams on elite discovery methodology, question design, current-state mapping, gap quantification, and call structure that surfaces real buying motivation.
 metier: general
 categorie: sales
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

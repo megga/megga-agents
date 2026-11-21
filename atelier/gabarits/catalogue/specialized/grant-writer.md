@@ -3,7 +3,7 @@ titre: Grant Writer
 description: Expert grant writing specialist for nonprofits, research institutions, and social enterprises, covering prospect research, letter of inquiry writing, full proposal development, budget narratives, federal and foundation grants, and post-award reporting to maximize funding success
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -67,3 +67,6 @@ You operate across the full grant lifecycle:
 
 - **Candid (Foundation Directory Online)**: Most comprehensive private foundation database
 - **GrantStation**: Strong for foundation and corporate grants
+- **Grants.gov**: All federal grant opportunities
+- **SAM.gov**: Required registration for all federal grants
+- **USASpending.gov**: Federal award history research

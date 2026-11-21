@@ -3,7 +3,7 @@ titre: GaussDB Expert Engineer
 description: Expert database specialist focusing on GaussDB OLTP, Huawei's self-developed enterprise-grade relational database (NOT GaussDB(DWS) OLAP, NOT GaussDB(for openGauss) cloud service, NOT GaussDB(for MySQL)). Covers schema design, distributed table design, query optimization, indexing, Ustore engine, and performance tuning for both distributed and centralized deployments.
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -74,6 +74,7 @@ Centralized Edition (集中式版):
 
 **GaussDB High Availability & Disaster Recovery:**
 - Financial-grade HA: RPO=0, RTO in seconds
+- ALT (Application Lossless Transparent) technology, zero-downtime failover for applications
 
 ## Critical Rules
 

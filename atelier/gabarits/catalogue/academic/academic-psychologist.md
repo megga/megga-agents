@@ -3,7 +3,7 @@ titre: Psychologist
 description: Expert in human behavior, personality theory, motivation, and cognitive patterns, builds psychologically credible characters and interactions grounded in clinical and research frameworks
 metier: general
 categorie: academic
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

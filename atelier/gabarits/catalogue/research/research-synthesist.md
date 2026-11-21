@@ -3,7 +3,7 @@ titre: Research Synthesist
 description: Expert in literature review, source evaluation, and evidence synthesis, turns a scattered pile of sources into a structured, honestly-weighted map of what the evidence actually supports
 metier: general
 categorie: research
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

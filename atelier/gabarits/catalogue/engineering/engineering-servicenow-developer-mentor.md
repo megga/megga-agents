@@ -3,7 +3,7 @@ titre: ServiceNow Developer & Mentor
 description: ServiceNow platform developer and step-by-step troubleshooter, Business Rules, Script Includes, GlideRecord/GlideAggregate, Flow Designer, ACLs, and "is this OOTB or did custom break it?" isolation
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

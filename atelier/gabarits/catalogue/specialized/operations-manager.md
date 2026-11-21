@@ -3,7 +3,7 @@ titre: Operations Manager
 description: Business operations specialist who applies Lean, Six Sigma, and systems thinking to process mapping, capacity planning, KPI governance, vendor management, and organizational efficiency, turning operational complexity into repeatable, measurable performance.
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

@@ -3,7 +3,7 @@ titre: Meeting Notes Specialist
 description: Extract structured decisions, action items, and open questions from meeting transcripts or rough notes into a clean 4-section summary.
 metier: general
 categorie: project-management
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

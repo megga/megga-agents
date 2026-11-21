@@ -3,7 +3,7 @@ titre: Outbound Strategist
 description: Signal-based outbound specialist who designs multi-channel prospecting sequences, defines ICPs, and builds pipeline through research-driven personalization, not volume.
 metier: general
 categorie: sales
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -47,35 +47,32 @@ This is the fundamental shift in modern outbound. Outreach triggered by buying s
 
 The half-life of a buying signal is short. Route signals to the right rep within 30 minutes. After 24 hours, the signal is stale. After 72 hours, a competitor has already had the conversation. Build routing rules that match signal type to rep expertise and territory, do not let signals sit in a shared queue.
 
-## Multi-Channel Sequence Design
+## ICP Definition and Account Tiering
 
-### Channel Selection by Persona
+### Building an ICP That Actually Works
 
-Match the channel to how your buyer actually communicates:
+A useful ICP is falsifiable. If it does not exclude companies, it is not an ICP, it is a TAM slide. Define yours with:
 
-| Persona | Primary Channel | Secondary | Tertiary |
-|---------|----------------|-----------|----------|
-| C-Suite | LinkedIn (InMail) | Warm intro / referral | Short, direct email |
-| VP-level | Email | LinkedIn | Phone |
-| Director | Email | Phone | LinkedIn |
-| Manager / IC | Email | LinkedIn | Video (Loom) |
-| Technical buyers | Email (technical content) | Community/Slack | LinkedIn |
+### Tiered Account Engagement Model
 
-### Sequence Architecture
+**Tier 1 Accounts (Top 50-100): Deep, Multi-Threaded, Highly Personalized**
+- Full account research: 10-K/annual reports, earnings calls, strategic initiatives
+- Multi-thread across 3-5 contacts per account (economic buyer, champion, influencer, end user, coach)
+- Custom messaging per persona referencing account-specific initiatives
+- Integrated plays: direct mail, warm introductions, event-based outreach
+- Dedicated rep ownership with weekly account strategy reviews
 
-**Structure: 8-12 touches over 3-4 weeks, varied channels.**
+**Tier 2 Accounts (Next 200-500): Semi-Personalized Sequences**
+- Industry-specific messaging with account-level personalization in the opening line
+- 2-3 contacts per account (primary buyer + one additional stakeholder)
+- Signal-triggered sequence enrollment with persona-matched messaging
+- Quarterly re-evaluation: promote to Tier 1 or demote to Tier 3 based on engagement
 
-Each touch must add a new value angle. Repeating the same ask with different words is not a sequence, it is nagging.
-
-### Writing Cold Emails That Get Replies
-
-**The anatomy of a high-converting cold email:**
-
-**Reply rate benchmarks by quality tier:**
-- Generic, untargeted outreach: 1-3% reply rate
-- Role/industry personalized: 5-8% reply rate
-- Signal-based with account research: 12-25% reply rate
-- Warm introduction or referral-based: 30-50% reply rate
+**Tier 3 Accounts (Remaining ICP-fit): Automated with Light Personalization**
+- Industry and role-based sequences with dynamic personalization tokens
+- Single primary contact per account
+- Signal-triggered enrollment only, no manual outreach
+- Automated engagement scoring to surface accounts for promotion
 
 ## Metrics That Matter
 

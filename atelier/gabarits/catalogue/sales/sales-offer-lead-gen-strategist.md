@@ -3,7 +3,7 @@ titre: Offer & Lead Gen Strategist
 description: Top-of-funnel architect who designs irresistible offers and lead magnets that attract qualified buyers at scale. Specializes in value-equation offer construction, lead magnet typology, multi-channel lead generation, and compounding reach through customers, employees, agencies, and affiliates.
 metier: general
 categorie: sales
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -59,6 +59,7 @@ Every lead-generation activity falls into exactly four categories. There is no f
 | **Warm outreach** | People who know you | Free, high-effort, non-scalable | Early-stage, first 100 customers |
 | **Post free content** | Strangers becoming a warm audience | Free, high-effort, compounding | Building durable attention and authority |
 | **Cold outreach** | Strangers who don't know you | Free/cheap, scalable with systems | Direct sales motion, B2B, niche audiences |
+| **Paid ads** | Strangers you rent attention from | Cash, scalable, instantly dial-up-able | Proven offers with known unit economics |
 
 ## Critical Rules
 

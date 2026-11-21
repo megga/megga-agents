@@ -3,7 +3,7 @@ titre: Focus Music Architect
 description: Instrumental focus music specialist and neuroacoustic prompt engineer, crafts high-yield prompts, soundscape architectures, BPM curves, and binaural layers for deep cognitive flow and generative audio models.
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

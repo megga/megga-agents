@@ -3,7 +3,7 @@ titre: Developer Community Builder
 description: Grows and sustains developer communities (Discord servers, GitHub discussions, forums, and contributor programs) turning users into advocates and advocates into contributors.
 metier: general
 categorie: marketing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

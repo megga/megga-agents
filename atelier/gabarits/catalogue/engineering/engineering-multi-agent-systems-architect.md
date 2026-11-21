@@ -3,7 +3,7 @@ titre: Multi-Agent Systems Architect
 description: Systems architect specializing in the design, coordination, and governance of multi-agent AI pipelines, covering topology selection, context management, inter-agent trust, failure recovery, human-in-the-loop gating, and observability for production-grade agent systems.
 metier: general
 categorie: engineering
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -76,3 +76,4 @@ Agents that process external content (web pages, user-submitted documents, email
 
 **Mitigations:**
 - Separate content processing from instruction processing: never concatenate external content directly into the system prompt
+- Use a "sanitizer" agent whose only job is to extract structured data from untrusted content before passing to downstream agents

@@ -72,7 +72,7 @@ def test_les_consignes_sont_le_socle_les_garde_fous_puis_le_role():
         attendu = "\n\n".join([socle("_catalogue.md"), *(socle(f"_{x}.md") for x in g["garde_fous"])])
         assert consignes.startswith(attendu + "\n\n") and len(consignes) <= 8000, ident
         assert len(consignes) > len(attendu) + 500, ident   # le rôle de la source est bien là
-        assert "avis médical" in consignes and "avis juridique" in consignes, ident   # pour tous, par le socle
+        assert "medical advice" in consignes and "legal advice" in consignes, ident   # pour tous, par le socle
 
 
 def test_les_socles_ne_promettent_que_ce_que_l_agent_sait_faire():
@@ -82,14 +82,24 @@ def test_les_socles_ne_promettent_que_ce_que_l_agent_sait_faire():
         c = g["reglages"]["consignes"]
         assert "passer_la_main" not in c and "enregistrer_lead" not in c
     for nom in ("_catalogue.md", "_securite.md", "_sante.md", "_juridique.md"):
-        assert "transmettre" not in socle(nom), nom
+        assert not re.search(r"transmit|forward|pass (it|the question) on", socle(nom)), nom
+
+
+def test_les_textes_de_l_agent_sont_en_anglais():
+    """Les agents servent dans toutes les langues : leurs consignes et leur ton sont en anglais (comme le rôle de la
+    source), et l'agent répond dans la langue de la personne. Rien n'y suppose le français."""
+    for nom in ("_catalogue.md", "_securite.md", "_sante.md", "_juridique.md"):
+        assert not re.search(r"\b(tu|ne|jamais|personne|entreprise|français)\b|[éèàç]", socle(nom), re.I), nom
+    assert "language of the person" in socle("_catalogue.md")
+    for ident, g in gabarits.CATALOGUE.items():
+        assert g["reglages"]["ton"] == "professional, clear and precise, formal address", ident
 
 
 def test_les_douze_agents_de_securite_passent_la_regle_defensive():
     securite = {k: g for k, g in gabarits.CATALOGUE.items() if g["categorie"] == "security"}
     assert len(securite) == 12
     regle = socle("_securite.md")
-    assert "strictement défensif" in regle and "logiciel malveillant" in regle and "contourner une protection" in regle
+    assert "strictly defensive" in regle and "malicious software" in regle and "get around a protection" in regle
     for ident, g in securite.items():
         assert "securite" in g["garde_fous"] and regle in g["reglages"]["consignes"], ident
         role = g["reglages"]["consignes"].split(regle, 1)[1]
@@ -100,14 +110,14 @@ def test_les_douze_agents_de_securite_passent_la_regle_defensive():
     pentest = securite["security-penetration-tester"]
     assert pentest["titre"] == "Penetration Test Coordinator" and "never run an attack" in pentest["reglages"]["consignes"]
     # Hors de la catégorie security, aucun modèle n'a besoin de la règle : le socle interdit déjà d'attaquer ou de contourner.
-    assert "contourner une protection" in socle("_catalogue.md")
+    assert "get around a protection" in socle("_catalogue.md")
 
 
 def test_sante_et_juridique_sans_avis_et_la_sante_pas_aux_etats_unis():
     assert {k for k, g in gabarits.CATALOGUE.items() if "sante" in g["garde_fous"]} == SANTE
     assert {k for k, g in gabarits.CATALOGUE.items() if "juridique" in g["garde_fous"]} == JURIDIQUE
-    assert "144" in socle("_sante.md") and "jamais d'avis médical" in socle("_sante.md")
-    assert "jamais d'avis juridique" in socle("_juridique.md") and "délai" in socle("_juridique.md")
+    assert "144" in socle("_sante.md") and "never give medical advice" in socle("_sante.md")
+    assert "never give legal advice" in socle("_juridique.md") and "deadline" in socle("_juridique.md")
     assert set(gabarits.PAS_AUX_ETATS_UNIS) == SANTE
     usa = {"id": "essai", "entreprise": "Essai", "zone": "etats-unis"}
     for ident in SANTE:

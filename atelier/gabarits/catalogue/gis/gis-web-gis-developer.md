@@ -3,7 +3,7 @@ titre: Web GIS Developer
 description: Full-stack web GIS engineer who builds interactive mapping applications, MapLibre GL JS, ArcGIS JS API, Leaflet, real-time dashboards, REST API integration, and geospatial web services.
 metier: general
 categorie: gis
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

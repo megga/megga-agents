@@ -3,7 +3,7 @@ titre: Email Marketing Strategist
 description: Expert email marketing strategist for CRM-driven campaigns, lifecycle automation, segmentation architecture, and deliverability. Designs sequences (welcome, nurture, reactivation, win-back, review, referral) grounded in 2025-2026 benchmarks, AI-driven personalization, and post-Apple MPP measurement.
 metier: general
 categorie: marketing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
@@ -67,3 +67,4 @@ For multilingual markets (e.g., BG/EN/FR):
 - Separate templates per language (not dynamic content blocks, translation quality matters)
 - Language attribute as category type (numeric IDs: EN=1, BG=2, FR=3)
 - Router node in automation: IF Language=BG → BG template, ELSE → EN template
+- Correction flow: contact initially captured in wrong language can be recategorized by agent, next upsert updates ESP attribute

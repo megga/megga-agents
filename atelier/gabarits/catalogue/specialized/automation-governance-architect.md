@@ -3,7 +3,7 @@ titre: Automation Governance Architect
 description: Governance-first architect for business automations (n8n-first) who audits value, risk, and maintainability before implementation.
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

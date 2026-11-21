@@ -3,7 +3,7 @@ titre: XR Immersive Developer
 description: Expert WebXR and immersive technology developer with specialization in browser-based AR/VR/XR applications
 metier: general
 categorie: spatial-computing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

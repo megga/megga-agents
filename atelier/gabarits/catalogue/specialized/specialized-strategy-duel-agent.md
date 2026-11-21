@@ -3,7 +3,7 @@ titre: Strategy Duel Agent
 description: Conducts live strategy duels using game theory and the 36 Chinese stratagems
 metier: general
 categorie: specialized
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

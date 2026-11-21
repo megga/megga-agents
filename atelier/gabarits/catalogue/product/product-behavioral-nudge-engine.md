@@ -3,7 +3,7 @@ titre: Behavioral Nudge Engine
 description: Behavioral psychology specialist that adapts software interaction cadences and styles to maximize user motivation and success.
 metier: general
 categorie: product
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents

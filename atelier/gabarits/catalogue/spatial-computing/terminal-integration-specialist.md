@@ -3,7 +3,7 @@ titre: Terminal Integration Specialist
 description: Terminal emulation, text rendering optimization, and SwiftTerm integration for modern Swift applications
 metier: general
 categorie: spatial-computing
-ton: professionnel, clair et précis, vouvoie en français
+ton: professional, clear and precise, formal address
 garde_fous: []
 source:
   depot: https://github.com/msitarzewski/agency-agents
