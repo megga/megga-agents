@@ -1,8 +1,8 @@
 // Les alertes envoyées (20.11.2026) : le déclencheur fait évaluer l'atelier, la porte envoie les courriels.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { courrielValide, evaluerAlertes } from "../src/alertes.js";
-import { declencher, recevoir } from "../src/index.js";
+import { courrielValide, evaluerAlertes, evaluerRecharges } from "../src/alertes.js";
+import { declencher, recevoir, stripeBienForme } from "../src/index.js";
 
 const COURRIEL = { a: "julien@example.com", sujet: "Alerte : Tours en échec, Exemple SA", texte: "Tours en échec : 12 %." };
 
@@ -58,6 +58,27 @@ test("le déclencheur demande l'évaluation à l'atelier, avec le jeton de MEGGA
   const attendus = [];
   const env = { ADMIN_TOKEN: "admin", ATELIER: { jurisdiction: () => ({ getByName: () => atelier }) } };
   declencher({}, env, { waitUntil: (p) => attendus.push(p) });
-  assert.equal(await attendus[0], 200);
-  assert.equal(vues.length, 2);
+  assert.deepEqual(await Promise.all(attendus), [200, 200]);
+  // Après les alertes, les recharges sous le seuil (Stripe).
+  assert.deepEqual(vues.slice(1).map((v) => v[1]), ["/atelier/alertes/evaluer", "/atelier/recharges/evaluer"]);
+  assert.equal(await evaluerRecharges({ ADMIN_TOKEN: "admin" }, null), null);
+});
+
+test("un événement de Stripe : signature et longueur bien formées, sinon l'atelier ne se réveille pas", async () => {
+  const signature = "t=1794950000,v1=" + "a".repeat(64);
+  const entetes = (s, l = "20") => new Headers({ "stripe-signature": s, "content-length": l });
+  assert.equal(stripeBienForme(entetes(signature)), true);
+  assert.equal(stripeBienForme(entetes("t=1794950000,v0=abc,v1=" + "b".repeat(64))), true);
+  for (const faux of [entetes(""), entetes("t=x,v1=" + "a".repeat(64)), entetes("t=1,v1=court"), entetes(signature, String(300 * 1024)),
+    new Headers({ "stripe-signature": signature })]) {
+    assert.equal(stripeBienForme(faux), false);
+  }
+  const vus = [];
+  const env = { ATELIER: { jurisdiction: () => ({ getByName: () => ({ fetch: async (r) => { vus.push(new URL(r.url).pathname); return new Response("{}"); } }) }) } };
+  const corps = '{"type":"x"}';
+  const envoyer = (s) => recevoir(new Request("https://porte.essai/stripe", { method: "POST", headers: { "stripe-signature": s, "content-length": String(corps.length) }, body: corps }), env);
+  assert.equal((await envoyer("t=1,v1=faux")).status, 400);
+  assert.deepEqual(vus, []);
+  assert.equal((await envoyer(signature)).status, 200);
+  assert.deepEqual(vus, ["/stripe"]);
 });

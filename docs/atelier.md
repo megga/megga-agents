@@ -147,7 +147,23 @@ Un message ne porte que le nom de la règle, celui de l'entreprise, la valeur et
 | `DELETE /clients/{id}/abonnement` | retire un abonnement saisi par erreur |
 | `POST /clients/{id}/recharges` | `{conversations, prix}` une recharge achetée hors Stripe |
 
-Le mois d'un abonnement court d'une date anniversaire à la suivante (le 31 tombe au dernier jour d'un mois plus court), même à l'année : un forfait annuel garde une enveloppe par mois, à son prix mensuel moins la remise. Seuls `actif` et `retard` encaissent leur forfait, à partir de leur début ; une recharge compte dans le mois où elle est achetée. Le coût total compte tous les abonnés, essais compris. La marge n'est donnée que si le catalogue et les tarifs sont dans la même devise. Tant que Stripe n'est pas branché, rien ne se recharge seul : le seuil ne fait que signaler le client.
+Le mois d'un abonnement court d'une date anniversaire à la suivante (le 31 tombe au dernier jour d'un mois plus court), même à l'année : un forfait annuel garde une enveloppe par mois, à son prix mensuel moins la remise. Seuls `actif` et `retard` encaissent leur forfait, à partir de leur début ; une recharge compte dans le mois où elle est achetée. Le coût total compte tous les abonnés, essais compris. La marge n'est donnée que si le catalogue et les tarifs sont dans la même devise. Sans Stripe branché, rien ne se recharge seul : le seuil ne fait que signaler le client.
+
+**Stripe** (21.11.2026, `atelier/stripe.py`, `atelier/routes_stripe.py`) : l'API est appelée directement, sans le SDK. Rien ne part chez Stripe que l'entreprise du client, son identifiant, le forfait et les montants.
+
+| Route | Qui | Effet |
+|---|---|---|
+| `POST /clients/{id}/stripe/lien` | MEGGA | le lien de paiement de l'abonnement (Checkout) : le forfait, son prix au mois ou à l'année (le prix mensuel moins la remise, fois douze) ; le client y saisit sa carte |
+| `POST /clients/{id}/stripe/portail` | MEGGA | le portail du client : sa carte, ses factures, la résiliation |
+| `POST /recharges/evaluer` | MEGGA | prélève une recharge pour chaque client actif sous son seuil ; la porte l'appelle toutes les 5 minutes, après les alertes |
+| `POST /stripe` (hors `/atelier`) | Stripe | ses événements, signés (`STRIPE_SIGNATURE`), refusés au-delà de 5 minutes |
+
+Le statut suit Stripe : abonnement payé (`checkout.session.completed`, `invoice.paid`), actif ; paiement refusé (`invoice.payment_failed`, `customer.subscription.updated` en `past_due`), en retard ; résilié (`customer.subscription.deleted`), parti. Une recharge est une facture du paquet de recharge du forfait, prélevée sur la carte de l'abonnement ; elle compte quand elle est payée, une seule fois par facture. Un client déjà abonné par Stripe n'a pas de second lien (`409`, il passerait deux fois à la caisse) : le portail change sa carte ou le résilie. La fin du paiement ne le rend actif que si Stripe le dit payé. Une facture de recharge n'est finalisée que par l'atelier, une fois sa ligne posée, et une recharge à zéro ne compte jamais. Garde-fous : rien sans un seuil choisi, une carte enregistrée et un client actif ; une tentative par heure et par client ; 5 tentatives au plus par mois d'abonnement ; chaque appel porte une clé d'idempotence.
+
+Pour brancher Stripe, Julien :
+1. crée le compte Stripe, puis une clé secrète restreinte (en test d'abord, `sk_test_…`) ;
+2. ajoute le point d'arrivée des événements `https://megga-agents.api-963.workers.dev/stripe`, avec les événements `checkout.session.completed`, `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`, et relève son secret de signature (`whsec_…`) ;
+3. pose les deux dans l'objet de l'atelier : `PUT /admin/atelier/secrets` de la porte, `{"STRIPE_CLE": "…", "STRIPE_SIGNATURE": "…"}`, avec le jeton d'administration ; l'atelier redémarre avec eux.
 
 Les signaux de sécurité viennent du journal du noyau : `secret_masque` quand une réponse portait un secret (masqué avant l'envoi), `debit_depasse` quand des messages sont arrêtés par le débit. Les installations hors Cloudflare n'entrent pas encore dans les alertes.
 
