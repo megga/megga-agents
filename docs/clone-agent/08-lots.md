@@ -68,7 +68,10 @@ flowchart LR
 - Le curseur d'autonomie (domaine par genre), les règles dures en langage naturel, le plancher si Julien le retient.
 - La file « À valider » dans l'app et sur WhatsApp ; le point du jour.
 - Le contrôle de cohérence séparé ; les sorties bornées ; le banc d'injections.
-- Composio en libre service pour le titulaire, sur une liste sûre tenue par MEGGA ; le client MCP sur un catalogue fermé.
+- Composio en libre service pour le titulaire, sur une liste sûre tenue par MEGGA, avec un plafond d'appels par offre ; le client MCP sur un catalogue fermé.
+- Les connecteurs directs Gmail (notifications push), Google Agenda et Outlook (Microsoft Graph) : les plus sollicités, trop chers à l'appel chez Composio ([10-tarifs.md](10-tarifs.md)).
+- Les crédits : poids de chaque genre de tâche, jauge dans l'app, alerte à 80 %, forfaits Free et Plus dans l'atelier (l'unité passe de la conversation au crédit), recharges Stripe.
+- Le routage des modèles (Haiku d'abord, Sonnet quand il le faut, Opus à part) : la part de Haiku est la première mesure de rentabilité.
 - Le journal lisible par le titulaire ; l'annulation quand le service la permet ; la pause.
 - Le coût par mission, dans le relevé chiffré.
 - **Fini quand** : un titulaire d'essai vit une semaine avec son clone sur ses mails et son agenda, avec au moins un domaine en « agir », sans aucune action hors permission.
@@ -106,7 +109,8 @@ flowchart LR
 
 - L'app macOS et Windows, toujours sortante, ordres signés (le modèle du pilote), genres d'actions bornés, pastille et arrêt immédiat.
 - Signature de code, notarisation, mises à jour signées.
-- **Fini quand** : le clone ouvre un logiciel installé, y fait une tâche simple, et range le résultat, sous les yeux du titulaire.
+- Le mode local complet pour l'offre Local : noyau et modèle de soi (SQLite chiffré) sur la machine, relais sortant, clé du titulaire ou modèle ouvert, vérification de la machine à l'installation ([10-tarifs.md](10-tarifs.md)).
+- **Fini quand** : le clone ouvre un logiciel installé, y fait une tâche simple, et range le résultat, sous les yeux du titulaire ; un titulaire Local fait tourner tout son clone chez lui en mode hybride.
 
 ## C9. L'avatar vidéo
 
@@ -121,7 +125,7 @@ flowchart LR
 1. **L'infrastructure du grand public** : conçue par Claude à la demande de Thomas ([09-infrastructure.md](09-infrastructure.md)) ; Julien la valide ou la corrige, en particulier le régulateur maison des conteneurs et la file dans Postgres plutôt que Cloudflare Queues.
 2. **Le secours de modèle d'un clone** : pas DeepSeek par défaut ; un autre Claude ou Claude par une autre voie ?
 3. **Le nom public** : Clone, Double ou Twin ? (à tester auprès d'utilisateurs, n'empêche pas C1)
-4. **Le prix** : un repère de départ pour les essais (fixé pour de vrai après C4).
+4. **Les tarifs** : la grille de [10-tarifs.md](10-tarifs.md) et ses cinq questions (prix du crédit, prix TTC égaux aux prix HT, ouverture de Pro, connecteurs directs, sauvegarde de l'offre Local). Les poids des crédits se recalent sur les coûts mesurés après C4.
 
 ### Avant C4 (Julien, Thomas, juriste)
 

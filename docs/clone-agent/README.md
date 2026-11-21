@@ -30,6 +30,7 @@ Trois briques nouvelles, posées sur le socle existant :
 | Autonomie | **Au choix de l'utilisateur** : il règle lui-même, domaine par domaine, ce que son clone fait seul ou lui soumet |
 | Agir sans connecteur | **Les deux, par étapes** : navigateur dans le cloud d'abord, app sur l'ordinateur ensuite |
 | Ressemblance | **Complète** : style d'écriture et décisions, voix clonée, avatar vidéo (dans cet ordre) |
+| Offres | **Free, Plus (20), Pro (100), Ultra (200), et Local (5)** pour un clone sur sa propre machine ; chaque abonnement couvre son coût cloud ([10-tarifs.md](10-tarifs.md)) |
 | Infrastructure | **Confiée à Claude** : calcul partagé sans état, un coordinateur endormi par titulaire, données en cellules isolées par la base et le chiffrement ([09-infrastructure.md](09-infrastructure.md), à valider par Julien) |
 
 ## Le dossier
@@ -45,6 +46,7 @@ Trois briques nouvelles, posées sur le socle existant :
 | [07-securite-conformite.md](07-securite-conformite.md) | sécurité, données, AI Act, RGPD et nLPD, conditions des services tiers |
 | [08-lots.md](08-lots.md) | les lots C1 à C9, leurs critères de fin et leurs essais |
 | [09-infrastructure.md](09-infrastructure.md) | l'infrastructure cloud du grand public : pools, coordinateurs, cellules, clés, zone Suisse, dimensionnement, pannes |
+| [10-tarifs.md](10-tarifs.md) | les offres Free, Plus, Pro, Ultra et Local, le crédit, les coûts unitaires, la rentabilité, les machines pour l'offre locale |
 
 ## Les principes qui ne bougent pas
 

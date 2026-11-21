@@ -88,13 +88,18 @@ Ce qui existe déjà, d'après ce qu'on sait au 21.11.2026 :
 
 Recommandation : garder « Clone » dans le pitch (il porte l'effet), et tester « Double » et « Twin » comme nom de produit.
 
-## Le modèle économique (hypothèses à valider)
+## Le modèle économique
 
-- **Abonnement mensuel** avec un volume de missions inclus, et des recharges (le mécanisme existe déjà avec Stripe : forfaits, enveloppe, recharge sous un seuil).
-- **L'unité vendue** n'est plus la conversation (les agents d'entreprise) mais l'**action** ou la **mission** : un mail traité, un formulaire rempli, une démarche menée.
-- **Un essai gratuit** court, qui doit montrer le premier service rendu dans les 20 premières minutes.
-- **Des options payantes** : voix clonée, avatar, zone Suisse, app sur l'ordinateur.
-- **Ce qui coûte** : les modèles (beaucoup de lecture pendant l'ingestion, puis chaque tour), le navigateur dans le cloud (minutes de session), la voix et l'avatar. Le coût par mission se mesure dès C4, avant de fixer un prix ; la règle de Julien (le prix vise trois fois notre coût) reste le repère.
+Quatre offres et une offre locale (demande de Thomas, 21.11.2026), détaillées et chiffrées dans [10-tarifs.md](10-tarifs.md) :
+
+| Free | Plus | Pro | Ultra | Local |
+|---|---|---|---|---|
+| 0 | 20 par mois | 100 par mois | 200 par mois | 5 par mois |
+| 25 crédits | 400 crédits | 2 000 crédits | 4 500 crédits | sa machine paie |
+
+- **L'unité vendue** est le **crédit** (environ 2 centimes de coût, vendu 5) : une tâche vaut 1 crédit, une démarche sur un site 6, une minute de vocal 4. Le poids d'une tâche suit son coût réel, ce qui tient la marge quels que soient les prix des modèles.
+- **Le gratuit montre le premier service rendu** dans les 20 premières minutes ; il se paie par la conversion.
+- **Les recharges** (100 crédits pour 5) reprennent le mécanisme Stripe déjà en place dans l'atelier.
 
 ## Comment on saura que ça marche
 

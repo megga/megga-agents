@@ -163,7 +163,7 @@ Ces tâches passent par une file tenue dans Postgres, la même dans toutes les z
 
 ## Ce que coûte un clone (à mesurer, pas à deviner)
 
-Les postes, pour un titulaire et par mois : les tours du clone (modèle), l'ingestion (beaucoup de jetons au début, peu ensuite), la surveillance des nouveaux mails (un petit modèle par mail), les minutes de navigateur, la voix, le stockage chiffré. Le relevé chiffré mesure déjà les jetons par modèle et le coût de chaque jour (`GET /releves`) : il suffit d'y ajouter les minutes de navigateur et les tâches de fond. Le prix se fixe après C4, sur des chiffres réels.
+Les postes, pour un titulaire et par mois : les tours du clone (modèle), l'ingestion (beaucoup de jetons au début, peu ensuite), la surveillance des nouveaux mails (un petit modèle par mail), les minutes de navigateur, la voix, le stockage chiffré. Le relevé chiffré mesure déjà les jetons par modèle et le coût de chaque jour (`GET /releves`) : il suffit d'y ajouter les minutes de navigateur et les tâches de fond. La grille et le calcul de chaque offre sont dans [10-tarifs.md](10-tarifs.md) ; les poids des crédits se recalent après C4, sur des chiffres réels.
 
 ## Le suivi sans contenu
 
