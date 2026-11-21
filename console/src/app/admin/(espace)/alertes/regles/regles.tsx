@@ -192,7 +192,7 @@ export function GererDestinations({ destinations }: { destinations: Destination[
   const { avant, demander, fenetre } = useDemande();
   const router = useRouter();
   const [id, setId] = useState("");
-  const [genre, setGenre] = useState<Destination["genre"]>("slack");
+  const [genre, setGenre] = useState<Destination["genre"]>("courriel");
   const [adresse, setAdresse] = useState("");
   const [refus, setRefus] = useState<{ erreur: string; champs: ChampErreur[] } | null>(null);
   const [fait, setFait] = useState<string | null>(null);
