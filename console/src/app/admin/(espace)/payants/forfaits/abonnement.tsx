@@ -31,6 +31,42 @@ function Champ({ id, titre, children }: { id: string; titre: string; children: R
   );
 }
 
+/** Le lien de paiement Stripe et le portail du client abonné : chaque lien se confirme, puis se montre pour être envoyé. */
+function Paiement({ id }: { id: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [copie, setCopie] = useState(false);
+  const geste = (quoi: "lien" | "portail") => async () => {
+    const r = await envoyer<{ url: string }>(adresse(id, `stripe/${quoi}`), "POST");
+    setCopie(false);
+    setUrl(r?.url ?? null);
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <span className={etiquette}>{TA.paiement}</span>
+      <div className="flex flex-wrap gap-2">
+        <Confirmation titre={TA.lienPaiementTitre} effet={TA.lienPaiementEffet} bouton={TA.lienPaiement} onConfirmer={geste("lien")}>
+          {TA.lienPaiement}
+        </Confirmation>
+        <Confirmation titre={TA.portailPaiementTitre} effet={TA.portailPaiementEffet} bouton={TA.portailPaiement} onConfirmer={geste("portail")}>
+          {TA.portailPaiement}
+        </Confirmation>
+      </div>
+      {url && (
+        <div className="flex min-w-0 flex-col gap-2">
+          <p role="status" className="m-0 text-[13.5px] font-semibold text-ok">{TA.lienPret}</p>
+          <p className="trait m-0 rounded-xl bg-side px-3.5 py-2.5 text-[13.5px] font-semibold break-all text-ink select-all">{url}</p>
+          <div>
+            <button type="button" className="trait rounded-full bg-bg px-4 py-2 text-[14px] font-semibold text-ink hover:bg-hover"
+              onClick={() => { navigator.clipboard.writeText(url).then(() => setCopie(true), () => {}); }}>
+              {copie ? TA.copie : TA.copier}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FormAbonnement({ clients, forfaits }: { clients: ClientChoix[]; forfaits: Forfait[] }) {
   const router = useRouter();
   const { avant, fenetre } = useDemande();
@@ -117,6 +153,7 @@ export function FormAbonnement({ clients, forfaits }: { clients: ClientChoix[]; 
           )}
         </div>
       </form>
+      {choisi?.abonnement && <Paiement key={client} id={client} />}
       {fenetre}
     </section>
   );

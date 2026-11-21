@@ -63,7 +63,11 @@ export default async function PagePayants() {
             <span key="forfait" className="whitespace-nowrap">
               {f ? `${f.nom}, ${TA.rythmes[l.abonnement.rythme].toLowerCase()}` : <span className="text-warn">{TA.forfaitRetire}</span>}
             </span>,
-            <Pastille key="statut" etat={COULEUR[l.abonnement.statut]} texte={TA.statutsAbonnement[l.abonnement.statut]} />,
+            <span key="statut" className="flex flex-wrap gap-1">
+              <Pastille etat={COULEUR[l.abonnement.statut]} texte={TA.statutsAbonnement[l.abonnement.statut]} />
+              {l.stripe && !l.stripe.relie && l.abonnement.statut !== "parti" && <Pastille etat="faint" texte={TA.sansStripe} />}
+              {l.stripe?.recharge_en_cours && <Pastille etat="warn" texte={TA.rechargeEnCours} />}
+            </span>,
             <span key="conversations" className="flex flex-wrap items-center gap-2 tabular-nums">
               <span className="whitespace-nowrap">{TA.conversationsSur(l.consommees, l.enveloppe)}{part !== null && ` (${part} %)`}</span>
               {l.proche && <Pastille etat="warn" texte={TA.bientotVide} />}
