@@ -59,7 +59,7 @@ def monter(r: APIRouter, *, identite, megga, bd, reglages, abonnements: Abonneme
             releve, lisible = await rassembler_tout(JOURS_DU_MOIS), True
         except Refus:  # la porte ne répond pas : les abonnements restent, sans les conversations ni les coûts
             releve, lisible = {}, False
-        sortie = vue(catalogue, tous, recharges, releve, datetime.now(timezone.utc).date())
+        sortie = vue(catalogue, tous, recharges, releve, datetime.now(timezone.utc).date(), await bd(abonnements.tous_stripe))
         return {**sortie, "releve_lisible": lisible}
 
     @r.put("/clients/{ident}/abonnement")

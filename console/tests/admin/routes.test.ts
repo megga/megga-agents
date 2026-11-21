@@ -38,6 +38,8 @@ export const ROUTES: { fichier: string; methodes: Methode[]; droit: Droit | "mem
   { fichier: "clients/[id]/pays/route.ts", methodes: ["PUT"], droit: "clients.creer", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/abonnement/route.ts", methodes: ["PUT", "DELETE"], droit: "tarifs.regler", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/recharges/route.ts", methodes: ["POST"], droit: "tarifs.regler", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/stripe/lien/route.ts", methodes: ["POST"], droit: "tarifs.regler", params: { id: "garage-essai" }, client: true },
+  { fichier: "clients/[id]/stripe/portail/route.ts", methodes: ["POST"], droit: "tarifs.regler", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/jetons/route.ts", methodes: ["POST", "DELETE"], droit: "acces.gerer", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/cles/route.ts", methodes: ["POST"], droit: "acces.gerer", params: { id: "garage-essai" }, client: true },
   { fichier: "clients/[id]/cles/[cle]/route.ts", methodes: ["DELETE"], droit: "acces.gerer", params: { id: "garage-essai", cle: "d15a76f57ee4" },

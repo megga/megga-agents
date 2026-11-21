@@ -25,10 +25,11 @@ const ligneDe = (f: Forfait): Ligne => ({
   recharge_conversations: texte(f.recharge?.conversations), recharge_prix: texte(f.recharge?.prix),
 });
 
-function corpsDe(devise: string, multiplicateur: string, lignes: Ligne[]) {
+function corpsDe(devise: string, multiplicateur: string, retour: string, lignes: Ligne[]) {
   return {
     devise: devise.trim(),
     multiplicateur: nombre(multiplicateur),
+    ...(retour.trim() ? { retour_paiement: retour.trim() } : {}),
     forfaits: lignes.map((l) => ({
       id: l.id.trim(), nom: l.nom.trim(), prix_mensuel: nombre(l.prix_mensuel), conversations: nombre(l.conversations),
       remise_annuelle: nombre(l.remise_annuelle) ?? 0,
@@ -53,6 +54,7 @@ export function FormCatalogue({ catalogue }: { catalogue: CatalogueForfaits }) {
   const router = useRouter();
   const [devise, setDevise] = useState(catalogue.devise);
   const [multiplicateur, setMultiplicateur] = useState(texte(catalogue.multiplicateur));
+  const [retour, setRetour] = useState(catalogue.retour_paiement ?? "");
   const [lignes, setLignes] = useState(() => catalogue.forfaits.map(ligneDe));
   const [refus, setRefus] = useState<{ erreur: string; champs: ChampErreur[] } | null>(null);
   const [fait, setFait] = useState(false);
@@ -68,10 +70,11 @@ export function FormCatalogue({ catalogue }: { catalogue: CatalogueForfaits }) {
     setRefus(null);
     setFait(false);
     try {
-      const garde = await envoyer<CatalogueForfaits>("/api/admin/forfaits", "PUT", corpsDe(devise, multiplicateur, lignes));
+      const garde = await envoyer<CatalogueForfaits>("/api/admin/forfaits", "PUT", corpsDe(devise, multiplicateur, retour, lignes));
       if (garde) {
         setDevise(garde.devise);
         setMultiplicateur(texte(garde.multiplicateur));
+        setRetour(garde.retour_paiement ?? "");
         setLignes(garde.forfaits.map(ligneDe));
       }
       setFait(true);
@@ -94,6 +97,11 @@ export function FormCatalogue({ catalogue }: { catalogue: CatalogueForfaits }) {
           <Label htmlFor="forfaits-multiplicateur" className={etiquette}>{TA.multiplicateur}</Label>
           <Input id="forfaits-multiplicateur" type="number" inputMode="decimal" step="any" min={0} value={multiplicateur}
             onChange={(e) => setMultiplicateur(e.target.value)} className={champ} />
+        </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Label htmlFor="forfaits-retour" className={etiquette}>{TA.retourPaiement}</Label>
+          <Input id="forfaits-retour" type="url" inputMode="url" placeholder="https://megga.ai" value={retour}
+            onChange={(e) => setRetour(e.target.value)} className={champ} />
         </div>
       </div>
       {lignes.map((l, i) => (

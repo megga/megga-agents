@@ -45,7 +45,7 @@ export type Forfait = {
   remise_annuelle: number;
   recharge: { conversations: number; prix: number } | null;
 };
-export type CatalogueForfaits = { devise: string; multiplicateur: number; forfaits: Forfait[] };
+export type CatalogueForfaits = { devise: string; multiplicateur: number; forfaits: Forfait[]; retour_paiement?: string };
 export type StatutAbonnement = "essai" | "actif" | "retard" | "parti";
 export type Abonnement = { forfait: string; rythme: "mensuel" | "annuel"; statut: StatutAbonnement; debut: string; seuil_recharge: number | null };
 export type LignePayant = {
@@ -62,6 +62,8 @@ export type LignePayant = {
   revenu: number;
   cout: number;
   marge: number | null;
+  /** Relié à Stripe (un abonnement payé par carte) ; une recharge prélevée attend sa réponse. Absent avant Stripe. */
+  stripe?: { relie: boolean; recharge_en_cours: boolean };
 };
 export type TotauxPayants = Record<StatutAbonnement, number> & { revenu: number; cout: number; marge: number | null; proches: number };
 export type VuePayants = {
@@ -286,6 +288,8 @@ export const atelier = {
   payants: () => lire<VuePayants>("/abonnements"),
   reglerAbonnement: (id: string, corps: Corps) => ecrire<Abonnement & { client: string }>(`${c(id)}/abonnement`, "PUT", corps),
   retirerAbonnement: (id: string) => ecrire<{ client: string; retire: boolean }>(`${c(id)}/abonnement`, "DELETE"),
+  lienPaiement: (id: string) => ecrire<{ client: string; url: string }>(`${c(id)}/stripe/lien`, "POST"),
+  portailPaiement: (id: string) => ecrire<{ client: string; url: string }>(`${c(id)}/stripe/portail`, "POST"),
   recharger: (id: string, corps: Corps) => ecrire<{ client: string; conversations: number; prix: number }>(`${c(id)}/recharges`, "POST", corps),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
 };
