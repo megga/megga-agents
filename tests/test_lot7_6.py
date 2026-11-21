@@ -218,7 +218,7 @@ def test_la_configuration_du_travail(tmp_path):
     c = app.state.conversations
     noms = {getattr(t, "__name__", "") for t in c.agents["gestionnaire"].tools}
     assert {"apprendre_regle", "oublier_regle", "regles", "point"} <= noms and isinstance(c.fil_tenu, TenueDuFil)
-    assert callable(c.agent.instructions)  # le fil, même pour l'agent de tous
+    assert c.agent.dependencies["tour"].contexte is not None  # le fil, même pour l'agent de tous
 
 
 # Corrections de la relecture
