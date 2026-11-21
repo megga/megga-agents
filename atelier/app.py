@@ -41,6 +41,10 @@ dans la base du client, jamais dans l'atelier. Hors Cloudflare, elles se créent
   POST  /clients/{id}/cles                      {logiciel, par_minute?} une clé, montrée une fois
   DELETE /clients/{id}/cles/{cle}               retire une clé, tout de suite
 
+Connecteurs de Composio (atelier/routes_composio.py, noyau/composio.py) :
+  GET   /clients/{id}/composio/comptes          les comptes connectés par le client, sans jeton
+  POST  /clients/{id}/composio/lien             MEGGA : {auth_config, retour?} le lien où le client connecte un compte
+
 Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/suivi[?jours=7]           état, activité (tours, personnes, modèles, voix) ;
                                                 coûts pour MEGGA seulement
@@ -90,7 +94,7 @@ from noyau import stockage
 from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 
-from . import gabarits, pays, regles, routes_alertes, routes_cles, routes_forfaits, routes_installations, routes_stripe
+from . import gabarits, pays, regles, routes_alertes, routes_cles, routes_composio, routes_forfaits, routes_installations, routes_stripe
 from . import routes_suivi
 from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs
@@ -129,7 +133,7 @@ async def bd(f, *a, **k):
 
 
 def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None,
-          transport_alertes=None, transport_stripe=None) -> FastAPI:
+          transport_alertes=None, transport_stripe=None, transport_composio=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -488,6 +492,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     # Les clés d'API, le suivi et les installations hors Cloudflare : leurs modules de routes.
     routes_cles.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte)
+    routes_composio.monter(r, identite=identite, megga=megga, bd=bd, client_de=client_de, cle=env.get("COMPOSIO_API_KEY"),
+                           transport=transport_composio)
     routes_suivi.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte, versions=versions,
                         resume=resume, etats_porte=etats_porte, canal=canal, pilote_fenetres=pilote_fenetres,
                         lire_tarifs=lire_tarifs)

@@ -71,6 +71,8 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `GET /clients/{id}/cles` | tous | les clés des logiciels du client (entrée par API), sans empreinte |
 | `POST /clients/{id}/cles` | tous | `{logiciel, par_minute?}` : une clé, montrée une fois ; le client : 5 clés en service et 30 par minute au plus, MEGGA jusqu'à 600 ; une fois l'agent en service |
 | `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
+| `GET /clients/{id}/composio/comptes` | tous | les comptes que le client a connectés dans Composio (boîte d'outils, état), sans jeton (`docs/composio.md`) |
+| `POST /clients/{id}/composio/lien` | MEGGA | `{auth_config, retour?}` : le lien de Composio où le client connecte lui-même un de ses comptes |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
 

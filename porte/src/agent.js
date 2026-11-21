@@ -71,9 +71,10 @@ export function variablesDeConfiguration(config) {
 
 export const SECRETS_CLIENT_REQUIS = ["DATABASE_URL"];
 export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTION_CLE", "SITE_CLE", "VOCAL_CLE"];
-const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
-// L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
-const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
+// COMPOSIO_API_KEY : le projet Composio de MEGGA, où chaque client connecte ses comptes (noyau/composio.py).
+const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY", "COMPOSIO_API_KEY"];
+// L'atelier a besoin des modèles (mode d'essai) et de Composio (les liens de connexion) : il n'envoie rien sur WhatsApp.
+const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "COMPOSIO_API_KEY"];
 // Ceux qu'on pose dans l'objet de l'atelier : sa base, la clé qui signe les ordres de pilotage, et Stripe (sa clé, le
 // secret qui signe ses événements), que Julien pose lui-même.
 const SECRETS_POSES_ATELIER = ["DATABASE_URL", "PILOTAGE_CLE", "STRIPE_CLE", "STRIPE_SIGNATURE"];
