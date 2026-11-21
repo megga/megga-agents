@@ -179,6 +179,8 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
     ]
     if config.consignes.strip():
         base.append(config.consignes.strip())
+    if config.presentation.strip():  # ce que le client dit lui-même de son entreprise (atelier/accueil.py)
+        base.append("About the business, in its own words:\n" + config.presentation.strip())
     if role is not None and role.consignes.strip():  # ce qui vaut pour les personnes de ce rôle (noyau/roles.py)
         base.append(role.consignes.strip())
     if memoire_du_role(config, role):  # la mémoire par ses outils (noyau/memoire.py)

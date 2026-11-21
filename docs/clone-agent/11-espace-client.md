@@ -78,3 +78,14 @@ Cette décision remplace l'exigence des 15 et 20.11.2026 (un assistant pas à pa
 4. **Avec C7 et C9** : la voix, puis l'avatar.
 
 Avant C1, un seul travail utile : le plan écran par écran, à refaire sur cette base plutôt que sur le pas à pas.
+
+## L'entrée des entreprises, par lots
+
+Décidé par Julien le 21.11.2026 : on commence par elle. Le plan écran par écran est publié à part (artefact « Espace client, écran par écran »).
+
+| Lot | Ce qu'il apporte | Où |
+|---|---|---|
+| E1 | l'agent d'accueil : il fait connaissance, note, propose un modèle, prend le prénom et prépare le brouillon ; la présentation de l'entreprise dans la configuration | atelier, noyau (`docs/atelier.md`) |
+| E2 | l'écran d'accueil de la console : la conversation, les cartes qui apparaissent, le Studio dans le fil, l'essai et la mise en service ; le compte de la console lié à son client de l'atelier | console |
+| E3 | les voix à écouter (un extrait par voix) et les outils à brancher par le client lui-même | atelier, console |
+| E4 | le quotidien du client : accueil, conversations, alertes, réglages, versions, abonnement | console |
