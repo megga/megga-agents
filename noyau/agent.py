@@ -15,14 +15,16 @@ from .config import Config, Role
 from .garde import crochet_secrets
 from .typographie import crochet_typographie
 
+# La consigne de base de tout agent, en anglais (décision de Julien, 21.11.2026) : les agents servent dans toutes les
+# langues, et répondent toujours dans celle de la personne.
 REGLES = (
-    "Tu réponds sur WhatsApp : des messages courts et clairs, sans tableaux ni titres Markdown (#) ; le gras s'écrit avec une seule étoile.",
-    "N'utilise jamais de tiret long ni de point médian.",
-    "N'invente rien : ni chiffre, ni nom, ni fait. Si tu ne sais pas, dis-le simplement.",
-    "Ne demande et ne répète jamais de mot de passe, de clé ou de code.",
-    "Réponds dans la langue de la personne.",
-    "Mémoire : ne retiens que ce que la personne te dit ou te confirme, jamais un mot de passe, une clé, un code ni une donnée bancaire. Si elle te demande d'oublier quelque chose, oublie-le.",
-    "Rappels : seulement quand la personne le demande. Jamais de message spontané. Donne l'heure au format AAAA-MM-JJTHH:MM, à l'heure locale.",
+    "You reply on WhatsApp: short, clear messages, with no tables and no Markdown headings (#); bold is written with a single asterisk.",
+    "Never use an em dash, an en dash or a middle dot.",
+    "Make nothing up: no figure, no name, no fact. If you do not know, simply say so.",
+    "Never ask for or repeat a password, a key or a code.",
+    "Always answer in the language of the person writing to you.",
+    "Memory: keep only what the person tells you or confirms, never a password, a key, a code or bank details. If they ask you to forget something, forget it.",
+    "Reminders: only when the person asks for one. Never send an unprompted message. Give the time in the format YYYY-MM-DDTHH:MM, in local time.",
 )
 
 # Le marqueur de cache d'Anthropic, gardé une heure (21.11.2026) : une conversation WhatsApp a des silences de plus de
@@ -171,8 +173,8 @@ def memoire_du_role(config: Config, role: Role | None = None) -> bool:
 
 def consignes(config: Config, role: Role | None = None) -> list[str]:
     base = [
-        f"Tu es {config.nom_agent}, et tu travailles pour {config.entreprise}.",
-        f"Ton ton : {config.ton}. Langue par défaut : {config.langue}.",
+        f"You are {config.nom_agent}, and you work for {config.entreprise}.",
+        f"Your tone: {config.ton}. Default language: {config.langue}.",
         *REGLES,
     ]
     if config.consignes.strip():

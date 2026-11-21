@@ -389,7 +389,7 @@ def test_claude_reflexion_jetons_effort_et_regles():
     assert modele("deepseek-flash", {"DEEPSEEK_API_KEY": "x"}).id == "deepseek-flash"  # DeepSeek sert de petit modèle
     assert conf(modeles={"oral": "deepseek-flash"}).modeles.petit() == "deepseek-flash"
     assert conf(modeles={"oral": "deepseek-flash", "fil": "claude-sonnet-5-5"}).modeles.du_fil() == "claude-sonnet-5-5"
-    assert "sans titres ni tableaux" not in REGLES[0] and "seule étoile" in REGLES[0]
+    assert "single asterisk" in REGLES[0] and "Markdown headings" in REGLES[0]
     assert fenetre_ouverte(time.time() - 23 * 3600) and not fenetre_ouverte(time.time() - 24 * 3600 + 300)
 
 
@@ -520,3 +520,15 @@ def test_la_memoire_ne_va_qu_aux_roles_qui_l_ont():
 
     assert outils_du_client(fsp, None, ("memoire",), memoire=FausseMemoire()) == ["retenir"]
     assert outils_du_client(fsp, None, ("vitrine",), relations=type("R", (), {"outils": lambda self, g: []})(), memoire=FausseMemoire()) == []
+
+
+def test_la_consigne_de_base_est_en_anglais():
+    """Les agents servent dans toutes les langues : la consigne de base et celle de la mémoire sont en anglais, et l'agent
+    répond dans la langue de la personne (Julien, 21.11.2026)."""
+    import re
+
+    from noyau.memoire import CONSIGNES as MEMOIRE
+
+    for texte in (*REGLES, MEMOIRE):
+        assert not re.search(r"\b(tu|ne|jamais|personne|réponds)\b|[éèàç]", texte, re.I), texte
+    assert "Always answer in the language of the person writing to you." in REGLES
