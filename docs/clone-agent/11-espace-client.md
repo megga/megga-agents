@@ -64,9 +64,9 @@ Les six manques notés dans la conception du lot 8.1 tiennent toujours. Le cadra
 
 L'espace client a deux publics : l'entreprise qui veut un agent pour ses clients (WhatsApp, voix), et la personne qui veut son clone. Le cadrage ne parle que de la seconde.
 
-**Proposition** : la même entrée pour les deux. L'agent d'accueil demande d'abord pour qui il travaillera. Pour une entreprise, il note l'activité, les horaires, les services, le ton, puis propose un modèle de l'atelier (le généraliste, l'immobilier ou l'un des 283 du catalogue), une voix à écouter et les outils. Tout ce qu'il a noté reste visible dans une page « Réglages », modifiable d'un geste : rien n'est caché derrière la conversation.
+**Décidé par Julien le 21.11.2026 : les entreprises créent aussi leur agent par la conversation.** La même entrée sert les deux publics. L'agent d'accueil demande d'abord pour qui il travaillera. Pour une entreprise, il note l'activité, les horaires, les services, le ton, puis propose un modèle de l'atelier (le généraliste, l'immobilier ou l'un des 283 du catalogue), une voix à écouter et les outils. Tout ce qu'il a noté reste visible dans une page « Réglages », modifiable d'un geste : rien n'est caché derrière la conversation.
 
-C'est un changement par rapport à l'exigence de Julien des 15 et 20.11.2026 (un assistant pas à pas). Il ne se fait pas sans son accord.
+Cette décision remplace l'exigence des 15 et 20.11.2026 (un assistant pas à pas).
 
 ## L'ordre proposé
 
@@ -79,5 +79,4 @@ Avant C1, un seul travail utile : le plan écran par écran, à refaire sur cett
 
 ## À trancher par Julien
 
-1. **Les entreprises aussi par la conversation**, comme proposé, ou le pas à pas reste pour elles ?
-2. **Un seul espace pour les deux publics**, ou deux entrées séparées ?
+1. **Un seul espace pour les deux publics**, ou deux entrées séparées ?
