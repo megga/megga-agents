@@ -37,6 +37,8 @@ class FauxComposio:
                                                         "input_parameters": SCHEMA, "version": "20260101_00"}
                                                        for s in slugs if s != "INCONNU_OUTIL"]})
         if chemin.startswith("/tools/execute/"):
+            if corps["arguments"].get("to") == "sans-compte@exemple.ch":
+                return httpx.Response(400, json={"error": {"message": "No connected account found for user agence-lac"}})
             if corps["arguments"].get("to") == "refus@exemple.ch":
                 return httpx.Response(200, json={"successful": False, "error": "adresse refusée", "data": {}})
             return httpx.Response(200, json={"successful": True, "data": {"id": "m1", "envoye": True}})
@@ -62,7 +64,7 @@ def test_les_connecteurs_se_reglent_pour_tout_metier_et_chaque_role():
     assert manques(conf) == []
     sans = Config.model_validate({**BASE, "outils": ["connecteurs"]})
     assert manques(sans) == ["les connecteurs attendent leurs outils Composio (réglage de MEGGA)"]
-    for faux in (["gmail_send"], ["GMAIL_SEND_EMAIL", "GMAIL_SEND_EMAIL"], []):
+    for faux in (["gmail_send"], ["GMAIL_SEND_EMAIL", "GMAIL_SEND_EMAIL"], [], ["A" * 65]):
         with pytest.raises(ValueError):
             Config.model_validate({**BASE, "composio": {"outils": faux}})
 
@@ -81,6 +83,8 @@ def test_seuls_les_outils_choisis_arrivent_et_s_executent():
     assert corps == {"user_id": "agence-lac", "arguments": {"to": "anne@exemple.ch", "body": "Bonjour"}, "version": "20260101_00"}
     refus = asyncio.run(outils[0].entrypoint(to="refus@exemple.ch"))
     assert refus.startswith("Échec de l'outil : adresse refusée") and "ne dis pas le contraire" in refus
+    sans_compte = asyncio.run(outils[0].entrypoint(to="sans-compte@exemple.ch"))
+    assert sans_compte.startswith("Échec de l'outil : No connected account found for user agence-lac.")
 
 
 def test_composio_en_panne_ne_bloque_pas_l_agent():
@@ -98,6 +102,7 @@ def test_le_groupe_connecteurs_donne_les_outils_et_la_consigne():
     assert outils_du_client(conf, None, groupes=(), connecteurs=connecteurs(FauxComposio())) == []
     assert composio.CONSIGNES in consignes(conf)
     assert composio.CONSIGNES not in consignes(Config.model_validate(BASE))
+    assert composio.CONSIGNES not in consignes(Config.model_validate({**BASE, "outils": ["connecteurs"]}))   # sans outils choisis
 
 
 @pytest.fixture

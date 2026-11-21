@@ -183,7 +183,7 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
         from .memoire import CONSIGNES as CONSIGNES_MEMOIRE
 
         base.append(CONSIGNES_MEMOIRE)
-    if "connecteurs" in (role.outils if role is not None else config.outils):  # les outils de Composio (noyau/composio.py)
+    if config.composio is not None and "connecteurs" in (role.outils if role is not None else config.outils):  # noyau/composio.py
         from .composio import CONSIGNES as CONSIGNES_CONNECTEURS
 
         base.append(CONSIGNES_CONNECTEURS)

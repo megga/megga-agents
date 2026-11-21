@@ -27,9 +27,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 log = logging.getLogger("megga.composio")
 
 API = "https://backend.composio.dev/api/v3.1"
-SLUG = re.compile(r"^[A-Z][A-Z0-9_]{2,99}$")
+SLUG = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")  # 64 caractères au plus : la limite d'un nom d'outil chez les modèles
 AUTH_CONFIG = re.compile(r"^ac_[A-Za-z0-9_-]{4,60}$")
-DELAI = 30.0  # secondes, pour un outil comme pour la liste
+DELAI = 30.0  # secondes, pour un outil
+DELAI_LISTE = 10.0  # secondes, pour la liste lue au démarrage : un Composio lent ne retarde pas l'agent
 RESULTAT_MAX = 20000  # caractères rendus au modèle ; au-delà, tronqué
 # Ce que l'agent lit quand il a des connecteurs : ils agissent dans les vrais comptes de l'entreprise.
 CONSIGNES = (
@@ -75,6 +76,17 @@ def _reponse(r: httpx.Response) -> dict:
         raise ComposioErreur(r.status_code, "réponse illisible") from e
 
 
+def _motif(texte: str) -> str:
+    """Le message d'un refus de Composio, court (son corps JSON, ou le texte brut)."""
+    try:
+        lu = json.loads(texte)
+        erreur = lu.get("error") if isinstance(lu, dict) else None
+        texte = (erreur.get("message") if isinstance(erreur, dict) else erreur) or lu.get("message") or texte
+    except (ValueError, AttributeError):
+        pass
+    return " ".join(str(texte).split())[:300] or "refus du service"
+
+
 def _resultat(corps: dict) -> str:
     """Ce que le modèle lit d'un outil exécuté : les données, ou l'erreur dite en clair."""
     if not corps.get("successful"):
@@ -93,7 +105,7 @@ class Composio:
     def schemas(self) -> list[dict]:
         """Les outils choisis, tels que Composio les décrit (une fois par processus ; refait après un échec)."""
         if self._schemas is None:
-            with httpx.Client(transport=self.transport, timeout=DELAI) as c:
+            with httpx.Client(transport=self.transport, timeout=DELAI_LISTE) as c:
                 corps = _reponse(c.get(f"{API}/tools", headers=_entetes(self.cle),
                                        params={"tool_slugs": ",".join(self.reglage.outils), "limit": len(self.reglage.outils)}))
             trouves = {o["slug"]: o for o in corps.get("items") or [] if o.get("slug") in self.reglage.outils}
@@ -109,7 +121,12 @@ class Composio:
         try:
             async with httpx.AsyncClient(transport=self.transport, timeout=DELAI) as c:
                 lu = _reponse(await c.post(f"{API}/tools/execute/{slug}", headers=_entetes(self.cle), json=corps))
-        except (ComposioErreur, httpx.HTTPError) as e:
+        except ComposioErreur as e:
+            log.warning("outil Composio %s refusé : %s", slug, e)
+            if e.statut is not None and 400 <= e.statut < 500:   # un compte non connecté, un argument faux
+                return f"Échec de l'outil : {_motif(e.texte)}. Rien n'a été fait, ne dis pas le contraire."
+            return "Échec de l'outil : le service est injoignable. Rien n'a été fait, ne dis pas le contraire."
+        except httpx.HTTPError as e:
             log.warning("outil Composio %s en échec : %s", slug, e)
             return "Échec de l'outil : le service est injoignable. Rien n'a été fait, ne dis pas le contraire."
         return _resultat(lu)
