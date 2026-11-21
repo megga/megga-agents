@@ -71,7 +71,6 @@ from __future__ import annotations
 
 import asyncio
 import hmac
-import json
 import logging
 import os
 import re
@@ -86,16 +85,15 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 
-from noyau import api as entree_api
 from noyau import pilotage as pilotages
 from noyau import stockage
 from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
-from noyau.suivi import PERSONNE
 
-from . import gabarits, pays, regles, routes_alertes, routes_forfaits, routes_stripe
+from . import gabarits, pays, regles, routes_alertes, routes_cles, routes_forfaits, routes_installations, routes_stripe
+from . import routes_suivi
 from .alertes import Etats as EtatsAlertes
-from .couts import Tarifs, couts
+from .couts import Tarifs
 from .essai import essayer
 from .forfaits import Abonnements
 from .stripe import Stripe
@@ -485,207 +483,16 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         client_de(qui, ident)
         return {"client": ident, "retires": jetons.revoquer(ident)}
 
-    # L'entrée par API : les clés des logiciels
-
-    def cles_par_porte(qui: Identite, ident: str) -> None:
-        c = client_de(qui, ident)
-        if zone_de(ident) not in regles.ZONES_PORTE:
-            raise Refus(409, "hors Cloudflare, les clés se créent chez le client : python -m noyau.cles creer <logiciel> (docs/api.md)")
-        if porte is None:
-            raise Refus(503, "porte non réglée (PORTE_URL)")
-        if c.get("current_version") is None:
-            raise Refus(409, "mettez d'abord une version de l'agent en service : ses clés se gardent dans sa base")
-
-    async def appel_cles(ident: str, methode: str = "GET", chemin: str = "", corps: dict | None = None) -> dict:
-        try:
-            return await porte.cles(ident, methode, chemin, corps)
-        except PorteErreur as e:
-            if e.statut in (400, 404, 409):
-                raise Refus(e.statut, "clé refusée par le conteneur", {"texte": e.texte}) from e
-            raise Refus(502 if e.statut else 504, f"clés indisponibles : {raison(e)}", {"statut": e.statut, "texte": e.texte}) from e
-
-    @r.get("/clients/{ident}/cles")
-    async def lister_cles(ident: str, qui: Identite = Depends(identite)):
-        await bd(cles_par_porte, qui, ident)
-        return {"client": ident, **await appel_cles(ident)}
-
-    @r.post("/clients/{ident}/cles", status_code=201)
-    async def creer_cle(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        """Une clé pour un logiciel du client : montrée ici une seule fois ; seule son empreinte part au conteneur."""
-        logiciel = corps.get("logiciel")
-        if not isinstance(logiciel, str) or not entree_api.LOGICIEL.fullmatch(logiciel):
-            raise Refus(400, "logiciel : un nom court, en minuscules (lettres, chiffres, tirets, 20 au plus)")
-        try:
-            debit = entree_api.par_minute(corps.get("par_minute"))
-        except ValueError as e:
-            raise Refus(400, str(e)) from e
-        if qui.role == "client" and debit > entree_api.PAR_MINUTE:
-            # Le débit protège la facture des modèles : au-delà du débit par défaut, c'est à MEGGA de le régler.
-            raise Refus(403, f"par_minute : au plus {entree_api.PAR_MINUTE} ; davantage se demande à MEGGA")
-        await bd(cles_par_porte, qui, ident)
-        if qui.role == "client":
-            en_service = [c for c in (await appel_cles(ident)).get("cles", []) if not c.get("retiree")]
-            if len(en_service) >= entree_api.CLES_CLIENT_MAX:
-                raise Refus(409, f"{entree_api.CLES_CLIENT_MAX} clés en service au plus : retirez-en une, ou demandez à MEGGA")
-        cle_id, cle, empreinte = entree_api.nouvelle_cle()
-        await appel_cles(ident, "POST", corps={"id": cle_id, "logiciel": logiciel, "empreinte": empreinte, "par_minute": debit})
-        log.info("clé %s créée pour %s (%s, %s)", cle_id, ident, logiciel, qui.role)
-        return {"client": ident, "id": cle_id, "logiciel": logiciel, "par_minute": debit, "cle": cle}
-
-    @r.delete("/clients/{ident}/cles/{cle_id}")
-    async def retirer_cle(ident: str, cle_id: str, qui: Identite = Depends(identite)):
-        if not entree_api.IDENT_CLE.fullmatch(cle_id):
-            raise Refus(400, "identifiant de clé")
-        await bd(cles_par_porte, qui, ident)
-        r = await appel_cles(ident, "DELETE", f"/{cle_id}")
-        log.info("clé %s de %s retirée (%s)", cle_id, ident, qui.role)
-        return {"client": ident, **r}
-
-    # Le suivi
-
-    def jours_de(valeur: str | None) -> int:
-        try:
-            jours = int(valeur or 7)
-        except ValueError:
-            raise Refus(400, "jours : un nombre de 1 à 365") from None
-        if not 1 <= jours <= 365:
-            raise Refus(400, "jours : un nombre de 1 à 365")
-        return jours
-
-    def limite_de(valeur: str | None) -> int | None:
-        if valeur is None:
-            return None
-        if not valeur.isdigit() or not 1 <= int(valeur) <= 200:
-            raise Refus(400, "limite : un nombre de 1 à 200")
-        return int(valeur)
-
-    def suivable(qui: Identite, ident: str, conversations: bool = False) -> tuple[dict, bool]:
-        """Le client, et si son suivi passe par la porte (zones Europe et États-Unis) ou par le pilotage
-        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations).
-
-        Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres, jamais ce qui se
-        dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026)."""
-        c = client_de(qui, ident)
-        if conversations and qui.role == "megga":
-            raise Refus(403, "les conversations d'un client ne se lisent que par lui")
-        if zone_de(ident) not in regles.ZONES_PORTE:
-            if conversations:
-                raise Refus(409, "les conversations d'une installation hors Cloudflare ne la quittent jamais : elles se lisent chez le client")
-            return c, False
-        if porte is None:
-            raise Refus(503, "porte non réglée (PORTE_URL)")
-        return c, True
-
-    def raison(e: PorteErreur) -> str:
-        """Ce qui a empêché la lecture, dit simplement."""
-        if e.statut == 0:
-            return "la porte n'a pas répondu"
-        if e.statut == 401:
-            return "le conteneur refuse la lecture (jeton interne : le jeton d'administration a-t-il changé ?)"
-        try:
-            erreur = json.loads(e.texte).get("erreur")
-        except (ValueError, AttributeError):
-            erreur = None
-        if erreur == "conteneur injoignable":
-            return "le conteneur du client ne répond pas"
-        if erreur == "suivi indisponible" or "suivi indisponible" in e.texte:
-            return "le conteneur répond, mais sa base n'est pas branchée"
-        return f"réponse inattendue du conteneur ({e.statut})"
-
-    async def lire_suivi(ident: str, chemin: str = "", **params) -> dict:
-        try:
-            return await porte.suivi(ident, chemin, **params)
-        except PorteErreur as e:
-            if e.statut in (400, 404):
-                raise Refus(e.statut, "suivi refusé", {"texte": e.texte}) from e
-            raise Refus(502 if e.statut else 504, f"suivi indisponible : {raison(e)}",
-                        {"statut": e.statut, "texte": e.texte}) from e
-
-    def debut(jours: int) -> int:
-        """Le début de la période, arrondi à 5 minutes : des lectures rapprochées tombent sur la lecture
-        gardée en mémoire par la porte, sans réveiller le conteneur du client."""
-        return int((time.time() - jours * 86400) // 300 * 300)
-
     def lire_tarifs() -> Tarifs:
         return Tarifs.model_validate(reglages.lire("tarifs") or {})
 
-    @r.get("/clients/{ident}/suivi")
-    async def suivi(ident: str, requete: Request, qui: Identite = Depends(identite)):
-        jours = jours_de(requete.query_params.get("jours"))
-        c, par_porte = await bd(suivable, qui, ident)
-        derniere = (await bd(versions.dernieres, {ident})).get(ident)
-        if par_porte:
-            activite = await lire_suivi(ident, depuis=debut(jours))
-            sortie = {**resume(c, derniere, await etats_porte(ident)), "periode_jours": jours, "activite": activite}
-        else:
-            if jours not in pilote_fenetres:
-                raise Refus(400, "jours : 1, 7 ou 30 pour une installation hors Cloudflare")
-            try:
-                activite, inst = await bd(canal.suivi, ident, jours)
-            except pilotages.PilotageRefuse as e:
-                raise Refus(409, f"suivi indisponible : {e}") from e
-            sortie = {**resume(c, derniere, None, canal.bref(inst, c.get("current_version"))), "periode_jours": jours,
-                      "activite": activite}
-        if qui.role == "megga":
-            try:
-                sortie["couts"] = couts(activite, await bd(lire_tarifs))
-            except (TypeError, ValueError, AttributeError, ArithmeticError):
-                if par_porte:
-                    raise
-                sortie["couts"] = {"erreur": "activité illisible"}  # le relevé d'une installation, pas notre code
-        return sortie
-
-    @r.get("/clients/{ident}/conversations")
-    async def conversations(ident: str, requete: Request, qui: Identite = Depends(identite)):
-        limite = limite_de(requete.query_params.get("limite"))
-        await bd(suivable, qui, ident, True)
-        return await lire_suivi(ident, "/conversations", limite=limite)
-
-    @r.get("/clients/{ident}/conversations/{personne}")
-    async def echanges(ident: str, personne: str, requete: Request, qui: Identite = Depends(identite)):
-        limite = limite_de(requete.query_params.get("limite"))
-        if not PERSONNE.fullmatch(personne):
-            raise Refus(400, "personne : un numéro, ou api:<logiciel>:<identifiant>")
-        await bd(suivable, qui, ident, True)
-        return await lire_suivi(ident, f"/conversations/{personne}", limite=limite)
-
-    @r.get("/clients/{ident}/alertes")
-    async def alertes(ident: str, requete: Request, qui: Identite = Depends(identite)):
-        jours = jours_de(requete.query_params.get("jours"))
-        c, par_porte = await bd(suivable, qui, ident)
-        maintenant = time.time()
-        depuis = debut(jours)
-        if not par_porte:
-            liste = await bd(canal.alertes, ident, depuis, c.get("current_version"))
-            return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"] or 0, reverse=True)}
-        liste = []
-        etats = await etats_porte(ident)
-        if etats is None:
-            liste.append({"quand": maintenant, "genre": "porte_injoignable", "detail": ""})
-        else:
-            a = etats.get(ident) or {}
-            if a and a.get("version") != c.get("current_version"):
-                liste.append({"quand": maintenant, "genre": "ecart",
-                              "detail": f"l'annuaire sert la version {a.get('version')}, l'atelier la {c.get('current_version')}"})
-            for panne in (a.get("conteneur") or {}).get("alertes") or []:
-                if panne.get("quand", 0) / 1000 >= depuis:
-                    resolue = panne.get("resolue")
-                    liste.append({"quand": panne["quand"] / 1000, "genre": f"conteneur_{panne.get('quoi')}",
-                                  "detail": panne.get("message", ""), "resolue": resolue / 1000 if resolue else None})
-        try:
-            liste += (await lire_suivi(ident, "/alertes", depuis=depuis)).get("alertes", [])
-        except Refus as e:
-            liste.append({"quand": maintenant, "genre": "conteneur_injoignable", "detail": e.message})
-        return {"periode_jours": jours, "alertes": sorted(liste, key=lambda x: x["quand"], reverse=True)}
-
-    # Les installations hors Cloudflare
-
-    def hors_porte(qui: Identite, ident: str) -> dict:
-        """Le client, s'il tourne hors Cloudflare (chez lui, zone suisse) : son installation se pilote."""
-        c = client_de(qui, ident)
-        if zone_de(ident) in regles.ZONES_PORTE:
-            raise Refus(409, "ce client est servi par la porte de Cloudflare : il n'a pas d'installation à piloter")
-        return c
+    # Les clés d'API, le suivi et les installations hors Cloudflare : leurs modules de routes.
+    routes_cles.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte)
+    routes_suivi.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte, versions=versions,
+                        resume=resume, etats_porte=etats_porte, canal=canal, pilote_fenetres=pilote_fenetres,
+                        lire_tarifs=lire_tarifs)
+    routes_installations.monter(r, identite=identite, megga=megga, bd=bd, client_de=client_de, zone_de=zone_de, canal=canal,
+                                versions=versions, verrous=verrous)
 
     @r.get("/releves")
     async def releves(requete: Request, qui: Identite = Depends(identite)):
@@ -713,51 +520,6 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     abonnements = Abonnements(env["DATABASE_URL"])
     routes_forfaits.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
                            abonnements=abonnements, client_de=client_de, rassembler_tout=rassembler_tout)
-
-    @r.get("/installations")
-    def installations(qui: Identite = Depends(identite)):
-        megga(qui)
-        # cle_pilotage : l'atelier a sa clé et peut signer des ordres (scripts/pilotage.py poser).
-        return {"installations": canal.toutes({c["component_id"]: c.get("current_version") for c in versions.clients()}),
-                "cle_pilotage": canal.cle is not None}
-
-    @r.get("/clients/{ident}/installation")
-    def installation(ident: str, qui: Identite = Depends(identite)):
-        c = hors_porte(qui, ident)
-        return {"client": ident, "version_en_service": c.get("current_version"), **canal.vue(ident, c.get("current_version"))}
-
-    @r.put("/clients/{ident}/installation")
-    def enregistrer_installation(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        """La mise en service d'une installation : MEGGA enregistre la clé publique qu'elle lui a remise."""
-        megga(qui)
-        hors_porte(qui, ident)
-        try:
-            empreinte = canal.enregistrer(ident, corps.get("cle_publique"))
-        except pilotages.PilotageRefuse as e:
-            raise Refus(400, str(e)) from e
-        return {"client": ident, "cle": empreinte}
-
-    @r.delete("/clients/{ident}/installation")
-    def revoquer_installation(ident: str, qui: Identite = Depends(identite)):
-        megga(qui)
-        hors_porte(qui, ident)
-        return {"client": ident, "revoquee": canal.revoquer(ident)}
-
-    @r.post("/clients/{ident}/installation/image", status_code=201)
-    async def proposer_image(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
-        """Une version d'image pour l'installation : son pilote la vérifie et l'installe (MISES_A_JOUR=oui), sinon la propose."""
-        megga(qui)
-        await bd(hors_porte, qui, ident)
-        contenu = {"version": corps.get("version"), "image": corps.get("image")}
-        if not (isinstance(contenu["version"], str) and pilotages.VERSION_IMAGE.fullmatch(contenu["version"])):
-            raise Refus(400, "version : celle de l'image, par exemple 0.2.0")
-        if not (isinstance(contenu["image"], str) and pilotages.IMAGE.fullmatch(contenu["image"])):
-            raise Refus(400, "image : ghcr.io/megga/megga-agents@sha256:<empreinte>, l'image signée par MEGGA")
-        if canal.cle is None:
-            raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
-        async with verrous[ident]:
-            ordre = await bd(canal.deposer, ident, "image", contenu, qui.role)
-        return {"client": ident, "ordre": ordre["numero"], **contenu}
 
     @r.get("/tarifs")
     def tarifs(qui: Identite = Depends(identite)):
