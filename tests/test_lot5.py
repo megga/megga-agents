@@ -226,7 +226,7 @@ def test_le_parcours_du_client(atelier):
     r = t.post("/atelier/clients/exemple/versions/2/essai", headers=client, json={"message": "Bonjour"})
     assert r.status_code == 200 and r.json()["reponse"] == "Bonjour, ici votre agent d'essai."
     consignes = json.dumps(t.modele.vus[-1], ensure_ascii=False)
-    assert "Tu es Lea" in consignes and "direct" in consignes  # l'agent de la version 2, pas celui de la 1
+    assert "You are Lea" in consignes and "direct" in consignes  # l'agent de la version 2, pas celui de la 1
     assert t.get("/atelier/clients/exemple/versions/2", headers=client).json()["essais"] == 1
 
     r = t.post("/atelier/clients/exemple/versions/2/activer", headers=client)

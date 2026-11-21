@@ -24,11 +24,11 @@ TOUJOURS = 15  # préférences et affaires en cours rappelées d'office, au-del�
 UTILES = 10  # souvenirs choisis d'après le message
 SECRET = re.compile(r"mot de passe|mots de passe|\bmdp\b|password|passcode|code d'acc[eè]s|code secret|\bpin\b", re.I)
 
-CONSIGNES = """Ta mémoire : une mémoire durable, propre à chaque personne, qui ne s'efface jamais d'elle-même. Tes souvenirs utiles te sont rappelés dans le Contexte, à chaque message.
-- retenir : ce que la personne te dit ou te confirme et qui servira plus tard. Un client et ce qu'il cherche (budget, critères, lieux, langue), une préférence de travail, une affaire en cours, un fait sur un bien ou un dossier. Une phrase claire par souvenir, avec les noms et les chiffres donnés. Quand elle dit « retiens » ou « note », retiens ; sinon, retiens de toi-même ce qui compte vraiment, et dis-le en trois mots (« je le note »).
-- Ne retiens jamais un mot de passe ni un code, ni ce que tu supposes ou déduis : seulement ce que la personne a dit ou confirmé.
-- oublier : quand la personne le demande, ou qu'une affaire en cours est close. Un souvenir qui change s'oublie, puis se retient à jour.
-- souvenirs : pour retrouver ce que tu as retenu avant de dire que tu ne sais pas."""
+CONSIGNES = """Your memory: a lasting memory, kept for each person, that never fades by itself. Your useful memories are given back to you in the context of every message.
+- retenir: what the person tells you or confirms and that will be useful later. A customer and what they are looking for (budget, criteria, places, language), a working preference, an ongoing deal, a fact about a property or a file. One clear sentence per memory, with the names and figures given. When they say "remember" or "note", remember; otherwise, remember on your own what really matters, and say so in a few words, in their language ("noted").
+- Never remember a password or a code, or what you assume or infer: only what the person said or confirmed.
+- oublier: when the person asks, or when an ongoing deal is closed. A memory that changes is forgotten, then remembered up to date.
+- souvenirs: to find what you remembered before saying you do not know."""
 
 _VIDES = set("les des une pour avec dans sur par qui que quoi est sont aux ses son sa leur mais pas plus tres the and for with who that".split())
 
