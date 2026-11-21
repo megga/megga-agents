@@ -168,6 +168,8 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
    - la vue MEGGA : tous les clients, les réglages avancés et la reprise en main.
 11. **Le catalogue complet** (Julien, 20.11.2026) : les 283 agents d'agency-agents installés comme modèles prêts à l'emploi, rangés par catégorie, avec des garde-fous sécurité (strictement défensif), santé et juridique (aucun avis). Porté seul sur `main`, sans attendre les lots 9 et 10 (`docs/lot11.md`).
 
+**Clone Agent** (Thomas, 21.11.2026) : un produit grand public posé sur ce socle, où chacun crée son clone IA en lui parlant et lui laisse ce qu'il n'aime pas faire sur un ordinateur. Cadré dans `docs/clone-agent/`, avec ses propres lots C1 à C9 ; rien n'est construit avant l'accord de Julien.
+
 ## Décidé
 
 - Dépôt de la plateforme : `megga/megga-agents` (Julien, 15.11.2026). L'agence de démo s'appellera MEGGA Estates ; elle attend que Julien la lance.
