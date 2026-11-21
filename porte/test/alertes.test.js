@@ -1,7 +1,7 @@
 // Les alertes envoyées (20.11.2026) : le déclencheur fait évaluer l'atelier, la porte envoie les courriels.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { courrielHtml, courrielValide, evaluerAlertes, evaluerRecharges } from "../src/alertes.js";
+import { courrielHtml, courrielValide, francais, evaluerAlertes, evaluerRecharges } from "../src/alertes.js";
 import { declencher, recevoir, stripeBienForme } from "../src/index.js";
 
 const COURRIEL = { a: "julien@example.com", sujet: "Alerte : Tours en échec, Exemple SA", texte: "Tours en échec : 12 %." };
@@ -38,7 +38,7 @@ test("la porte envoie le courriel par sa liaison, jeton d'administration exigé"
   assert.equal(envoyes.length, 0);
   const r = await poster(COURRIEL, env);
   assert.equal(r.status, 200);
-  assert.deepEqual(envoyes, [{ to: COURRIEL.a, from: { email: "alertes@megga.ai", name: "MEGGA" }, subject: COURRIEL.sujet, text: COURRIEL.texte, html: courrielHtml(COURRIEL.sujet, COURRIEL.texte) }]);
+  assert.deepEqual(envoyes, [{ to: COURRIEL.a, from: { email: "alertes@megga.ai", name: "MEGGA" }, subject: COURRIEL.sujet, text: francais(COURRIEL.texte), html: courrielHtml(COURRIEL.sujet, COURRIEL.texte) }]);
   assert.equal((await poster({ ...COURRIEL, a: "x" }, env)).status, 400);
   const refuse = { ...env, COURRIEL: { send: async () => { throw Object.assign(new Error("julien@example.com"), { code: "E_REFUS" }); } } };
   const r2 = await poster(COURRIEL, refuse);
@@ -55,6 +55,14 @@ test("le courriel au dessin de MEGGA : le sujet en titre, le texte échappé, le
   assert.ok(html.includes('alt="MEGGA"') && html.includes('href="https://console.megga.ai/admin/alertes"'));
   assert.ok(html.includes('bgcolor="#03030f"')); // le bloc bleu foncé, aussi pour les messageries qui ignorent les styles
   assert.ok(!/[\u2014\u2013\u00b7]/.test(html)); // ni tiret long ni point médian
+});
+
+test("des textes harmonisés : le titre une fois, la typographie française", () => {
+  assert.equal(francais("Tours en échec : 12 % ; « oui » ?"), "Tours en échec\u00a0: 12 %\u00a0; «\u00a0oui\u00a0»\u00a0?");
+  assert.equal(francais("Prix: 3"), "Prix\u00a0: 3");
+  const html = courrielHtml("Alerte : Agent silencieux, Exemple SA", "Alerte : Agent silencieux, Exemple SA.\nSans relevé depuis 52 minutes.");
+  assert.equal(html.split("Agent silencieux").length - 1, 2); // le titre de la page et le titre du courriel, pas le texte
+  assert.ok(html.includes("Alerte\u00a0: Agent silencieux") && html.includes(">Sans relevé depuis 52 minutes.</td>"));
 });
 
 test("le déclencheur demande l'évaluation à l'atelier, avec le jeton de MEGGA", async () => {
