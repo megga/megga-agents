@@ -18,34 +18,43 @@ export function courrielValide(corps) {
 
 const echapper = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const CONSOLE_ALERTES = "https://console.megga.ai/admin/alertes";
+const IMAGES = "https://megga.ch/images/email/";
+const POLICE = "'Inter Tight', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif";
+const TEXTE = "color:#c4c4cc;font-size:16px;line-height:1.6;";
 
 /**
- * Le courriel d'alerte mis en forme, sur le modèle des notifications de l'ERP de MEGGA : un fond gris clair, une carte
- * blanche de 590 pixels, le sujet en titre (il ouvre les alertes de la console), un filet, le texte, un filet et la
- * signature. Des tableaux et des styles en ligne : ce que lisent toutes les messageries. Le texte brut part à côté.
+ * Le courriel d'alerte au dessin des courriels de MEGGA (megga-erp, cloudflare/rendez-vous/src/lib/server/email/detail.ts) :
+ * un bloc bleu foncé #03030f au centre d'une page blanche, tout aligné à gauche, le logo, le sujet en titre, le texte,
+ * le bouton vers les alertes de la console, et en bas le dégradé du pied de page. Les images sont celles de megga.ch
+ * (un courriel ne lit ni SVG ni dégradé CSS). Tableaux et styles en ligne ; les fonds passent aussi par bgcolor, que
+ * certaines messageries lisent seul. Le texte brut part à côté.
  */
 export function courrielHtml(sujet, texte) {
-  const lignes = texte.split("\n").filter((l) => l.trim())
-    .map((l) => `<p style="margin: 0 0 12px 0; font-size: 14px; line-height: 21px;">${echapper(l)}</p>`).join("");
-  const filet = (marge) =>
-    `<hr width="100%" style="background-color: #CCCCCC; border: none; display: block; font-size: 0; min-height: 1px; line-height: 0; margin: ${marge};"/>`;
-  return `<!doctype html><html lang="fr"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/></head><body style="margin: 0;">
-<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="padding-top: 16px; background-color: #F1F1F1; font-family: Verdana, Arial, sans-serif; color: #454748; border-collapse: separate;"><tr><td align="center">
-<table role="presentation" border="0" cellpadding="0" cellspacing="0" width="590" style="max-width: 590px; padding: 24px; background-color: #FFFFFF; color: #454748; border-collapse: separate;">
-<tr><td>
-<span style="font-size: 10px;">Alerte de la console</span><br/>
-<a href="${CONSOLE_ALERTES}" style="color: #454748; text-decoration: none;"><span style="font-size: 20px; font-weight: bold;">${echapper(sujet)}</span></a>
-${filet("4px 0 32px 0")}
-</td></tr>
-<tr><td>${lignes}</td></tr>
-<tr><td align="center" style="font-size: 11px;">
-${filet("16px 0 4px 0")}
-<b>MEGGA</b><br/>
-<a href="${CONSOLE_ALERTES}" style="color: #999999; text-decoration: none;">console.megga.ai</a>
+  const ligne = (padding, style, contenu) =>
+    `<tr><td bgcolor="#03030f" style="background-color:#03030f;padding:${padding};font-family:${POLICE};${style}">${contenu}</td></tr>`;
+  const lignes = texte.split("\n").filter((l) => l.trim()).map((l, i) => ligne(`${i ? 8 : 24}px 40px 0`, TEXTE, echapper(l))).join("\n");
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>${echapper(sujet)}</title>
+</head>
+<body bgcolor="#ffffff" style="margin:0;padding:0;background-color:#ffffff;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="background-color:#ffffff;">
+<tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#03030f" style="width:100%;max-width:600px;background-color:#03030f;border-radius:24px;overflow:hidden;">
+${ligne("40px 40px 0", "", `<img src="${IMAGES}megga-logo-blanc.png" width="110" alt="MEGGA" style="display:block;width:110px;height:auto;border:0;">`)}
+${ligne("40px 40px 0", "color:#ffffff;font-size:24px;line-height:1.25;font-weight:600;letter-spacing:-0.01em;", echapper(sujet))}
+${lignes}
+<tr><td bgcolor="#03030f" style="background-color:#03030f;padding:28px 40px 0;"><table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="#ffffff" style="background-color:#ffffff;border-radius:999px;"><a href="${CONSOLE_ALERTES}" style="display:inline-block;padding:14px 28px;border-radius:999px;background-color:#ffffff;color:#03030f;font-family:${POLICE};font-size:16px;font-weight:600;line-height:1;text-decoration:none;">Voir les alertes</a></td></tr></table></td></tr>
+<tr><td bgcolor="#03030f" style="background-color:#03030f;padding:32px 0 0;font-size:0;line-height:0;"><img src="${IMAGES}pied.jpg" width="600" alt="" style="display:block;width:100%;height:auto;border:0;"></td></tr>
+</table>
 </td></tr>
 </table>
-</td></tr><tr><td style="height: 16px;"></td></tr></table>
-</body></html>`;
+</body>
+</html>`;
 }
 
 /** POST /admin/courriel (jeton ADMIN_TOKEN, vérifié par l'appelant). */

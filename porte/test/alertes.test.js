@@ -47,12 +47,13 @@ test("la porte envoie le courriel par sa liaison, jeton d'administration exigé"
   assert.equal((await poster(COURRIEL, { ADMIN_TOKEN: "admin" })).status, 503); // liaison absente
 });
 
-test("le courriel mis en forme : le sujet en titre, le texte échappé, la signature de MEGGA", () => {
+test("le courriel au dessin de MEGGA : le sujet en titre, le texte échappé, le bouton vers les alertes", () => {
   const html = courrielHtml("Alerte : <b>Exemple</b> & Cie", "Ligne une.\n\nLigne <deux>.");
   assert.ok(html.includes("Alerte : &lt;b&gt;Exemple&lt;/b&gt; &amp; Cie"));
-  assert.ok(html.includes(">Ligne une.</p>") && html.includes(">Ligne &lt;deux&gt;.</p>"));
+  assert.ok(html.includes(">Ligne une.</td>") && html.includes(">Ligne &lt;deux&gt;.</td>"));
   assert.ok(!html.includes("<deux>") && !html.includes("<b>Exemple"));
-  assert.ok(html.includes("<b>MEGGA</b>") && html.includes('href="https://console.megga.ai/admin/alertes"'));
+  assert.ok(html.includes('alt="MEGGA"') && html.includes('href="https://console.megga.ai/admin/alertes"'));
+  assert.ok(html.includes('bgcolor="#03030f"')); // le bloc bleu foncé, aussi pour les messageries qui ignorent les styles
   assert.ok(!/[\u2014\u2013\u00b7]/.test(html)); // ni tiret long ni point médian
 });
 
