@@ -127,14 +127,14 @@ Aujourd'hui, chaque client a **son conteneur, éveillé jour et nuit** (environ 
 | **B. Un pool partagé** (recommandé) | des conteneurs sans état, communs à une zone, qui servent n'importe quel titulaire | une base par zone, chaque ligne marquée du titulaire, sécurité par ligne (RLS) et chiffrement par titulaire | coût proportionnel à l'usage ; pas de réveil ; même image | l'isolation repose sur la base et les clés, plus sur le processus : à tester sans relâche |
 | **C. Un objet par titulaire** | pool comme B | un Durable Object (SQLite) par titulaire chez Cloudflare | isolation forte et bon marché ; dans la ligne du plan (SQLite chez Cloudflare vers la centaine de clients) | la zone Suisse n'est pas chez Cloudflare ; pgvector à remplacer ; deux moteurs à tenir |
 
-**Recommandation** : B pour commencer, en gardant C possible.
+**Retenu : B, en cellules**, en gardant C possible (Thomas a confié la conception à Claude le 21.11.2026 ; le détail, à valider par Julien, est dans [09-infrastructure.md](09-infrastructure.md)).
 
 - **Le calcul** : le noyau sait déjà servir plusieurs personnes (`user_id` d'Agno). Il faut qu'il sache servir **plusieurs titulaires** : la configuration et les outils d'un titulaire sont chargés au début du tour (avec un cache court), jamais gardés dans l'état du processus.
 - **Les données** : chaque table du modèle de soi porte `titulaire`, la base applique la sécurité par ligne (un rôle de connexion par requête, `SET app.titulaire`), et les contenus sensibles sont chiffrés avec une clé propre au titulaire (une clé de données, elle même chiffrée par une clé de la zone). Effacer un titulaire, c'est effacer ses lignes **et** détruire sa clé.
 - **L'interface du stockage** reste la seule porte vers la base : passer à C plus tard ne touchera que `noyau/stockage.py`.
 - **Les agents d'entreprise ne changent pas** : ils restent en A. Un titulaire « premium » (zone Suisse, exigences fortes) peut aussi avoir sa propre installation.
 
-À trancher par Julien avant C1. Un essai de charge en C1 doit montrer qu'aucune requête ne lit jamais une ligne d'un autre titulaire, même avec un bug volontaire dans le code de l'agent.
+Un essai de charge en C1 doit montrer qu'aucune requête ne lit jamais une ligne d'un autre titulaire, même avec un bug volontaire dans le code de l'agent. Les pools, le coordinateur par titulaire, les cellules, les clés, la zone Suisse et le dimensionnement : [09-infrastructure.md](09-infrastructure.md).
 
 ## Les tâches de fond
 
@@ -148,7 +148,7 @@ Le clone ne fait pas que répondre : il lit, apprend et agit sans qu'on lui parl
 | Consolidation | chaque nuit, heure du titulaire | minutes | petit modèle, par titulaire actif |
 | Questions au titulaire | une ou deux par jour au plus | | posées dans le point du jour |
 
-Ces tâches passent par une file (Cloudflare Queues en zones Europe et États-Unis, l'équivalent chez Exoscale en Suisse), avec un plafond par titulaire : une ingestion énorme ne doit pas ralentir les autres.
+Ces tâches passent par une file tenue dans Postgres, la même dans toutes les zones, écrite dans la même transaction que ce qui la provoque, avec un tirage équitable par titulaire : une ingestion énorme ne doit pas ralentir les autres (voir [09-infrastructure.md](09-infrastructure.md), « La file »).
 
 ## Les modèles
 

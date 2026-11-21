@@ -77,7 +77,7 @@ create table soi_styles (
 create table soi_exemples (
   id uuid primary key, titulaire text not null,
   contexte jsonb not null, situation text, texte text not null,   -- chiffrés
-  vecteur vector(1024),         -- pour retrouver les exemples proches (pgvector)
+  vecteur halfvec(512),         -- pour retrouver les exemples proches (pgvector, recherche exacte par titulaire : voir 09)
   source uuid references soi_sources, qualite real
 );
 
@@ -92,7 +92,7 @@ create table soi_regles (
 create table soi_decisions (
   id uuid primary key, titulaire text not null,
   domaine text, situation text not null, choix text not null, raison text,   -- chiffrés
-  vecteur vector(1024), poids real default 1, source uuid references soi_sources
+  vecteur halfvec(512), poids real default 1, source uuid references soi_sources
 );
 
 -- Les missions, les épisodes, les procédures.
@@ -175,7 +175,7 @@ Ces mesures sortent dans le relevé chiffré sous forme de nombres seulement.
 
 ## L'échelle
 
-Pour un titulaire actif après un an : quelques milliers d'entités, quelques dizaines de milliers de faits et d'épisodes, quelques milliers d'exemples et de décisions avec leurs vecteurs. Soit quelques dizaines de mégaoctets : rien d'énorme par personne. Le vrai volume est le nombre de titulaires ; d'où le choix d'une base par zone partagée (option B), partitionnée par titulaire, plutôt qu'une base par personne.
+Pour un titulaire actif après un an : quelques milliers d'entités, quelques dizaines de milliers de faits et d'épisodes, quelques milliers d'exemples et de décisions avec leurs vecteurs. Soit quelques dizaines de mégaoctets : rien d'énorme par personne. Le vrai volume est le nombre de titulaires ; d'où le choix de bases partagées en cellules (option B), rangées par titulaire, plutôt qu'une base par personne. Avec quelques milliers de vecteurs par titulaire, la recherche par le sens se fait exactement parmi les siens, sans grand index commun ([09-infrastructure.md](09-infrastructure.md)).
 
 ## Questions pour Julien
 

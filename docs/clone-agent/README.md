@@ -30,6 +30,7 @@ Trois briques nouvelles, posées sur le socle existant :
 | Autonomie | **Au choix de l'utilisateur** : il règle lui-même, domaine par domaine, ce que son clone fait seul ou lui soumet |
 | Agir sans connecteur | **Les deux, par étapes** : navigateur dans le cloud d'abord, app sur l'ordinateur ensuite |
 | Ressemblance | **Complète** : style d'écriture et décisions, voix clonée, avatar vidéo (dans cet ordre) |
+| Infrastructure | **Confiée à Claude** : calcul partagé sans état, un coordinateur endormi par titulaire, données en cellules isolées par la base et le chiffrement ([09-infrastructure.md](09-infrastructure.md), à valider par Julien) |
 
 ## Le dossier
 
@@ -43,6 +44,7 @@ Trois briques nouvelles, posées sur le socle existant :
 | [06-ressemblance.md](06-ressemblance.md) | écrire, parler et apparaître comme la personne, avec son consentement prouvé |
 | [07-securite-conformite.md](07-securite-conformite.md) | sécurité, données, AI Act, RGPD et nLPD, conditions des services tiers |
 | [08-lots.md](08-lots.md) | les lots C1 à C9, leurs critères de fin et leurs essais |
+| [09-infrastructure.md](09-infrastructure.md) | l'infrastructure cloud du grand public : pools, coordinateurs, cellules, clés, zone Suisse, dimensionnement, pannes |
 
 ## Les principes qui ne bougent pas
 

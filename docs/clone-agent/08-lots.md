@@ -29,13 +29,17 @@ flowchart LR
 ## C1. Les fondations grand public
 
 - Le métier `clone` dans `noyau/config.py` (configuration en version 2, section `clone`), son gabarit dans l'atelier.
-- Le noyau qui sert plusieurs titulaires depuis un même conteneur (option B, si Julien la retient) : configuration et outils chargés au début du tour, cache court, rien de propre à un titulaire dans l'état du processus.
-- Les tables du modèle de soi dans `noyau/stockage.py` (version de nos tables suivante), sécurité par ligne, chiffrement par titulaire, export et effacement complets.
+- Les vérifications de [09-infrastructure.md](09-infrastructure.md) (conteneurs, Durable Objects, Neon, service de clés, Exoscale), avant d'écrire le reste.
+- Le noyau qui sert plusieurs titulaires depuis un même conteneur : configuration et outils chargés au début du tour, cache court, rien de propre à un titulaire dans l'état du processus ; le mode `MEGGA_SERVICE=clone`.
+- Les trois nouveaux points d'échange du noyau : coordinateur, file (dans Postgres), clés ; leur version Cloudflare.
+- La porte : le coordinateur par titulaire et le régulateur par zone (Durable Objects), le pool interactif et le pool de fond, la table `titulaires` de l'annuaire.
+- La cellule 0 (équipe MEGGA et testeurs) : les tables du modèle de soi dans `noyau/stockage.py` (version de nos tables suivante), sécurité par ligne forcée, jeton signé de la porte, chiffrement par titulaire, export et effacement complets (destruction de la clé comprise).
 - L'essai comparatif : schéma maison contre une bibliothèque de mémoire à graphe daté.
 - L'atelier : inscription libre d'un titulaire, son clone créé par lui même, mise en service sans essai forcé pour le métier `clone`, quotas par titulaire.
 - La console : comptes grand public (Better Auth est déjà là), double authentification.
 - **Fini quand** : un titulaire s'inscrit seul, a un clone en service qui lui répond dans l'app et sur WhatsApp, et retient ce qu'il dit ; l'export et l'effacement marchent.
-- **Essais** : isolation entre titulaires (un titulaire ne lit jamais une ligne d'un autre, même avec une requête volontairement fausse) ; charge (1 000 titulaires simulés sur un pool) ; export puis réimport ; effacement complet vérifié ; tout aussi sur SQLite.
+- **Essais** : isolation entre titulaires (un titulaire ne lit jamais une ligne d'un autre, même avec une requête volontairement fausse ; une valeur chiffrée recopiée sur la ligne d'un autre ne se déchiffre pas) ; charge (1 000 puis 10 000 titulaires simulés sur une cellule et un pool) ; un conteneur du pool tué en plein tour, le tour rejoué sans action en double ; export puis réimport ; effacement complet vérifié ; tout aussi sur SQLite.
+- **La zone Suisse** (Exoscale) suit dans un lot à part, quand un premier titulaire suisse le demande : même image, versions Exoscale des trois points d'échange.
 
 ## C2. L'onboarding conversationnel
 
@@ -114,7 +118,7 @@ flowchart LR
 
 ### Avant C1 (Julien)
 
-1. **Le calcul et les données pour le grand public** : option A, B ou C ([02-architecture.md](02-architecture.md)) ? Recommandation : B.
+1. **L'infrastructure du grand public** : conçue par Claude à la demande de Thomas ([09-infrastructure.md](09-infrastructure.md)) ; Julien la valide ou la corrige, en particulier le régulateur maison des conteneurs et la file dans Postgres plutôt que Cloudflare Queues.
 2. **Le secours de modèle d'un clone** : pas DeepSeek par défaut ; un autre Claude ou Claude par une autre voie ?
 3. **Le nom public** : Clone, Double ou Twin ? (à tester auprès d'utilisateurs, n'empêche pas C1)
 4. **Le prix** : un repère de départ pour les essais (fixé pour de vrai après C4).
