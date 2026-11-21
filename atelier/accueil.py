@@ -51,7 +51,7 @@ CONSIGNES = [
     " want. Call `noter` every time you learn one of these, with the person's own facts only. Never invent a fact.",
     "When you understand the business, call `chercher_modele` with a few words about it, propose the best match in one"
     " sentence, and call `choisir_modele` only after the person agrees. Then ask for the agent's first name and call"
-    " `nommer_agent`.",
+    " `nommer_agent`. If you set the model or the name in the same step as `preparer_agent`, pass them to it too.",
     "When you have the business, at least one more topic, a model and a first name, call `preparer_agent`. Then tell"
     " the person their agent is ready to try, and invite them to write to it as one of their customers would.",
     "You never answer as the business's agent, never promise what the agent will do beyond what was noted, and never"
@@ -163,10 +163,20 @@ def outils(lire: Callable[[], dict], ecrire: Callable[[dict], None], zone: str |
         changer(lambda e: e.__setitem__("prenom", p))
         return repondre({"prenom": p})
 
-    def preparer_agent() -> str:
+    def preparer_agent(modele: str = "", prenom: str = "") -> str:
         """Write the agent from everything noted: the chosen model, the first name, the tone and the business
-        presentation. Call it once the person has described their business and chosen a model and a first name.
-        Returns the draft version to try."""
+        presentation. Call it once the person has described their business and agreed on a model and a first name;
+        pass them here too (`modele`, `prenom`) when you set them in the same step. Returns the draft version to try."""
+        # Les outils d'un même tour partent ensemble : la préparation reçoit aussi le modèle et le prénom, pour ne jamais
+        # passer avant choisir_modele ou nommer_agent (vu à l'essai local du 21.11.2026).
+        if modele:
+            r = json.loads(choisir_modele(modele))
+            if "erreur" in r:
+                return repondre(r)
+        if prenom:
+            r = json.loads(nommer_agent(prenom))
+            if "erreur" in r:
+                return repondre(r)
         with verrou:
             etat = lire()
             manque = [m for m, ok in (("activite", etat["notes"].get("activite")), ("modele", etat["modele"]),

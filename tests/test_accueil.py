@@ -224,3 +224,21 @@ def test_pas_de_presentation_hors_cloudflare(atelier):
     r = t.post("/atelier/clients/cabinet-geneve/versions/1/activer", headers=MEGGA, json={"forcer": True})
     assert r.status_code == 409 and "hors Cloudflare" in r.text, r.text
 
+
+def test_preparer_en_meme_temps_que_choisir_et_nommer(atelier):
+    """Claude peut appeler choisir_modele, nommer_agent et preparer_agent dans le même pas : la préparation reçoit le
+    modèle et le prénom, et ne passe jamais avant eux."""
+    t = atelier
+    t.modele.etapes = [
+        [("noter", {"sujet": "activite", "texte": "Boulangerie"})],
+        "Merci.",
+        [("choisir_modele", {"modele": "generaliste"}), ("nommer_agent", {"prenom": "Rose"}),
+         ("preparer_agent", {"modele": "generaliste", "prenom": "Rose"})],
+        "Rose est prête.",
+    ]
+    tour(t, "Une boulangerie.")
+    flux = tour(t, "Le généraliste, et Rose.")
+    assert "Rose est pr" in flux
+    etat = t.get(f"/atelier/clients/{IDENTITE['id']}/accueil", headers=t.client).json()
+    assert etat["version"] == 2 and etat["prenom"] == "Rose" and etat["modele"] == "generaliste"
+
