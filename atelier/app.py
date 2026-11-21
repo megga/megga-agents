@@ -45,6 +45,10 @@ Connecteurs de Composio (atelier/routes_composio.py, noyau/composio.py) :
   GET   /clients/{id}/composio/comptes          les comptes connectés par le client, sans jeton
   POST  /clients/{id}/composio/lien             MEGGA : {auth_config, retour?} le lien où le client connecte un compte
 
+L'agent d'accueil des entreprises (atelier/routes_accueil.py, atelier/accueil.py) : MEGGA ou le client
+  GET   /clients/{id}/accueil                   ce qu'il a noté (notes, modèle, prénom, brouillon) et la présentation
+  POST  /clients/{id}/accueil                   un tour de conversation en AG-UI, la réponse au fil de l'eau
+
 Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/suivi[?jours=7]           état, activité (tours, personnes, modèles, voix) ;
                                                 coûts pour MEGGA seulement
@@ -94,7 +98,7 @@ from noyau import stockage
 from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 
-from . import gabarits, pays, regles, routes_alertes, routes_cles, routes_composio, routes_forfaits, routes_installations, routes_stripe
+from . import gabarits, pays, regles, routes_accueil, routes_alertes, routes_cles, routes_composio, routes_forfaits, routes_installations, routes_stripe
 from . import routes_suivi
 from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs
@@ -436,6 +440,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         """Hors Cloudflare (chez le client, zone suisse) : la version est mise en service dans l'atelier, puis
         un ordre signé part à l'installation à son prochain relevé. Une version déjà en service peut être
         renvoyée si l'installation ne la sert pas (refusée, en échec, expirée)."""
+        if conf.presentation:
+            # Une image d'avant ce champ refuserait toute la configuration (Config refuse les champs inconnus).
+            raise Refus(409, "la présentation de l'entreprise n'est pas encore servie hors Cloudflare : retirez-la de cette version")
         if canal.cle is None:
             raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
         if conf.whatsapp is None:
@@ -494,6 +501,8 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     routes_cles.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte)
     routes_composio.monter(r, identite=identite, megga=megga, bd=bd, client_de=client_de, cle=env.get("COMPOSIO_API_KEY"),
                            transport=transport_composio)
+    routes_accueil.monter(r, identite=identite, bd=bd, client_de=client_de, versions=versions, reglages=reglages,
+                          zone_en_service=zone_en_service, cles=cles, db_agno=versions.db, principal=principal_essai)
     routes_suivi.monter(r, identite=identite, bd=bd, client_de=client_de, zone_de=zone_de, porte=porte, versions=versions,
                         resume=resume, etats_porte=etats_porte, canal=canal, pilote_fenetres=pilote_fenetres,
                         lire_tarifs=lire_tarifs)

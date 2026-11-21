@@ -373,6 +373,11 @@ class Config(Strict):
     fuseau: str = "Europe/Zurich"
     ton: str = Field(default="chaleureux et professionnel", max_length=200)
     consignes: str = Field(default="", max_length=8000)
+    # L'entreprise dite par le client lui-même (son activité, ses horaires, ses services), notée par l'agent d'accueil
+    # (atelier/accueil.py) ou réglée par le client : ajoutée aux consignes, sans jamais toucher à celles de MEGGA.
+    # Vide, elle n'est pas écrite : une configuration sans présentation reste lisible par une image d'avant ce champ
+    # (une installation chez le client, un conteneur pas encore redémarré).
+    presentation: str = Field(default="", max_length=2000, exclude_if=lambda v: v == "")
     modeles: Modeles = Modeles()
     # Facultatif : un agent branché seulement par API (un logiciel, noyau/api.py) n'a pas de numéro.
     # Une configuration sans WhatsApp demande une image qui la connaît (SANS_WHATSAPP_SCHEMA).
@@ -461,7 +466,7 @@ class Config(Strict):
             raise ValueError(f"version de configuration {v} inconnue (attendue : {VERSION})")
         return v
 
-    @field_validator("consignes", "ton", "nom_agent", "entreprise")
+    @field_validator("consignes", "presentation", "ton", "nom_agent", "entreprise")
     @classmethod
     def sans_artefacts(cls, v: str) -> str:
         if re.search(r"[\u2014\u2013\u00b7]", v):

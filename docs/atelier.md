@@ -73,8 +73,23 @@ Toutes sous `/atelier`, jeton en `Authorization: Bearer …`.
 | `DELETE /clients/{id}/cles/{cle}` | tous | retire une clé, tout de suite |
 | `GET /clients/{id}/composio/comptes` | tous | les comptes que le client a connectés dans Composio (boîte d'outils, état), sans jeton (`docs/composio.md`) |
 | `POST /clients/{id}/composio/lien` | MEGGA | `{auth_config, retour?}` : le lien de Composio où le client connecte lui-même un de ses comptes |
+| `GET /clients/{id}/accueil` | tous | ce que l'agent d'accueil a noté (notes, modèle, prénom, dernier brouillon) et la présentation qu'il en tire |
+| `POST /clients/{id}/accueil` | tous | un tour de conversation avec l'agent d'accueil, en AG-UI (`RunAgentInput`) : la réponse au fil de l'eau |
 
 Côté porte (jeton `ADMIN_TOKEN`) : `PUT /admin/clients/{id}/config` (appelée par l'atelier), `GET|POST /admin/clients/{id}/cles` et `DELETE /admin/clients/{id}/cles/{cle}` (transmises au conteneur du client), `GET /admin/clients` (ou `?id=` pour un seul), `PUT /admin/atelier/secrets` (sa base, et sa clé de pilotage). Le conteneur d'un client a une route interne `/interne/vider`, que la porte appelle avant de l'arrêter.
+
+## L'agent d'accueil des entreprises (lot E1)
+
+Le client ne remplit plus d'écrans : il raconte son entreprise à l'agent d'accueil (`atelier/accueil.py`), qui écrit l'agent du client (décision de Julien du 21.11.2026, `docs/clone-agent/11-espace-client.md`). L'agent d'accueil :
+
+- note ce que le client dit, par sujet : l'activité, les horaires, les services, les demandes fréquentes, les règles, le ton ;
+- cherche le modèle qui colle parmi les 285, propose le généraliste à chaque fois, et ne le choisit qu'avec l'accord du client ;
+- prend le prénom de l'agent ;
+- prépare un brouillon : le modèle (mêmes règles que `POST /gabarit`), le prénom, le ton, et la **présentation** de l'entreprise (`Config.presentation`, 2000 caractères au plus), que l'agent du client relit après ses consignes. Le client l'essaie et le met en service comme tout brouillon.
+
+Il n'écrit rien d'autre : ni les consignes de MEGGA, ni le numéro, ni les modèles de langue. La présentation est aussi un réglage simple du client (`CHAMPS_CLIENT`). Ses notes sont gardées dans l'atelier (`megga_reglages`), sans conversation ; la conversation est une session d'Agno, dont le fil est toujours préfixé par l'identifiant du client. 200 messages par jour et par client au plus. Le modèle : Claude Sonnet 5.5.
+
+De la console, seul le texte du dernier message passe (4000 caractères au plus) : ni image, ni document, ni adresse, ni outils, contexte ou état. Une erreur technique reste dans le journal de l'atelier ; le client lit « Un souci est survenu ». La présentation est relue comme des faits, avant les consignes de MEGGA, qui gardent le dernier mot. Hors Cloudflare (installations chez le client), l'accueil ne prépare rien et une version avec présentation n'est pas mise en service, tant qu'aucune image ne la sert là-bas.
 
 ## L'entrée par API (lot 6.6)
 
