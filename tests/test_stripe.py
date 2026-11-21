@@ -95,10 +95,16 @@ def test_lien_puis_paiement(atelier):
     assert session["line_items[0][price_data][unit_amount]"] == "278400"  # 232 × 12
     assert session["subscription_data[metadata][client]"] == "exemple" and session["line_items[0][price_data][currency]"] == "usd"
     # Le paiement : Stripe envoie l'événement, l'abonnement est relié et passe actif.
+    # Relié mais pas encore payé : l'essai continue.
+    evenement(t, "checkout.session.completed", {"mode": "subscription", "customer": "cus_1", "subscription": "sub_1",
+                                               "payment_status": "unpaid", "metadata": {"client": "exemple"}})
+    assert t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]["abonnement"]["statut"] == "essai"
     assert evenement(t, "checkout.session.completed", {"mode": "subscription", "customer": "cus_1", "subscription": "sub_1",
-                                                       "metadata": {"client": "exemple"}}).json() == {"recu": True}
+                                                       "payment_status": "paid", "metadata": {"client": "exemple"}}).json() == {"recu": True}
     c = t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]
     assert c["abonnement"]["statut"] == "actif" and c["stripe"] == {"relie": True, "recharge_en_cours": False}
+    # Déjà abonné par Stripe : un second lien créerait un second abonnement, payé deux fois.
+    assert t.post("/atelier/clients/exemple/stripe/lien", headers=MEGGA).status_code == 409
     # Un paiement refusé : en retard ; puis payé : actif ; résilié : parti.
     evenement(t, "invoice.payment_failed", {"customer": "cus_1", "metadata": {}})
     assert t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]["abonnement"]["statut"] == "retard"
@@ -120,12 +126,13 @@ def test_recharge_sous_le_seuil(atelier):
     t = atelier
     t.post("/atelier/clients/exemple/stripe/lien", headers=MEGGA)
     evenement(t, "checkout.session.completed", {"mode": "subscription", "customer": "cus_1", "subscription": "sub_1",
-                                               "metadata": {"client": "exemple"}})
+                                               "payment_status": "paid", "metadata": {"client": "exemple"}})
     # 200 conversations dans le forfait, 4 consommées aujourd'hui : reste 196, sous le seuil de 250.
     r = t.post("/atelier/recharges/evaluer", headers=MEGGA).json()
     assert r == {"branche": True, "recharges": [{"client": "exemple", "resultat": "paid"}]}
     facture = next(c for m, p, c, _ in t.stripe.appels if p == "/v1/invoices")
     assert facture["metadata[type]"] == "recharge" and facture["default_payment_method"] == "pm_1"
+    assert facture["auto_advance"] == "false"  # un brouillon resté vide ne se finalise jamais seul
     ligne = next(c for m, p, c, _ in t.stripe.appels if p == "/v1/invoiceitems")
     assert ligne["amount"] == "12000" and ligne["invoice"] == "in_1"
     assert all(idem and idem.startswith("recharge-exemple-") for m, p, c, idem in t.stripe.appels if p.startswith("/v1/invoice"))
@@ -133,6 +140,10 @@ def test_recharge_sous_le_seuil(atelier):
     assert c["enveloppe"] == 300 and c["recharges"]["nombre"] == 1
     # L'événement de la même facture ne la recompte pas.
     evenement(t, "invoice.paid", {"id": "in_1", "customer": "cus_1", "currency": "usd", "amount_paid": 12000,
+                                  "metadata": {"type": "recharge", "client": "exemple", "conversations": "100"}})
+    assert t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]["enveloppe"] == 300
+    # Une facture de recharge à zéro (un brouillon resté vide) n'ajoute rien.
+    evenement(t, "invoice.paid", {"id": "in_vide", "customer": "cus_1", "currency": "usd", "amount_paid": 0,
                                   "metadata": {"type": "recharge", "client": "exemple", "conversations": "100"}})
     assert t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]["enveloppe"] == 300
     # Encore sous le seuil, mais une tentative par heure au plus : rien de plus.
@@ -144,7 +155,7 @@ def test_recharge_refusee_puis_plafond(atelier):
     t.stripe.payer = "refus"
     t.post("/atelier/clients/exemple/stripe/lien", headers=MEGGA)
     evenement(t, "checkout.session.completed", {"mode": "subscription", "customer": "cus_1", "subscription": "sub_1",
-                                               "metadata": {"client": "exemple"}})
+                                               "payment_status": "paid", "metadata": {"client": "exemple"}})
     assert t.post("/atelier/recharges/evaluer", headers=MEGGA).json()["recharges"] == [{"client": "exemple", "resultat": "refusée"}]
     assert t.get("/atelier/abonnements", headers=MEGGA).json()["clients"][0]["enveloppe"] == 200  # rien de compté
 
