@@ -45,7 +45,7 @@ Les pools, les cellules et leurs alertes sont décrits dans `09-infrastructure.m
 
 ## Les écrans, un par un
 
-La console reste une seule console. En tête de chaque écran, un choix entre deux populations : **Entreprises** et **Clones**. Les entreprises gardent l'affichage d'aujourd'hui.
+**Décidé par Julien le 21.11.2026** : la console reste une seule console. En tête de chaque écran, un choix entre deux populations : **Entreprises** et **Clones**. Les entreprises gardent l'affichage d'aujourd'hui.
 
 | Écran | Côté Clones |
 |---|---|
@@ -85,6 +85,5 @@ La description de la PR #109 annonce dix fichiers, dont `09-infrastructure.md`. 
 
 ## À trancher par Julien
 
-1. **Une seule console avec deux populations**, comme proposé, ou une console à part pour les clones ?
-2. **La coupure d'un clone à deux personnes** (cadrage, `07-securite-conformite.md`) : qui sont les deux ?
-3. **Le support** : sans demande écrite du titulaire, MEGGA ne voit que ses nombres. D'accord ?
+1. **La coupure d'un clone à deux personnes** (cadrage, `07-securite-conformite.md`) : qui sont les deux ?
+2. **Le support** : sans demande écrite du titulaire, MEGGA ne voit que ses nombres. D'accord ?
