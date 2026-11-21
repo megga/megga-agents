@@ -35,6 +35,7 @@
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
+//   POST /stripe                   les événements de Stripe (paiements, recharges) : signés, vérifiés par l'atelier
 //   POST /pilotage/…               le pilote d'une installation hors Cloudflare (chez le client, zone
 //                                  suisse) : requête signée de sa clé, transmise à l'atelier qui la vérifie
 //
@@ -44,7 +45,7 @@
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
 import { RefusAnnuaire, clientParId, clientParNumero, idValide, inscrire, lister } from "./annuaire.js";
 import { defiAbonnement, egal, numerosDe, signatureValide } from "./meta.js";
-import { envoyerCourriel, evaluerAlertes } from "./alertes.js";
+import { envoyerCourriel, evaluerAlertes, evaluerRecharges } from "./alertes.js";
 import { JOURS_LUS_MAX, lireReleves } from "./releves.js";
 import { agentDe } from "./zones.js";
 
@@ -64,6 +65,7 @@ const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ??
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
 const FENETRE_PILOTAGE_S = 300;
 const TAILLE_PILOTAGE = 256 * 1024;
+const TAILLE_STRIPE = 256 * 1024;
 
 export async function recevoir(requete, env, ctx) {
   const url = new URL(requete.url);
@@ -99,6 +101,7 @@ export async function recevoir(requete, env, ctx) {
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
   if (url.pathname === "/pilotage" || url.pathname.startsWith("/pilotage/")) return pilote(requete, env);
+  if (url.pathname === "/stripe") return stripe(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
     // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
     if (!/^Bearer \S+$/.test(requete.headers.get("authorization") ?? "")) return texte("jeton attendu", 401);
@@ -446,9 +449,29 @@ async function secretsAtelier(requete, env) {
   }
 }
 
-/** Toutes les 5 minutes (triggers.crons) : l'évaluation des alertes. */
+/** Toutes les 5 minutes (triggers.crons) : l'évaluation des alertes, puis les recharges sous le seuil (Stripe). */
 export function declencher(_controle, env, ctx) {
-  ctx.waitUntil(evaluerAlertes(env, atelierDe(env)));
+  const atelier = atelierDe(env);
+  ctx.waitUntil(evaluerAlertes(env, atelier));
+  ctx.waitUntil(evaluerRecharges(env, atelier));
+}
+
+/** Un événement de Stripe bien formé : une signature (t=…,v1=…) et une longueur annoncée, bornée. L'atelier la vérifie. */
+export function stripeBienForme(entetes) {
+  const longueur = entetes.get("content-length") ?? "";
+  return (
+    /^t=[0-9]{1,12},(.*,)?v1=[0-9a-f]{64}(,.*)?$/.test(entetes.get("stripe-signature") ?? "") &&
+    /^[0-9]{1,9}$/.test(longueur) &&
+    Number(longueur) <= TAILLE_STRIPE
+  );
+}
+
+/** Les événements de Stripe : sans signature bien formée, rien ne réveille l'atelier, qui vérifie la signature lui-même. */
+async function stripe(requete, env) {
+  if (requete.method !== "POST") return texte("méthode", 405);
+  if (!stripeBienForme(requete.headers)) return texte("événement signé attendu", 400);
+  const atelier = atelierDe(env);
+  return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
 }
 
 export default { fetch: recevoir, scheduled: declencher };

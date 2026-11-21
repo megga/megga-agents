@@ -7,6 +7,8 @@ Variables d'environnement (jamais dans le dépôt) :
   ANTHROPIC_API_KEY, DEEPSEEK_API_KEY   les modèles, pour le mode d'essai
   ESSAIS_DIR         facultatif : le dossier des bases d'essai
   PILOTAGE_CLE       la clé privée de pilotage : elle signe les ordres des installations hors Cloudflare
+  STRIPE_CLE         la clé secrète de Stripe (forfaits, recharges) ; sans elle, les routes de Stripe répondent 503
+  STRIPE_SIGNATURE   le secret qui signe les événements de Stripe (POST /stripe)
 
 Rôles, par le jeton (Authorization: Bearer …) :
   MEGGA   ADMIN_TOKEN : tous les clients, tous les réglages
@@ -91,11 +93,12 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
-from . import gabarits, pays, regles, routes_alertes, routes_forfaits
+from . import gabarits, pays, regles, routes_alertes, routes_forfaits, routes_stripe
 from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs, couts
 from .essai import essayer
 from .forfaits import Abonnements
+from .stripe import Stripe
 from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
@@ -128,7 +131,7 @@ async def bd(f, *a, **k):
 
 
 def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None,
-          transport_alertes=None) -> FastAPI:
+          transport_alertes=None, transport_stripe=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -707,8 +710,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
     routes_alertes.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
                           etats=EtatsAlertes(env["DATABASE_URL"]), porte=porte, rassembler_tout=rassembler_tout,
                           transport=transport_alertes)
+    abonnements = Abonnements(env["DATABASE_URL"])
     routes_forfaits.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
-                           abonnements=Abonnements(env["DATABASE_URL"]), client_de=client_de, rassembler_tout=rassembler_tout)
+                           abonnements=abonnements, client_de=client_de, rassembler_tout=rassembler_tout)
 
     @r.get("/installations")
     def installations(qui: Identite = Depends(identite)):
@@ -806,6 +810,10 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             dicible = str(e) if str(e).startswith(("heure", "requête rejouée", "relevé")) else "installation non reconnue"
             return JSONResponse({"erreur": dicible}, status_code=401)
 
+    # Stripe (atelier/routes_stripe.py) : sa route d'événements est hors de /atelier, sans jeton mais signée.
+    stripe = Stripe(env["STRIPE_CLE"], transport_stripe) if env.get("STRIPE_CLE") else None
+    routes_stripe.monter(app, r, identite=identite, megga=megga, bd=bd, reglages=reglages, abonnements=abonnements,
+                         client_de=client_de, rassembler_tout=rassembler_tout, stripe=stripe, secret=env.get("STRIPE_SIGNATURE"))
     app.include_router(r)
     return app
 
