@@ -24,6 +24,8 @@ Un modèle (« gabarit » dans le code) pré-remplit une configuration complète
 | `generaliste` | accueillir les clients, répondre, retenir, programmer des rappels |
 | `immobilier` | une agence : demandes d'achat, de vente, de location, critères, rappels ; la recherche de biens s'ajoute quand MEGGA branche le catalogue de l'agence |
 
+**Le catalogue** (lot 11) : les 283 agents du dépôt [agency-agents](https://github.com/msitarzewski/agency-agents) (licence MIT, texte gardé dans `atelier/gabarits/LICENCE-agency-agents.txt`) sont aussi des modèles, `atelier/gabarits/catalogue/<catégorie>/<id>.md`, écrits par `scripts/catalogue_agency_agents.py`. Ils se choisissent comme les deux autres (même `gabarit`, mêmes routes) ; `GET /gabarits` les rend après eux, avec `categorie`, `garde_fous` et `source`. Voir `docs/lot11.md`.
+
 Un modèle ne touche jamais à ce qui tient au client (identifiant, entreprise, zone, numéro WhatsApp) ni aux réglages avancés de MEGGA (modèles de langue, catalogue, modèles Meta). Les deux usages passent par le même moteur : le client qui construit son seul agent, et MEGGA pour tous les clients.
 
 ## Les erreurs

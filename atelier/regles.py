@@ -126,9 +126,9 @@ def numero(valeur: Any, nom: str) -> int | None:
 def consignes_de_gabarit(consignes: str) -> bool:
     """Des consignes vides ou celles d'un modèle par métier : un client peut les remplacer par celles d'un autre modèle.
     Les consignes écrites sur mesure par MEGGA, non."""
-    from .gabarits import GABARITS
+    from .gabarits import CONSIGNES_CONNUES
 
-    return not (consignes or "").strip() or consignes in {g["reglages"]["consignes"] for g in GABARITS.values()}
+    return not (consignes or "").strip() or consignes in CONSIGNES_CONNUES
 
 
 def reglages_de_megga(config: dict) -> dict:

@@ -166,6 +166,7 @@ Alix FSP tourne sans interruption pendant toute la construction. Elle ne bascule
    - la création d'agent pour le client, très épurée : une question par écran (métier, prénom, voix et ton, ce que l'agent sait faire), un essai dans un faux WhatsApp, puis « Mettre en service » ;
    - le tableau de bord du client : son agent en ligne, quelques chiffres, « Modifier », « Revenir à la version d'avant » ;
    - la vue MEGGA : tous les clients, les réglages avancés et la reprise en main.
+11. **Le catalogue complet** (Julien, 20.11.2026) : les 283 agents d'agency-agents installés comme modèles prêts à l'emploi, rangés par catégorie, avec des garde-fous sécurité (strictement défensif), santé et juridique (aucun avis). Porté seul sur `main`, sans attendre les lots 9 et 10 (`docs/lot11.md`).
 
 ## Décidé
 
