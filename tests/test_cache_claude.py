@@ -51,8 +51,8 @@ def test_deepseek_sans_marque():
 
 
 def test_les_consignes_ne_bougent_plus_d_un_tour_a_l_autre(tmp_path):
-    """L'heure et le Contexte partent dans le message du tour : les consignes restent identiques et marquées, et le tour
-    suivant renvoie le message d'avant tel quel. Tout ce début se relit donc dans le cache."""
+    """L'heure et le Contexte partent à la fin du message du tour, après le texte de la personne, marqué pour le cache ;
+    l'historique n'en garde que le texte. Au tour suivant, tout jusqu'au texte d'avant est identique : il se relit."""
     from agno.db.sqlite import SqliteDb
 
     from noyau.agent import construire
@@ -83,7 +83,27 @@ def test_les_consignes_ne_bougent_plus_d_un_tour_a_l_autre(tmp_path):
     assert premier["system"] == second["system"]  # ni l'heure ni le Contexte
     assert premier["system"][-1]["cache_control"] == {"type": "ephemeral"}
     assert "current time" not in json.dumps(premier["system"]) and "Demande en cours" not in json.dumps(premier["system"])
-    assert second["messages"][0] == premier["messages"][0]  # le message d'avant, avec son Contexte d'alors
-    dernier = second["messages"][-1]["content"][0]["text"]
-    assert dernier.startswith("Et demain ?") and "The current time is" in dernier and "Demande en cours n° 2" in dernier
+    # Le message du tour : le texte de la personne, marqué, puis le Contexte.
+    texte, ajout = premier["messages"][-1]["content"]
+    assert texte == {"type": "text", "text": "Bonjour", "cache_control": {"type": "ephemeral"}}
+    assert "The current time is" in ajout["text"] and "Demande en cours n° 1" in ajout["text"]
+    # Au tour suivant, l'historique rend le texte seul : le début de la requête est celui que le cache a marqué.
+    assert second["messages"][0]["content"] == [{"type": "text", "text": "Bonjour"}]
+    texte, ajout = second["messages"][-1]["content"]
+    assert texte["text"] == "Et demain ?" and "Demande en cours n° 2" in ajout["text"] and "n° 1" not in json.dumps(second)
     assert vus == ["41790000000", "41790000000"]
+    # Quatre marques au plus, la limite d'Anthropic : les outils, les consignes, le texte du tour, la fin.
+    assert json.dumps(second).count("cache_control") <= 4
+
+
+def test_marquer_le_tour_ne_touche_qu_au_dernier_message_du_tour():
+    from noyau.agent import CONTEXTE_DU_TOUR, marquer_le_tour
+
+    sans = [{"role": "user", "content": [{"type": "text", "text": "Bonjour"}]}]
+    assert marquer_le_tour(json.loads(json.dumps(sans))) == sans  # pas de Contexte (l'oral, le juge) : rien ne change
+    avec = [{"role": "user", "content": [{"type": "text", "text": "Salut" + CONTEXTE_DU_TOUR + "x"}]},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "f", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}]
+    sortie = marquer_le_tour(avec)
+    assert sortie[0]["content"][0] == {"type": "text", "text": "Salut", "cache_control": {"type": "ephemeral"}}
+    assert sortie[2]["content"] == [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]  # un résultat d'outil, intact
