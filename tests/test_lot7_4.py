@@ -268,7 +268,7 @@ def test_la_configuration_des_roles():
 
 
 def test_les_consignes_par_groupe_et_le_contexte_du_tour():
-    from noyau.agent import consignes, instructions_du_tour
+    from noyau.agent import consignes, contexte_du_tour
 
     roles = CONF.les_roles()
     assert any("Les partenaires (outils de partenaires)" in c for c in consignes(CONF, roles["gestionnaire"]))
@@ -278,13 +278,15 @@ def test_les_consignes_par_groupe_et_le_contexte_du_tour():
     async def contexte(personne):
         return f"Contexte de {personne}"
 
-    f = instructions_du_tour(["a"], contexte)
-    assert run(f(run_context=Tour(MARC, "t"))) == ["a", f"Contexte de {MARC}"] and f.base == ["a"]
+    # L'heure et le Contexte partent dans le message du tour, jamais dans les consignes (le cache les relit telles quelles).
+    texte = run(contexte_du_tour("Europe/Zurich", contexte)(run_context=Tour(MARC, "t")))
+    assert texte.startswith("The current time is ") and texte.endswith(f"Contexte de {MARC}")
 
     async def panne(personne):
         raise RuntimeError("base")
 
-    assert run(instructions_du_tour(["a"], panne)(run_context=Tour(MARC, "t"))) == ["a"]
+    texte = run(contexte_du_tour("Europe/Zurich", panne)(run_context=Tour(MARC, "t")))
+    assert texte.startswith("The current time is ") and "\n" not in texte  # l'heure seule, le tour continue
 
 
 # L'accueil
@@ -800,7 +802,7 @@ def test_l_agent_reel_recoit_ses_outils_par_role(tmp_path):
     assert {"ajouter_partenaire", "repondre_partenaire", "repondre_visiteur", "envoyer_a_un_contact", "bloquer_numero", "preparer_annonce"} <= noms["gestionnaire"]
     assert noms["partenaire"] == {"chercher_biens"}  # son seul outil, pas même les rappels
     assert noms["visiteur"] == {"chercher_biens", "transmettre_contact", "demander_au_courtier"}
-    assert callable(agents["partenaire"].instructions) and "pc:" in app.state.conversations.choix
+    assert agents["partenaire"].dependencies["tour"].contexte is not None and "pc:" in app.state.conversations.choix
     assert app.state.conversations.echeances
 
 

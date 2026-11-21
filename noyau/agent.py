@@ -44,13 +44,15 @@ def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool =
         # Le cache d'Anthropic (21.11.2026) : sans marque, rien n'est gardé, et chaque appel d'un tour renvoyait tout au prix
         # plein (Four Seasons : 2,4 millions de jetons d'entrée par jour, aucun lu en cache). Le marqueur automatique se pose
         # sur la fin de chaque requête : l'appel suivant du même tour (après un outil) relit tout ce début au dixième du prix.
-        # Les outils, qui ne changent pas d'un tour à l'autre, ont leur propre marque. Les consignes changent à chaque tour
-        # (l'heure, le Contexte) : rien d'autre ne se relit d'un tour au suivant.
+        # Les outils ont leur propre marque, les consignes aussi : ni l'un ni l'autre ne change d'un tour à l'autre, puisque
+        # l'heure et le Contexte passent dans le message du tour (construire). Le tour suivant relit donc les outils, les
+        # consignes et l'historique tant que la fenêtre ne glisse pas ; quand elle glisse, les outils et les consignes.
         return Claude(id=nom, api_key=cles.get("ANTHROPIC_API_KEY"), max_tokens=jetons,
                       thinking={"type": "adaptive"} if reflexion else None,
                       output_config={"effort": effort} if effort else None,
                       temperature=None if reflexion else temperature,
-                      cache_tools=cache, request_params={"cache_control": CACHE} if cache else None)
+                      cache_tools=cache, cache_system_prompt=cache,
+                      request_params={"cache_control": CACHE} if cache else None)
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
@@ -85,31 +87,48 @@ def consignes(config: Config, role: Role | None = None) -> list[str]:
     return base
 
 
-def instructions_du_tour(base: list[str], contexte):
-    """Les consignes, et le Contexte du tour (`contexte` : async f(personne) -> texte) lu à chaque tour pour la
-    personne qui parle : ses demandes en cours, les questions ouvertes. Une panne du Contexte n'arrête pas le tour."""
-    if contexte is None:
-        return base
+def heure(fuseau: str | None) -> str:
+    """L'heure du tour, à la façon d'Agno (add_datetime_to_context), dans le fuseau du client."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
 
-    async def instructions(run_context=None) -> list[str]:
+    try:
+        tz = ZoneInfo(fuseau) if fuseau else None
+    except Exception:
+        tz = None
+    return f"The current time is {datetime.now(tz) if tz else datetime.now()}."
+
+
+def contexte_du_tour(fuseau: str | None, contexte=None):
+    """Ce qui change à chaque tour : l'heure, et le Contexte (`contexte` : async f(personne) -> texte) lu pour la personne
+    qui parle (ses demandes en cours, les questions ouvertes). Il part dans le message du tour, pas dans les consignes :
+    les consignes restent les mêmes d'un tour à l'autre, et le cache d'Anthropic les relit avec l'historique au dixième du
+    prix (21.11.2026). L'historique garde chaque message avec son Contexte d'alors : il ne bouge plus, il se relit aussi.
+    Une panne du Contexte n'arrête pas le tour."""
+
+    async def tour(run_context=None) -> str:
+        lignes = [heure(fuseau)]
         personne = getattr(run_context, "user_id", None)
-        try:
-            extra = await contexte(personne) if personne else ""
-        except Exception as e:
-            import logging
+        if contexte is not None and personne:
+            try:
+                extra = await contexte(personne)
+            except Exception as e:
+                import logging
 
-            logging.getLogger("megga").warning("contexte illisible : %s", str(e)[:200])
-            extra = ""
-        return [*base, extra] if extra else list(base)
+                logging.getLogger("megga").warning("contexte illisible : %s", str(e)[:200])
+                extra = ""
+            if extra:
+                lignes.append(extra)
+        return "\n\n".join(lignes)
 
-    instructions.base = base  # les consignes fixes, lisibles sans tour (essais, atelier)
-    return instructions
+    tour.contexte = contexte  # le Contexte branché, lisible sans tour (essais)
+    return tour
 
 
 def construire(config: Config, db, cles: dict[str, str], principal: Model | None = None, secours: Model | None = None,
                outils: list | None = None, role: Role | None = None, nom_role: str | None = None, contexte=None) -> Agent:
     """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs ;
-    `contexte` : le Contexte de chaque tour (instructions_du_tour)."""
+    `contexte` : le Contexte de chaque tour (contexte_du_tour)."""
     m = config.modeles
     principal = principal or modele(m.principal, cles, m.jetons, m.reflexion, m.effort, cache=True)
     if secours is None and config.modeles.secours:
@@ -120,7 +139,10 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         model=principal,
         fallback_config=FallbackConfig(on_error=[secours]) if secours else None,
         db=db,
-        instructions=instructions_du_tour(consignes(config, role), contexte),
+        instructions=consignes(config, role),
+        # L'heure et le Contexte, à la fin du message du tour (« additional context ») : contexte_du_tour.
+        dependencies={"tour": contexte_du_tour(config.fuseau, contexte)},
+        add_dependencies_to_context=True,
         add_history_to_context=True,
         num_history_runs=config.historique.tours,
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé ; ou par les outils
@@ -130,7 +152,6 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         tools=list(outils or []),
         # Un tour n'appelle pas plus d'outils que cela : une boucle (ou une consigne glissée) ne fait pas exploser la facture.
         tool_call_limit=TOOL_CALL_LIMIT,
-        add_datetime_to_context=True,
         timezone_identifier=config.fuseau,
         post_hooks=[crochet_secrets, crochet_typographie],
         markdown=False,

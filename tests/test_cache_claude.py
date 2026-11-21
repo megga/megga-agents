@@ -48,3 +48,42 @@ def test_seul_l_agent_principal_marque_le_cache():
 
 def test_deepseek_sans_marque():
     assert "cache_control" not in (getattr(modele("deepseek-v4-pro", {}), "request_params", None) or {})
+
+
+def test_les_consignes_ne_bougent_plus_d_un_tour_a_l_autre(tmp_path):
+    """L'heure et le Contexte partent dans le message du tour : les consignes restent identiques et marquées, et le tour
+    suivant renvoie le message d'avant tel quel. Tout ce début se relit donc dans le cache."""
+    from agno.db.sqlite import SqliteDb
+
+    from noyau.agent import construire
+    from test_lot3 import conf
+
+    envoyes = []
+
+    def repondre(r: httpx.Request):
+        envoyes.append(json.loads(r.content))
+        return httpx.Response(200, json=REPONSE)
+
+    vus = []
+
+    async def contexte(personne):
+        vus.append(personne)
+        return f"Demande en cours n° {len(vus)}"
+
+    m = modele("claude-sonnet-5-5", {"ANTHROPIC_API_KEY": "cle-d-essai"}, cache=True)
+    m.http_client = httpx.AsyncClient(transport=httpx.MockTransport(repondre))
+    agent = construire(conf(), SqliteDb(db_file=str(tmp_path / "agent.db")), {}, principal=m, contexte=contexte)
+
+    async def deux_tours():
+        await agent.arun("Bonjour", user_id="41790000000", session_id="s")
+        await agent.arun("Et demain ?", user_id="41790000000", session_id="s")
+
+    asyncio.run(deux_tours())
+    premier, second = envoyes
+    assert premier["system"] == second["system"]  # ni l'heure ni le Contexte
+    assert premier["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert "current time" not in json.dumps(premier["system"]) and "Demande en cours" not in json.dumps(premier["system"])
+    assert second["messages"][0] == premier["messages"][0]  # le message d'avant, avec son Contexte d'alors
+    dernier = second["messages"][-1]["content"][0]["text"]
+    assert dernier.startswith("Et demain ?") and "The current time is" in dernier and "Demande en cours n° 2" in dernier
+    assert vus == ["41790000000", "41790000000"]
