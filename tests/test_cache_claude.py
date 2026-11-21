@@ -30,8 +30,9 @@ def test_claude_marque_le_cache():
     m.http_client = httpx.AsyncClient(transport=httpx.MockTransport(repondre))
     sortie = asyncio.run(Agent(model=m, tools=[meteo], instructions=["Réponds."], telemetry=False).arun("Bonjour"))
     corps = envoyes[0]
-    assert corps["cache_control"] == {"type": "ephemeral"}  # le marqueur automatique, sur la fin de la requête
-    assert corps["tools"][-1]["cache_control"] == {"type": "ephemeral"}  # les outils, stables d'un tour à l'autre
+    assert corps["cache_control"] == {"type": "ephemeral", "ttl": "1h"}  # le marqueur automatique, sur la fin de la requête
+    assert corps["tools"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}  # les outils, stables d'un tour à l'autre
+    assert all(m["cache_control"]["ttl"] == "1h" for m in [corps, corps["tools"][-1]])  # une seule durée, sinon refus
     assert corps["thinking"] == {"type": "adaptive"} and corps["output_config"] == {"effort": "medium"}  # rien d'autre ne change
     assert sortie.metrics.cache_read_tokens == 8  # lu par Agno, donc par le relevé
 
@@ -40,7 +41,7 @@ def test_seul_l_agent_principal_marque_le_cache():
     from noyau.agent import construire
     from test_lot3 import conf
 
-    assert construire(conf(), None, {"ANTHROPIC_API_KEY": "cle-d-essai"}).model.request_params == {"cache_control": {"type": "ephemeral"}}
+    assert construire(conf(), None, {"ANTHROPIC_API_KEY": "cle-d-essai"}).model.request_params == {"cache_control": {"type": "ephemeral", "ttl": "1h"}}
     # Un appel unique (l'oral, le fil, le juge) : aucune marque, il ne relirait jamais le cache.
     seul = modele("claude-haiku-5-5", {"ANTHROPIC_API_KEY": "cle-d-essai"})
     assert not seul.request_params and not seul.cache_tools
@@ -81,11 +82,11 @@ def test_les_consignes_ne_bougent_plus_d_un_tour_a_l_autre(tmp_path):
     asyncio.run(deux_tours())
     premier, second = envoyes
     assert premier["system"] == second["system"]  # ni l'heure ni le Contexte
-    assert premier["system"][-1]["cache_control"] == {"type": "ephemeral"}
+    assert premier["system"][-1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert "current time" not in json.dumps(premier["system"]) and "Demande en cours" not in json.dumps(premier["system"])
     # Le message du tour : le texte de la personne, marqué, puis le Contexte.
     texte, ajout = premier["messages"][-1]["content"]
-    assert texte == {"type": "text", "text": "Bonjour", "cache_control": {"type": "ephemeral"}}
+    assert texte == {"type": "text", "text": "Bonjour", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
     assert "The current time is" in ajout["text"] and "Demande en cours n° 1" in ajout["text"]
     # Au tour suivant, l'historique rend le texte seul : le début de la requête est celui que le cache a marqué.
     assert second["messages"][0]["content"] == [{"type": "text", "text": "Bonjour"}]
@@ -105,5 +106,5 @@ def test_marquer_le_tour_ne_touche_qu_au_dernier_message_du_tour():
             {"role": "assistant", "content": [{"type": "tool_use", "id": "t", "name": "f", "input": {}}]},
             {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]}]
     sortie = marquer_le_tour(avec)
-    assert sortie[0]["content"][0] == {"type": "text", "text": "Salut", "cache_control": {"type": "ephemeral"}}
+    assert sortie[0]["content"][0] == {"type": "text", "text": "Salut", "cache_control": {"type": "ephemeral", "ttl": "1h"}}
     assert sortie[2]["content"] == [{"type": "tool_result", "tool_use_id": "t", "content": "ok"}]  # un résultat d'outil, intact
