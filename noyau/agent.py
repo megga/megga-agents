@@ -7,6 +7,8 @@ reprend le tour (FallbackConfig d'Agno). La mémoire est rangée par personne
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
 from agno.agent import Agent
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
@@ -163,6 +165,61 @@ def crochet_contexte(run_output) -> None:
             message.content = message.content.split(CONTEXTE_DU_TOUR, 1)[0]
 
 
+# La fenêtre de l'historique avance par paquets (21.11.2026) : au-delà de `tours`, elle ne glisse pas d'un tour à chaque
+# message (le début de la requête changeait à chaque fois, et le cache réécrivait tout l'historique), mais de PAS tours
+# tous les PAS messages. L'agent relit donc entre `tours` et `tours + PAS - 1` tours, jamais moins qu'avant.
+PAS_FENETRE = 6
+_FENETRE: ContextVar[int | None] = ContextVar("fenetre_du_tour", default=None)
+
+
+def fenetre(precedents: int, tours: int, pas: int = PAS_FENETRE) -> int:
+    """Les tours relus quand la conversation en compte déjà `precedents` : tous jusqu'à `tours + pas - 1`, puis un
+    début qui n'avance que de `pas` en `pas`."""
+    if precedents < tours + pas:
+        return max(precedents, tours)
+    return precedents - (precedents - tours) // pas * pas
+
+
+def tours_relus(session) -> int:
+    """Les tours de la conversation qu'Agno peut relire (session.get_messages) : ni ceux d'une équipe, ni ceux en échec."""
+    from agno.run.base import HISTORY_SKIP_STATUSES
+
+    return sum(1 for r in getattr(session, "runs", None) or []
+               if getattr(r, "parent_run_id", None) is None and getattr(r, "status", None) not in HISTORY_SKIP_STATUSES)
+
+
+def agent_du_tour():
+    """L'Agent d'Agno dont la fenêtre de l'historique se règle à chaque tour (crochet_fenetre), sans toucher aux tours
+    des autres personnes servies en même temps : la valeur vit dans le contexte de la tâche du tour."""
+    global _AGENT_DU_TOUR
+    if _AGENT_DU_TOUR is None:
+        class AgentDuTour(Agent):
+            @property
+            def num_history_runs(self):
+                return _FENETRE.get() or self.__dict__.get("_tours")
+
+            @num_history_runs.setter
+            def num_history_runs(self, valeur):
+                self.__dict__["_tours"] = valeur
+
+        _AGENT_DU_TOUR = AgentDuTour
+    return _AGENT_DU_TOUR
+
+
+_AGENT_DU_TOUR = None
+
+
+def crochet_fenetre(tours: int):
+    """Avant le tour : la fenêtre d'après les tours déjà gardés de la conversation (le tour en cours n'y est pas)."""
+
+    async def crochet(session=None, run_context=None) -> None:
+        en_cours = getattr(run_context, "run_id", None)
+        deja = tours_relus(session) - sum(1 for r in getattr(session, "runs", None) or [] if getattr(r, "run_id", None) == en_cours)
+        _FENETRE.set(fenetre(max(deja, 0), tours))
+
+    return crochet
+
+
 def memoire_du_role(config: Config, role: Role | None = None) -> bool:
     """La mémoire par ses outils (retenir, oublier, souvenirs) : sans rôles, pour tous ; avec des rôles, pour ceux qui ont
     le groupe « memoire » seulement (dans l'ancienne Alix, Greg et Julien, jamais un partenaire ni un visiteur)."""
@@ -236,7 +293,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     principal = principal or modele(m.principal, cles, m.jetons, m.reflexion, m.effort, cache=True)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
-    return Agent(
+    return agent_du_tour()(
         id=f"{config.id}-{nom_role}" if nom_role else config.id,
         name=config.nom_agent,
         model=principal,
@@ -248,6 +305,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
         add_dependencies_to_context=True,
         add_history_to_context=True,
         num_history_runs=config.historique.tours,
+        pre_hooks=[crochet_fenetre(config.historique.tours)],
         # La mémoire par l'agent lui-même (outil d'Agno), pour ne retenir que ce qui est dit ou confirmé ; ou par les outils
         # du noyau (Memoire.outils), ses souvenirs utiles dans le Contexte de chaque tour.
         enable_agentic_memory=not config.memoire.outils,
