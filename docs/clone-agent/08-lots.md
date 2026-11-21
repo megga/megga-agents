@@ -29,6 +29,7 @@ flowchart LR
 ## C1. Les fondations grand public
 
 - Le métier `clone` dans `noyau/config.py` (configuration en version 2, section `clone`), son gabarit dans l'atelier.
+- Le socle d'identité commun à tous les clones : aucun modèle nommé, ni dans les réponses, ni dans l'interface, ni dans le journal ; l'essai des vingt questions sur le modèle ([11-offre-locale.md](11-offre-locale.md)).
 - Les vérifications de [09-infrastructure.md](09-infrastructure.md) (conteneurs, Durable Objects, Neon, service de clés, Exoscale), avant d'écrire le reste.
 - Le noyau qui sert plusieurs titulaires depuis un même conteneur : configuration et outils chargés au début du tour, cache court, rien de propre à un titulaire dans l'état du processus ; le mode `MEGGA_SERVICE=clone`.
 - Les trois nouveaux points d'échange du noyau : coordinateur, file (dans Postgres), clés ; leur version Cloudflare.
@@ -109,8 +110,8 @@ flowchart LR
 
 - L'app macOS et Windows, toujours sortante, ordres signés (le modèle du pilote), genres d'actions bornés, pastille et arrêt immédiat.
 - Signature de code, notarisation, mises à jour signées.
-- Le mode local complet pour l'offre Local : noyau et modèle de soi (SQLite chiffré) sur la machine, relais sortant, clé du titulaire ou modèle ouvert, vérification de la machine à l'installation ([10-tarifs.md](10-tarifs.md)).
-- **Fini quand** : le clone ouvre un logiciel installé, y fait une tâche simple, et range le résultat, sous les yeux du titulaire ; un titulaire Local fait tourner tout son clone chez lui en mode hybride.
+- L'offre Local hybride ([11-offre-locale.md](11-offre-locale.md)) : noyau et modèle de soi (SQLite chiffré) sur la machine, modèle ouvert embarqué, orchestrateur qui répartit chaque étape entre la machine et le cloud, contrôle de qualité, veilleur et carnet de garde, renfort compté au coût réel, vérification de la machine à l'installation.
+- **Fini quand** : le clone ouvre un logiciel installé, y fait une tâche simple, et range le résultat, sous les yeux du titulaire ; un titulaire Local ne voit aucune différence de style entre une tâche faite sur sa machine et une tâche faite dans le cloud, et son clone reste joignable machine éteinte.
 
 ## C9. L'avatar vidéo
 

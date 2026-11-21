@@ -28,26 +28,52 @@ Les mêmes chiffres dans les trois devises : **dollars hors taxes** aux États-U
 |---|---|---|---|---|---|
 | Prix par mois | 0 | 20 | 100 | 200 | 5 (ou 48 par an) |
 | À l'année | | 200 (deux mois offerts) | 1 000 | 2 000 | 48 |
-| Crédits par mois | 25 | 400 | 2 000 | 4 500 | sans limite : la machine du client paie |
-| Ça représente | une tâche par jour | environ 13 tâches par jour, ou 250 tâches, 10 démarches sur des sites et 15 minutes de vocaux | le travail courant d'un indépendant | presque tout déléguer | tout, à son rythme |
-| Mails triés par mois | 300 | 2 000 | 6 000 | 10 000 | sans limite |
+| Crédits par mois | 25 | 400 | 2 000 | 4 500 | 75 crédits de renfort cloud ; ce que fait la machine ne compte pas ([11](11-offre-locale.md)) |
+| Ça représente | une tâche par jour | environ 13 tâches par jour, ou 250 tâches, 10 démarches sur des sites et 15 minutes de vocaux | le travail courant d'un indépendant | presque tout déléguer | de 90 à plus de 500 tâches selon la machine |
+| Mails triés par mois | 300 | 2 000 | 6 000 | 10 000 | sans limite (sur la machine) |
 | Comptes branchés | 1 boîte mail, 1 agenda | tous ceux du catalogue | tous | tous | tous |
 | Historique lu à l'onboarding | 3 mois, 500 mails | 12 mois | complet | complet | complet |
 | Portrait, mémoire, règles, « À valider », journal, export, oubli | oui | oui | oui | oui | oui |
 | Autonomie réglable par domaine | oui | oui | oui | oui | oui |
 | Point du jour | dans l'app | app et WhatsApp | app, WhatsApp, vocal avec sa voix | idem | app |
+| Joignable | 24 h sur 24 | 24 h sur 24 | 24 h sur 24 | 24 h sur 24 | 24 h sur 24 par le veilleur ; le gros du travail quand la machine est allumée |
+| Disponibilité visée | sans engagement | 99,5 % | 99,9 % | 99,9 %, prioritaire | celle du veilleur : 99,5 % |
+| Tâches menées en même temps | 1 | 1 | 3 | 10 | selon la machine |
 | Navigateur dans le cloud (C6) | non | oui | oui, prioritaire | oui, tâches en parallèle | navigateur de la machine |
-| Vocaux | non | voix neutre | sa voix clonée (C7) | sa voix clonée | clé ElevenLabs du client |
+| Vocaux | non | voix neutre | sa voix clonée (C7) | sa voix clonée | voix neutre, sur la machine si elle le permet |
 | Appels téléphoniques (C7) | non | non | oui | oui | non |
 | App sur l'ordinateur (C8) | non | non | oui | oui | c'est l'offre |
-| Réflexion approfondie (Opus) | non | non | oui | oui | selon son modèle |
+| Réflexion approfondie | non | non | oui | oui | par le renfort cloud, sans que le titulaire ait à choisir |
 | Avatar vidéo (C9) | non | non | non | oui | non |
 | Deux clones séparés (pro et perso) | non | non | non | oui | non |
-| Zone Suisse | non | non | oui | oui | sans objet : tout reste chez lui |
-| Recharges | non | 100 crédits pour 5 | idem | idem | non |
+| Zone Suisse | non | non | oui | oui | le renfort et le veilleur restent dans sa zone |
+| Recharges | non | 100 crédits pour 5 | idem | idem | 100 crédits pour 5 |
 | Support | aide en ligne | courriel | prioritaire | dédié | aide en ligne |
 
 Les droits du RGPD et de la nLPD (voir, corriger, exporter, effacer) sont dans **toutes** les offres, gratuite comprise : ce n'est pas une option.
+
+**Aucune offre ne nomme de modèle** : le titulaire voit son clone et des crédits, jamais un nom de modèle ni de fournisseur (décision de Thomas, 21.11.2026, détaillée dans [11-offre-locale.md](11-offre-locale.md), « Une seule identité »). Les modèles cités dans ce fichier servent au calcul des coûts, pas à la vente.
+
+## La disponibilité et le temps de travail
+
+Dans le cloud, le clone est **toujours allumé**, quelle que soit l'offre : les pools partagés (09) ne coûtent rien de plus pour un titulaire présent jour et nuit. Il surveille, répond et fait ses missions planifiées 24 h sur 24. Ce qui change d'une offre à l'autre, c'est l'engagement, la priorité, le travail mené en parallèle et le volume.
+
+| | Free | Plus (20) | Pro (100) | Ultra (200) |
+|---|---|---|---|---|
+| Présence | 24 h sur 24 | 24 h sur 24 | 24 h sur 24 | 24 h sur 24 |
+| Disponibilité visée sur un mois | sans engagement | **99,5 %** (3 h 36 d'arrêt au plus) | **99,9 %** (43 minutes au plus) | **99,9 %**, et priorité absolue quand le système est chargé |
+| Si l'engagement n'est pas tenu | | aucun dédommagement | 10 % des crédits du mois offerts | 20 % des crédits du mois offerts |
+| Tâches menées en même temps | 1 | 1 | 3 | 10 |
+| Priorité dans les files (pools, navigateur) | la dernière | normale | haute | la plus haute |
+| Temps de travail humain rendu par mois (estimation) | environ 1 h | **environ 20 h** | **environ 100 h** | **environ 225 h**, plus qu'un temps plein (151,67 h légales en France) |
+
+**Ce que « disponible » veut dire** : le clone répond dans l'app et sur WhatsApp, et ses actions planifiées partent à l'heure. Ne comptent pas : la panne d'un service tiers (Gmail, un site), et une maintenance annoncée, rare, la nuit de la zone. La mesure vient des sondes de la porte, par zone, et se publie sur une page d'état.
+
+**Pourquoi des engagements différents sur la même infrastructure** : en cas de pépin, les ressources de secours (le second accès au modèle, les conteneurs gardés en réserve, la bascule de la base) servent d'abord Ultra, puis Pro. C'est la priorité qui fait la différence, pas une autre machine.
+
+**Ce qu'il faut pour tenir 99,9 %** : un modèle de secours par une seconde voie (02, « Les modèles »), une base de cellule qui bascule sur sa copie de secours en moins de 15 minutes (09), et une réserve de conteneurs déjà démarrés. Aller au-delà (99,99 %) dépendrait de fournisseurs qui ne s'y engagent pas pour nous : pas crédible au lancement.
+
+**Le temps rendu** suppose qu'un crédit évite environ 3 minutes de travail humain (une tâche, environ 5 minutes ; une démarche sur un site, environ 15 minutes pour 6 crédits ; une minute de vocal, moins). C'est ce chiffre, plus que les crédits, qui parle au client : « environ 20 heures rendues par mois pour 20 ».
 
 ## Ce que coûte un clone : les prix unitaires
 
@@ -97,7 +123,7 @@ Une tâche, c'est en général trois appels au modèle (lire, décider, agir et 
 | Plus | 2,03 $ | 10,03 $ | 4,82 $ | 15,87 $ | 19,10 $ | 63 % | **70 %** |
 | Pro | 6,65 $ | 46,65 $ | 21,32 $ | 80,53 $ | 96,70 $ | 58 % | **74 %** |
 | Ultra | 8,70 $ | 98,70 $ | 42,96 $ | 161,37 $ | 193,70 $ | 61 % | **73 %** |
-| Local | environ 0,50 $ (relais, longue traîne Composio, sauvegarde) | 0,55 $ | 0,30 $ | 3,74 $ par mois (3,21 $ par mois en annuel) | | 15 % | **environ 90 %** |
+| Local | 0,27 $ (relais, 50 appels Composio, sauvegarde) | 1,77 $ (renfort cloud de 1,50 $ entièrement utilisé) | 1,07 $ | 3,74 $ par mois (3,21 $ par mois en annuel) | | 47 % | **environ 72 %** |
 
 **Même un titulaire qui consomme tout laisse une marge** (37 à 42 % en Europe, davantage aux États-Unis). L'abonnement annuel (deux mois offerts) réduit le revenu net d'environ 17 % : le titulaire au plafond reste au-dessus de son coût, et l'usage typique garde une marge d'environ 60 %.
 
@@ -127,7 +153,7 @@ Ce que la marge doit payer avant d'être un bénéfice : l'équipe, le support, 
 - **Le calcul pour le client est simple** : 400 crédits, c'est environ 13 tâches par jour. À 5 minutes gagnées par tâche, c'est plus d'une heure rendue chaque jour pour 20 par mois.
 - **La gratuité montre la magie** : le premier service rendu (03, l'onboarding) et le jeu « Qui a écrit ça ? » sont dans l'offre gratuite. On paie quand on veut que le clone en fasse plus.
 - **Pas de mauvaise surprise** : la jauge se voit dans l'app, le clone prévient à 80 %, rien ne se recharge sans un seuil choisi par le titulaire.
-- **Local pour les plus attachés à leurs données** : rien ne quitte leur machine, pour le prix d'un café par mois.
+- **Local pour qui a une bonne machine** : le clone travaille surtout chez lui, le cloud prend le relais sans qu'il le voie, pour le prix d'un café par mois.
 
 ## Le calendrier des offres
 
@@ -145,45 +171,26 @@ Un titulaire déjà abonné garde son prix quand l'offre s'enrichit.
 
 ## L'offre Local : le clone sur sa propre machine
 
-### Ce qui tourne où
-
-| Chez le titulaire | Chez MEGGA (ce que paient les 5) |
-|---|---|
-| le noyau du clone (la même image, en mode local) | l'app signée et ses mises à jour |
-| le modèle de soi, en SQLite chiffré (les tests du dépôt tournent déjà sur SQLite) | le relais, toujours sortant comme le pilote : l'app mobile et WhatsApp entrant parlent au clone sans ouvrir aucun port chez lui |
-| le coffre et les sessions de sites | les connecteurs directs (Gmail, Agenda, Outlook) : le titulaire se connecte par l'app de MEGGA, ses jetons restent chez lui |
-| le navigateur (celui de la machine : mêmes sessions, même adresse, moins de blocages par les sites) | la longue traîne Composio, 100 appels par mois |
-| le modèle : sa propre clé (Anthropic, ElevenLabs), ou un modèle ouvert sur sa machine, ou les deux | les recettes communes des sites, sans donnée personnelle |
-| | une sauvegarde chiffrée de son modèle de soi (1 Go), s'il la veut, chiffrée par une clé que MEGGA n'a pas |
-
-**Ce qu'il faut dire clairement au titulaire** : son clone ne travaille que quand sa machine est allumée ; avec sa propre clé, il paie aussi le modèle à Anthropic (de l'ordre de quelques dollars par mois pour un usage courant) ; avec un modèle ouvert, rien ne sort de chez lui, mais l'écriture et les actions sont moins fines qu'avec Claude.
-
-### Trois façons de faire tourner le modèle
-
-| Mode | Le modèle | Pour qui |
-|---|---|---|
-| **Local avec clé** | Claude, avec la clé du titulaire | toute machine récente ; la meilleure qualité |
-| **Hybride** (recommandé) | un petit modèle ouvert sur la machine pour trier, résumer et extraire (ce qui touche le plus de données) ; Claude avec sa clé pour rédiger et agir | machines de la classe « Entrée » et au-dessus |
-| **Tout local** | un modèle ouvert sur la machine pour tout | classes « Confort » et « Haut de gamme » ; pour ceux qui ne veulent rien envoyer dehors |
+Conçue dans [11-offre-locale.md](11-offre-locale.md) : le clone vit sur la machine du titulaire (noyau, modèle de soi chiffré, coffre, navigateur, modèle ouvert si la machine le porte), le cloud de MEGGA prend le relais sans couture pour ce que la machine ne sait pas faire et quand elle dort. Le titulaire ne choisit rien et ne voit aucun modèle. Les 5 paient l'app et ses mises à jour, le relais toujours sortant, les connecteurs, et un renfort cloud de 1,50 $ de coût par mois au plus.
 
 ### Les machines assez puissantes
 
 Les modèles ouverts changent tous les trimestres : la liste des modèles est à revalider au début de C8. Les tailles de mémoire, elles, tiennent : c'est la mémoire (vidéo ou unifiée) qui décide de ce qu'une machine peut faire tourner. Repères actuels : les familles gpt-oss (20 et 120 milliards de paramètres, licence Apache 2.0), Qwen3 (dont 30B-A3B et ses variantes qui voient les images) et Mistral Small (24B).
 
-**Pour le noyau seul (mode « Local avec clé »)** : processeur 4 cœurs ou plus des cinq dernières années, **8 Go de mémoire (16 Go recommandés)**, 20 Go de disque libre, macOS 14 ou plus récent, Windows 11, ou Linux (Ubuntu 22.04 ou plus récent). Presque tout ordinateur portable ou de bureau récent convient, ainsi qu'un mini-PC toujours allumé (par exemple les petits PC à processeur Intel N100 et 16 Go) ou un NAS capable de faire tourner Docker avec 8 Go. Un Raspberry Pi 5 de 8 Go fait tourner le noyau et le navigateur, lentement : à réserver aux bricoleurs.
+**Pour le noyau seul (le cloud fait alors presque tout le travail du modèle)** : processeur 4 cœurs ou plus des cinq dernières années, **8 Go de mémoire (16 Go recommandés)**, 20 Go de disque libre, macOS 14 ou plus récent, Windows 11, ou Linux (Ubuntu 22.04 ou plus récent). Presque tout ordinateur portable ou de bureau récent convient, ainsi qu'un mini-PC toujours allumé (par exemple les petits PC à processeur Intel N100 et 16 Go) ou un NAS capable de faire tourner Docker avec 8 Go. Un Raspberry Pi 5 de 8 Go fait tourner le noyau et le navigateur, lentement : à réserver aux bricoleurs.
 
 **Pour un modèle sur la machine** :
 
 | Classe | Ce qu'elle fait tourner | Mac (Apple Silicon) | PC avec carte graphique | Autres |
 |---|---|---|---|---|
-| **Insuffisante** | un petit modèle (7 à 8 milliards de paramètres), bon pour trier, pas pour agir | Mac de 8 ou 16 Go | cartes de 8 à 12 Go, ou pas de carte graphique dédiée | Chromebook, tablettes : mode « Local avec clé » seulement |
-| **Entrée** (hybride confortable, tout local possible) | un modèle de 20 à 30 milliards de paramètres, compressé en 4 bits (environ 14 à 20 Go) | **32 Go de mémoire unifiée** : MacBook Pro M1 Pro ou Max et suivants, MacBook Air M4 32 Go, Mac mini M4 32 Go ou M4 Pro | **carte de 16 Go** avec 32 Go de mémoire : RTX 4060 Ti 16 Go, 4070 Ti Super, 4080, 5060 Ti 16 Go, 5070 Ti, 5080 ; Radeon RX 7900 XT ou XTX (prise en charge moins mûre) | |
-| **Confort** (tout local, contexte long, vision) | les mêmes modèles plus vite, avec plus de contexte, et les variantes qui lisent les écrans | **48 à 64 Go** : Mac mini M4 Pro 48 ou 64 Go, MacBook Pro M3 ou M4 Max 64 Go, Mac Studio | **carte de 24 à 32 Go** : RTX 3090, 4090, 5090 | |
-| **Haut de gamme** (proche du cloud) | des modèles d'environ 100 milliards de paramètres et plus (par exemple gpt-oss 120B, environ 65 Go) | **96 à 128 Go et plus** : MacBook Pro M4 Max 128 Go, Mac Studio (Max ou Ultra) | plusieurs cartes, ou une carte de 80 Go | AMD Ryzen AI Max+ 395 avec 128 Go (Framework Desktop, HP Z2 Mini G1a) ; NVIDIA DGX Spark (128 Go) |
+| **Légère** (le renfort cloud fait l'essentiel : environ 90 tâches par mois dans le forfait) | un petit modèle (7 à 8 milliards de paramètres), bon pour trier, pas pour agir | Mac de 8 ou 16 Go | cartes de 8 à 12 Go, ou pas de carte graphique dédiée | Chromebook, tablettes : pas d'app, offres cloud seulement |
+| **Entrée** (environ 80 % du travail sur la machine, 165 tâches par mois) | un modèle de 20 à 30 milliards de paramètres, compressé en 4 bits (environ 14 à 20 Go) | **32 Go de mémoire unifiée** : MacBook Pro M1 Pro ou Max et suivants, MacBook Air M4 32 Go, Mac mini M4 32 Go ou M4 Pro | **carte de 16 Go** avec 32 Go de mémoire : RTX 4060 Ti 16 Go, 4070 Ti Super, 4080, 5060 Ti 16 Go, 5070 Ti, 5080 ; Radeon RX 7900 XT ou XTX (prise en charge moins mûre) | |
+| **Confort** (environ 90 %, 280 tâches par mois) | les mêmes modèles plus vite, avec plus de contexte, et les variantes qui lisent les écrans | **48 à 64 Go** : Mac mini M4 Pro 48 ou 64 Go, MacBook Pro M3 ou M4 Max 64 Go, Mac Studio | **carte de 24 à 32 Go** : RTX 3090, 4090, 5090 | |
+| **Haut de gamme** (environ 96 %, plus de 500 tâches par mois) | des modèles d'environ 100 milliards de paramètres et plus (par exemple gpt-oss 120B, environ 65 Go) | **96 à 128 Go et plus** : MacBook Pro M4 Max 128 Go, Mac Studio (Max ou Ultra) | plusieurs cartes, ou une carte de 80 Go | AMD Ryzen AI Max+ 395 avec 128 Go (Framework Desktop, HP Z2 Mini G1a) ; NVIDIA DGX Spark (128 Go) |
 
-**La machine qu'on recommandera** pour le « tout local » : un **Mac mini M4 Pro de 48 ou 64 Go**. Silencieux, sobre, fait pour rester allumé, dans la classe « Confort ». Pour l'hybride, n'importe quel Mac de 32 Go ou PC avec une carte de 16 Go suffit.
+**La machine qu'on recommandera** : un **Mac mini M4 Pro de 48 ou 64 Go**. Silencieux, sobre, fait pour rester allumé, dans la classe « Confort ». N'importe quel Mac de 32 Go ou PC avec une carte de 16 Go donne déjà une bonne offre Local.
 
-L'app vérifie la machine à l'installation (mémoire, carte graphique, place libre), propose le mode qui lui convient, et mesure la vitesse réelle avant de recommander le tout local.
+L'app vérifie la machine à l'installation (mémoire, carte graphique, place libre), mesure sa vitesse réelle, et annonce en mots simples ce qu'elle permet (« environ 160 tâches par mois dans votre forfait »), sans nom de modèle ni part locale ou cloud.
 
 ## Questions pour Julien
 
@@ -192,3 +199,4 @@ L'app vérifie la machine à l'installation (mémoire, carte graphique, place li
 3. Ouvrir Pro dès le navigateur (C6), avant la voix (C7) ?
 4. Écrire nous-mêmes les connecteurs Gmail, Agenda et Outlook (C4), plutôt que les payer à l'appel chez Composio ?
 5. L'offre Local : avec ou sans la sauvegarde chiffrée chez MEGGA ?
+6. Les engagements de disponibilité (99,5 % pour Plus, 99,9 % pour Pro et Ultra) et leurs dédommagements en crédits.

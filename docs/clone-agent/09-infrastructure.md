@@ -11,7 +11,7 @@ Thomas a confié la conception de l'infrastructure à Claude (21.11.2026). Ce fi
 | Réponse | jamais de démarrage à froid sur le chemin d'un message (aujourd'hui 1 à 2 minutes, `porte/src/agent.js`) |
 | Isolation | un titulaire ne lit jamais une donnée d'un autre, même avec un bug dans le code de l'agent |
 | Zones | Suisse, Europe, États-Unis, dès le premier jour ; rien ne sort de la zone du titulaire |
-| Panne | une panne touche une cellule, jamais tous les titulaires ; perte de données au plus 5 minutes, retour en moins d'une heure |
+| Panne | une panne touche une cellule, jamais tous les titulaires ; perte de données au plus 5 minutes ; bascule sur la copie de secours en moins de 15 minutes, pour tenir 99,9 % de disponibilité (10) ; restauration complète en moins d'une heure |
 | Effacement | réel et prouvable, sauvegardes comprises |
 | Même image | la même image signée que les agents d'entreprise, dans un autre service (`MEGGA_SERVICE=clone`) |
 
@@ -225,7 +225,7 @@ Hypothèses pour **100 000 titulaires**, dont 60 % actifs un jour donné : 15 to
 | Un conteneur du pool | le régulateur le retire ; les tours en cours sont rejoués par le coordinateur (chaque tour a un identifiant, une action déjà confirmée n'est jamais refaite) |
 | Le fournisseur du modèle | le secours de la zone ; sinon, les tours attendent et le titulaire est prévenu ; aucune action n'est lancée à moitié |
 | Composio | les tâches restent dans la file et reprennent ; le point du jour le dit |
-| Une cellule | seuls ses titulaires sont touchés ; restauration à un instant donné (moins de 5 minutes de perte), retour visé en moins d'une heure |
+| Une cellule | seuls ses titulaires sont touchés ; bascule sur la copie de secours de la base, déjà démarrée, en moins de 15 minutes ; sinon restauration à un instant donné (moins de 5 minutes de perte) en moins d'une heure. Les titulaires Ultra puis Pro repartent les premiers |
 | Une zone entière de Cloudflare | les autres zones continuent ; pas de bascule vers une autre zone (les données n'en sortent pas) : on attend, et on le dit |
 
 **Les sauvegardes** : la restauration à un instant donné du fournisseur, plus une copie logique chiffrée chaque jour dans un autre lieu **de la même zone**. Les copies restent lisibles 30 jours au plus ; un titulaire effacé y est illisible tout de suite, par la destruction de sa clé.

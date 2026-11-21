@@ -44,6 +44,7 @@ Ce qu'on en retient pour le clone, à faire confirmer par le juriste :
   - **la voix et l'avatar sont toujours signalés** (non réglable : `voix_signalee: true`) ;
   - **un appel ou une visio** commence par dire que c'est l'assistant IA du titulaire ;
   - **les textes** (mails, messages) : c'est la zone grise. Le titulaire envoie depuis son propre compte, et le texte peut avoir été relu par lui. Proposition : un réglage `signature_ia` (aucune, discrète, explicite), « discrète » par défaut (une ligne en bas, « Rédigé avec mon assistant »), et « explicite » imposée pour un envoi autonome à un tiers qui n'a jamais reçu de message du titulaire. **À trancher avec le juriste.**
+- **Une seule identité** : le clone ne nomme jamais le modèle qui le fait tourner (décision de Thomas, 21.11.2026, [11-offre-locale.md](11-offre-locale.md)), mais dit toujours qu'il est une IA, ne prétend jamais être un autre modèle, et la politique de confidentialité nomme les sous-traitants. À faire relire par le juriste avec le reste.
 - **Pas de catégorie interdite** : le clone ne fait ni notation sociale, ni manipulation, ni reconnaissance des émotions au travail. Le jeu « Qui a écrit ça ? » et le style ne tombent pas dans ces catégories, à confirmer.
 
 ## Les conditions des services tiers
