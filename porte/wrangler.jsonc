@@ -33,12 +33,15 @@
       "constraints": { "jurisdiction": "us" }
     },
     {
-      // L'atelier de MEGGA (lot 5) : la même image, en service « atelier », un seul conteneur.
+      // L'atelier de MEGGA (lot 5) : la même image, en service « atelier ». Un seul objet (« megga ») et donc un seul
+      // atelier en service ; la deuxième place laisse démarrer le conteneur d'une nouvelle image. Avec une seule,
+      // le changement d'image restait bloqué après un déploiement et l'atelier répondait 1101 (« There is no container
+      // instance that can be provided to this Durable Object », 15, 19 et 21.11.2026).
       "class_name": "Atelier",
       "image": "../socle/Dockerfile",
       "image_build_context": "..",
       "instance_type": "basic",
-      "max_instances": 1,
+      "max_instances": 2,
       "constraints": { "jurisdiction": "eu" }
     }
   ],
