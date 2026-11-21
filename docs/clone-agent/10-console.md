@@ -39,7 +39,7 @@ Ses chiffres viennent du relevé chiffré : chaque agent envoie ses nombres tout
 | Le produit | rien | temps jusqu'au premier service, part des domaines en « agir », rétention à 30 et 90 jours | C2, C5 |
 | Les alertes | par client : silence, panne, écart de version, échecs, plafond, coût, secrets masqués | en plus : pool trop chargé, file en retard, cellule pleine à 70 %, injection détectée, refus de la sécurité par ligne, clé demandée pour un autre titulaire | C1, C4 |
 | Les clients payants | MEGGA abonne une entreprise et lui envoie son lien de paiement | le titulaire s'abonne seul : la console suit des cohortes (en essai, payant, parti) et les options (voix, avatar, zone Suisse, app ordinateur) | C1, prix après C4 |
-| Les gestes de MEGGA | créer un client, régler l'avancé, reprendre la main, forcer une version | sur un clone, MEGGA ne règle rien et ne lit rien : elle peut seulement le couper, à deux personnes, ou ouvrir un accès de support demandé par écrit et limité dans le temps | C1, C4 |
+| Les gestes de MEGGA | créer un client, régler l'avancé, reprendre la main, forcer une version | sur un clone, MEGGA ne règle rien et ne lit rien : elle peut seulement le couper, ou entrer par un accès de support que le titulaire a ouvert lui-même | C1, C4 |
 
 Les pools, les cellules et leurs alertes sont décrits dans `09-infrastructure.md`, qui n'est pas encore sur `main` (voir plus bas).
 
@@ -65,13 +65,13 @@ Aucun écran des clones ne peut être honnête avant que ces nombres existent.
 - Un relevé chiffré **par pool et par cellule**, à côté du relevé par agent (C1).
 - Les nouveaux genres du journal du noyau : `injection_detectee`, actions par domaine et par genre, validations avec ou sans retouche, minutes de navigateur (C4 à C6).
 - Une lecture des relevés **en totaux**, sans passer par chaque titulaire : la route d'aujourd'hui rend 50 clients par page.
-- Le journal des gestes de MEGGA sur un clone, lisible par le titulaire, et la coupure à deux personnes (C1).
+- Le journal des gestes de MEGGA sur un clone, lisible par le titulaire, la coupure, et la relance à deux personnes (C1).
 
 ## L'ordre proposé
 
 | Quand | Ce que la console reçoit |
 |---|---|
-| Avec C1 | le choix Entreprises ou Clones, la santé des pools et des cellules, les totaux de titulaires, les alertes de la plateforme, la recherche par identifiant, la coupure à deux |
+| Avec C1 | le choix Entreprises ou Clones, la santé des pools et des cellules, les totaux de titulaires, les alertes de la plateforme, la recherche par identifiant, la coupure et la relance |
 | Avec C3 | le coût d'ingestion |
 | Avec C4 | les actions par domaine et par genre, le coût par mission, les injections détectées, les forfaits comptés en missions |
 | Avec C5 | la ressemblance et la rétention |
@@ -83,7 +83,15 @@ Avant C1, rien à changer dans la console : elle sert les agents d'entreprise, e
 
 La description de la PR #109 annonce dix fichiers, dont `09-infrastructure.md`. Ce fichier est resté sur la branche `megga/clone-agent` : son commit (`afdcc96`) a été poussé quelques secondes avant la fusion et n'en fait pas partie. Il change aussi `02-architecture.md` (« Retenu : B, en cellules ») et la première question de `08-lots.md`. Tant qu'il n'est pas sur `main`, `main` dit encore que le choix entre A, B et C reste à trancher.
 
-## À trancher par Julien
+## Décidé par Julien (21.11.2026)
 
-1. **La coupure d'un clone à deux personnes** (cadrage, `07-securite-conformite.md`) : qui sont les deux ?
-2. **Le support** : sans demande écrite du titulaire, MEGGA ne voit que ses nombres. D'accord ?
+**Couper un clone** : une seule personne de MEGGA, tout de suite. Couper, c'est mettre le clone en pause : il n'agit plus, et ce geste ne peut rien faire de dangereux. Exiger deux personnes ferait attendre une coupure urgente, par exemple pendant une injection. Le geste est noté au journal, et le titulaire est prévenu.
+
+**Deux personnes** : seulement pour ce qui rouvre un accès, c'est-à-dire relancer un clone coupé par MEGGA. Cela remplace la règle du cadrage (`07-securite-conformite.md`), qui demandait deux personnes pour couper.
+
+**Le support, en trois niveaux** :
+1. **Le clone d'abord** : la plupart des questions trouvent leur réponse dans son journal, que le titulaire lit lui-même.
+2. **MEGGA ne voit que les chiffres** : l'état, les erreurs, les volumes, la version, les coûts. Ça suffit pour la plupart des pannes.
+3. **Le contenu, seulement sur demande du titulaire** : il ouvre lui-même un accès depuis l'app, limité à ce qui pose problème (une action, une conversation) et à une durée courte (24 heures par exemple). L'accès est noté dans son journal, et il peut le fermer à tout moment. Sans ce geste, personne chez MEGGA ne lit rien.
+
+C'est la règle déjà posée pour les entreprises le 20.11.2026.
