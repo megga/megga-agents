@@ -113,7 +113,7 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   expect(lien.startsWith(`${baseURL}/admin/invitation/`)).toBe(true);
   await rejoindre(page, lien, SUPERADMIN_ESSAI);
 
-  // La vue d'ensemble : les tuiles, dont le coût ; le garage et ses pannes à surveiller (sa place attend l'ordre de Thomas).
+  // La vue d'ensemble, d'après le relevé chiffré : les tuiles, dont le coût ; la santé de chaque client, la pire d'abord.
   await expect(titre(page, TA.vueEnsemble)).toBeVisible();
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(TA.cout, { exact: true }).first()).toBeVisible();
@@ -121,8 +121,10 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   const valeurCout = page.getByText(TA.cout, { exact: true }).first().locator("xpath=following-sibling::b");
   await expect(valeurCout).toContainText(/\d/);
   expect(await valeurCout.evaluate((b) => b.scrollWidth <= b.clientWidth)).toBe(true);
-  const aSurveiller = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: TA.soucis, exact: true }) });
-  await expect(aSurveiller.getByRole("link", { name: GARAGE.entreprise, exact: true })).toBeVisible();
+  const sante = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: TA.sante, exact: true }) });
+  const ligneGarage = sante.getByRole("row").filter({ has: page.getByRole("link", { name: GARAGE.entreprise, exact: true }) });
+  await expect(ligneGarage.getByText(TA.santes.panne, { exact: true })).toBeVisible(); // une panne de transmission dure
+  await expect(sante.getByRole("row").filter({ hasText: "Fleuriste des Essais" }).getByText(TA.santes.silencieux, { exact: true })).toBeVisible();
   await page.screenshot({ path: "captures/admin-vue.png", fullPage: true });
 
   // La boulangerie : sa fiche, puis ses versions.
@@ -140,6 +142,7 @@ test("un superadmin invité par la commande pilote un client et le retrouve au j
   await page.getByRole("button", { name: TA.valider, exact: true }).click();
   await expect(page.getByText(TA.resultatValide(1))).toBeVisible();
   await page.getByRole("button", { name: TA.creerBrouillon }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.creerBrouillon, exact: true }).click(); // chaque geste se confirme
   await expect(page).toHaveURL(/\/versions\?v=2$/);
 
   // Jamais essayé, il ne se met en service qu'en forçant ; un essai, et « Mettre en service » vient.
@@ -205,6 +208,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await page.getByRole("textbox", { name: TA.uneListe }).fill(GARAGE.id);
   await page.screenshot({ path: "captures/admin-equipe.png", fullPage: true });
   await page.getByRole("button", { name: TA.inviter, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.inviter, exact: true }).click(); // chaque geste se confirme
 
   // Le lien, montré une fois : ni Échap ni un clic au-dehors ne le ferment, seulement « Fermer » ; ensuite il n'est plus nulle part.
   const secret = page.getByRole("dialog");
@@ -232,7 +236,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await rejoindre(externe, lien, EXTERNE_ESSAI);
 
   // Son rail : la vue d'ensemble et les clients, ni Comptes, ni Tarifs, ni Équipe, ni Journal. Aucun coût nulle part.
-  await expect(rail(externe).getByRole("link")).toHaveText([TA.vueEnsemble, TA.clients, TA.alertes, TA.installations]);
+  await expect(rail(externe).getByRole("link")).toHaveText([TA.vueEnsemble, TA.analyses, TA.clients, TA.alertes, TA.installations]);
   await expect(externe.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(externe.getByRole("main")).not.toContainText(TA.cout);
   await expect(externe.getByRole("heading", { name: TA.console, exact: true })).toHaveCount(0);
@@ -255,20 +259,9 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
     await expect(externe.getByText(BOULANGERIE.entreprise)).toHaveCount(0);
   }
 
-  // Ses conversations : l'adresse d'un fil porte une clé opaque, jamais le numéro.
+  // Aucune conversation, même la sienne : MEGGA ne lit jamais ce qui se dit (20.11.2026).
   await externe.goto(`/admin/clients/${GARAGE.id}`);
-  await externe.getByRole("link", { name: TA.conversations, exact: true }).click();
-  await expect(externe).toHaveURL(new RegExp(`/admin/clients/${GARAGE.id}/conversations$`));
-  const personne = externe
-    .getByRole("table")
-    .filter({ has: externe.getByRole("columnheader", { name: TA.personne, exact: true }) })
-    .getByRole("link")
-    .first();
-  const numero = (await personne.innerText()).trim();
-  await personne.click();
-  await expect(externe).toHaveURL(new RegExp(`/admin/clients/${GARAGE.id}/conversations/[0-9a-f]{16}$`));
-  await expect(externe.getByRole("heading", { name: numero, level: 2 })).toBeVisible();
-  expect(externe.url()).not.toContain(numero.replace("+", ""));
+  await expect(externe.getByRole("link", { name: "Conversations", exact: true })).toHaveCount(0);
 
   // Ses versions : un brouillon d'après la version en service, sans choix de base ni modèle par métier, limité aux réglages
   // simples ; il n'a ni « Mettre en service » ni « Forcer ».
@@ -283,6 +276,7 @@ test("un externe ne voit que son client", async ({ browser, baseURL }) => {
   await externe.getByRole("button", { name: TA.valider, exact: true }).click();
   await expect(externe.getByText(TA.resultatValide(1))).toBeVisible();
   await externe.getByRole("button", { name: TA.creerBrouillon }).click();
+  await externe.getByRole("dialog").getByRole("button", { name: TA.creerBrouillon, exact: true }).click(); // chaque geste se confirme
   await expect(externe).toHaveURL(/\/versions\?v=2$/);
   await expect(externe.getByRole("heading", { name: TA.essaiTitre(2) })).toBeVisible();
   await expect(externe.getByRole("button", { name: TA.mettreEnService })).toHaveCount(0);
@@ -371,7 +365,7 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
   await expect(page.getByText(TA.clientsEnService, { exact: true })).toBeVisible({ timeout: 15_000 });
   expect((await rail(page).boundingBox())?.width).toBeCloseTo(76, 0);
   expect(await deborde(page)).toBe(false);
-  const entrees = [TA.vueEnsemble, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.tarifs, TA.equipe, TA.journal];
+  const entrees = [TA.vueEnsemble, TA.analyses, TA.clients, TA.alertes, TA.installations, TA.comptes, TA.clientsPayants, TA.tarifs, TA.equipe, TA.journal];
   await expect(rail(page).getByRole("link")).toHaveText(entrees);
 
   for (const largeur of [390, 800]) {
@@ -389,10 +383,15 @@ test("à 390 et à 800 px, en clair et en Nuit douce", async ({ browser, baseURL
       await sansDefilement(entree);
     }
 
+    // L'onglet des forfaits : le catalogue, l'abonnement d'un client et la recharge se règlent sans défiler de côté.
+    await page.goto("/admin/payants/forfaits");
+    await expect(page.getByRole("heading", { name: TA.abonnerClient })).toBeVisible({ timeout: 15_000 });
+    await sansDefilement(TA.forfaits);
+
     // Chaque onglet de la fiche d'un client installé hors Cloudflare se voit (aucun caché hors du cadre) et mène à sa page.
     await page.goto(`/admin/clients/${CHALET.id}`);
     await expect(titre(page, CHALET.entreprise)).toBeVisible();
-    for (const onglet of [TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.acces, TA.installation]) {
+    for (const onglet of [TA.suivi, TA.alertes, TA.versions, TA.acces, TA.installation]) {
       const lien = page.getByRole("main").getByRole("link", { name: onglet, exact: true });
       await expect(lien).toBeInViewport();
       await lien.click();
@@ -471,12 +470,14 @@ test("le superadmin règle son compte : nom, photo, mot de passe ; le retour au 
   // Le nom : le menu le montre aussitôt.
   await page.getByLabel(TA.nomAffiche, { exact: true }).fill("Chef Renommé");
   await page.getByRole("button", { name: TA.enregistrer, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.enregistrer, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.nomEnregistre)).toBeVisible();
   await expect(menu()).toContainText("Chef Renommé");
 
   // La photo : recadrée et réduite dans le navigateur, puis dans le menu et dans la liste de l'équipe.
   await page.locator("#compte-photo").setInputFiles({ name: "photo.png", mimeType: "image/png", buffer: png(640, 400) });
   await page.getByRole("button", { name: TA.enregistrerPhoto }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.enregistrerPhoto, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.photoEnregistree)).toBeVisible();
   const photoMenu = menu().locator("img");
   await expect(photoMenu).toHaveAttribute("src", /^\/api\/compte\/photo\/[^/?]+\?v=[0-9a-f]{12}$/);
@@ -505,9 +506,11 @@ test("le superadmin règle son compte : nom, photo, mot de passe ; le retour au 
   await page.getByLabel(TA.nouveauMotDePasse).fill(nouveau);
   await page.getByLabel(TA.confirmerMotDePasse).fill(nouveau);
   await page.getByRole("button", { name: TA.changerMotDePasse }).click();
+  await page.getByRole("dialog").getByRole("button", { name: TA.changerMotDePasse, exact: true }).click(); // chaque geste se confirme
   await expect(page.getByText(TA.motDePasseChange)).toBeVisible();
   await menu().click();
   await page.getByRole("menuitem", { name: T.seDeconnecter }).click();
+  await page.getByRole("dialog").getByRole("button", { name: T.seDeconnecter, exact: true }).click(); // chaque geste se confirme
   await expect(page).toHaveURL(/\/connexion$/);
   await connecter(page, { courriel: SUPERADMIN_ESSAI.courriel, motDePasse: nouveau });
   await page.goto("/admin/compte");

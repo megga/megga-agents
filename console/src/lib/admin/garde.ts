@@ -1,6 +1,7 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
 import { connection } from "next/server";
+import { cache } from "react";
 import { Refus } from "@/lib/agents";
 import { session, sessionDe } from "@/lib/auth";
 import { pret } from "@/lib/base";
@@ -180,6 +181,12 @@ export function gardeSession<P extends Record<string, string>>(
 }
 
 /**
+ * L'accès du compte, relu dans la base à chaque requête comme avant, mais une seule fois par rendu : la coquille de l'admin
+ * et sa page le demandent chacune (cache de React, vidé à la requête suivante).
+ */
+const accesDuRendu = cache(async (id: string, email: string, name: string) => accesDe(await pret(), { id, email, name }));
+
+/**
  * Pour une page : sans session, la connexion puis retour à /admin ; sinon 404 pour qui n'a pas le droit ou le client.
  * connection() d'abord : une page de l'admin ne se rend qu'à la requête, jamais dans un préchargement (la fin d'accès
  * se compare à l'heure du moment, et un droit retiré doit valoir tout de suite).
@@ -188,7 +195,7 @@ export async function gardePage(droit?: Droit, client?: string): Promise<Acces> 
   await connection();
   const s = await session();
   if (!s) redirect("/connexion?retour=/admin");
-  const a = await accesDe(await pret(), s.user);
+  const a = await accesDuRendu(s.user.id, s.user.email, s.user.name);
   if (!a || (droit && !peut(a, droit)) || (client !== undefined && !voitClient(a, client))) notFound();
   return a;
 }

@@ -134,12 +134,29 @@ export function peutCreerClient(a: Acces): boolean {
   return peut(a, "clients.creer") && a.perimetre === "tous";
 }
 
+/** Les règles et les destinations des alertes valent pour tous les clients : seul un périmètre complet les lit. */
+export function voitReglesAlertes(a: Acces): boolean {
+  return peut(a, "clients.voir") && a.perimetre === "tous";
+}
+
+/** Les alertes se règlent pour tous les clients à la fois : un membre limité à une liste ne les règle pas. */
+export function peutReglerAlertes(a: Acces): boolean {
+  return peut(a, "alertes.regler") && a.perimetre === "tous";
+}
+
+/** Le catalogue des forfaits vaut pour tous les clients : un membre limité à une liste ne le règle pas. */
+export function peutReglerForfaits(a: Acces): boolean {
+  return peut(a, "tarifs.regler") && a.perimetre === "tous";
+}
+
 const RAIL: readonly { href: string; texte: string; droit: Droit | null }[] = [
   { href: "/admin", texte: TA.vueEnsemble, droit: null },
+  { href: "/admin/analyses", texte: TA.analyses, droit: "clients.voir" },
   { href: "/admin/clients", texte: TA.clients, droit: "clients.voir" },
   { href: "/admin/alertes", texte: TA.alertes, droit: "clients.voir" },
   { href: "/admin/installations", texte: TA.installations, droit: "clients.voir" },
   { href: "/admin/comptes", texte: TA.comptes, droit: "comptes.voir" },
+  { href: "/admin/payants", texte: TA.clientsPayants, droit: "couts.voir" },
   { href: "/admin/tarifs", texte: TA.tarifs, droit: "couts.voir" },
   { href: "/admin/equipe", texte: TA.equipe, droit: "equipe.gerer" },
   { href: "/admin/journal", texte: TA.journal, droit: "journal.voir" },
@@ -159,7 +176,6 @@ export function ongletsClient(a: Acces, id: string, horsCloudflare: boolean): { 
   const onglets = [
     { href: fiche, texte: TA.suivi, periode: true, ouvert: peut(a, "clients.voir") },
     { href: `${fiche}/alertes`, texte: TA.alertes, periode: true, ouvert: peut(a, "clients.voir") },
-    { href: `${fiche}/conversations`, texte: TA.conversations, periode: false, ouvert: peut(a, "conversations.lire") },
     { href: `${fiche}/versions`, texte: TA.versions, periode: false, ouvert: peut(a, "clients.voir") },
     { href: `${fiche}/acces`, texte: TA.acces, periode: false, ouvert: peut(a, "acces.gerer") || peut(a, "clients.piloter") },
     { href: `${fiche}/installation`, texte: TA.installation, periode: false, ouvert: horsCloudflare && peut(a, "clients.voir") },

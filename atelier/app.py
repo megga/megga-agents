@@ -7,6 +7,8 @@ Variables d'environnement (jamais dans le dépôt) :
   ANTHROPIC_API_KEY, DEEPSEEK_API_KEY   les modèles, pour le mode d'essai
   ESSAIS_DIR         facultatif : le dossier des bases d'essai
   PILOTAGE_CLE       la clé privée de pilotage : elle signe les ordres des installations hors Cloudflare
+  STRIPE_CLE         la clé secrète de Stripe (forfaits, recharges) ; sans elle, les routes de Stripe répondent 503
+  STRIPE_SIGNATURE   le secret qui signe les événements de Stripe (POST /stripe)
 
 Rôles, par le jeton (Authorization: Bearer …) :
   MEGGA   ADMIN_TOKEN : tous les clients, tous les réglages
@@ -20,6 +22,7 @@ Routes (toutes sous /atelier) :
   POST  /clients                                MEGGA : un nouveau client, d'une configuration complète
                                                 ou d'un modèle par métier (gabarit, identité, prénom)
   GET   /clients/{id}                           un client, sa version en service et sa configuration
+  PUT   /clients/{id}/pays                      MEGGA : le pays du client (code ISO à deux lettres, ou null)
   GET   /clients/{id}/versions                  l'historique
   GET   /clients/{id}/versions/{v}              une version et sa configuration
   POST  /clients/{id}/valider                   valide des changements sans rien enregistrer
@@ -41,10 +44,15 @@ dans la base du client, jamais dans l'atelier. Hors Cloudflare, elles se créent
 Suivi (lu dans le conteneur du client, qui se réveille s'il dormait) :
   GET   /clients/{id}/suivi[?jours=7]           état, activité (tours, personnes, modèles, voix) ;
                                                 coûts pour MEGGA seulement
-  GET   /clients/{id}/conversations[?limite=]   les personnes qui ont écrit
-  GET   /clients/{id}/conversations/{personne}  les derniers échanges avec elle
+  GET   /clients/{id}/conversations[?limite=]   le client seulement : les personnes qui ont écrit
+  GET   /clients/{id}/conversations/{personne}  le client seulement : les derniers échanges avec elle
   GET   /clients/{id}/alertes[?jours=7]         échecs, pannes du conteneur, écart avec l'annuaire
   GET   /tarifs, PUT /tarifs                    MEGGA : les tarifs des modèles et de la voix
+  GET   /forfaits, /abonnements, …              MEGGA : les forfaits et les clients payants (atelier/routes_forfaits.py)
+  GET   /releves[?jours=7]                      MEGGA : le relevé chiffré de tous les agents, jour par jour (92 au plus),
+                                                avec coûts, écart et agents silencieux (aucun conteneur réveillé)
+  GET   /alertes, PUT /alertes/regles, …       MEGGA : les alertes envoyées (atelier/routes_alertes.py) : règles à
+                                                seuils sur le relevé, destinations, évaluation toutes les 5 minutes
 
 Installations hors Cloudflare (chez le client, zone suisse), pilotées par un canal sortant et signé :
   GET   /installations                          MEGGA : les installations et leur dernier état
@@ -85,13 +93,17 @@ from noyau.app import CLES
 from noyau.config import SANS_WHATSAPP_SCHEMA, Config
 from noyau.suivi import PERSONNE
 
-from . import gabarits, regles
+from . import gabarits, pays, regles, routes_alertes, routes_forfaits, routes_stripe
+from .alertes import Etats as EtatsAlertes
 from .couts import Tarifs, couts
 from .essai import essayer
+from .forfaits import Abonnements
+from .stripe import Stripe
 from .pilotage import TAILLE as TAILLE_RELEVE
 from .pilotage import Pilotage
 from .porte import Porte, PorteErreur
 from .regles import Refus
+from .releves import JOURS_LUS_MAX, rassembler
 from .versions import Versions
 
 log = logging.getLogger("megga.atelier")
@@ -118,7 +130,8 @@ async def bd(f, *a, **k):
     return await run_in_threadpool(f, *a, **k)
 
 
-def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None) -> FastAPI:
+def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essai=None,
+          transport_alertes=None, transport_stripe=None) -> FastAPI:
     """Les arguments nommés remplacent les vrais services (essais du code)."""
     from noyau.environnement import charger
 
@@ -257,7 +270,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         dernieres = await bd(versions.dernieres, {c["component_id"] for c in tous}) if tous else {}
         courantes = {c["component_id"]: c.get("current_version") for c in tous}
         installations = {i["client"]: i for i in await bd(canal.toutes, courantes)}
-        return {"clients": [resume(c, dernieres.get(c["component_id"]), etats, installations.get(c["component_id"])) for c in tous],
+        lus = await bd(pays.tous, reglages)
+        return {"clients": [{**resume(c, dernieres.get(c["component_id"]), etats, installations.get(c["component_id"])),
+                             "pays": lus.get(c["component_id"])} for c in tous],
                 "porte": etats is not None}
 
     @r.get("/gabarits")
@@ -282,9 +297,17 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         courante = c.get("current_version")
         config = (await bd(version_de, ident, courante))["config"] if courante else None
         derniere = (await bd(versions.dernieres, {ident})).get(ident)
+        le_pays = (await bd(pays.tous, reglages)).get(ident)
         if ((config or {}).get("zone") or await bd(zone_de, ident)) in regles.ZONES_PORTE:
-            return {**resume(c, derniere, await etats_porte(ident)), "config": config}
-        return {**resume(c, derniere, None, await bd(installation_de, ident, courante)), "config": config}
+            return {**resume(c, derniere, await etats_porte(ident)), "pays": le_pays, "config": config}
+        return {**resume(c, derniere, None, await bd(installation_de, ident, courante)), "pays": le_pays, "config": config}
+
+    @r.put("/clients/{ident}/pays")
+    def regler_pays(ident: str, qui: Identite = Depends(identite), corps: dict = Body(...)):
+        """MEGGA : le pays du client sur la carte du monde (un code ISO à deux lettres, ou null)."""
+        megga(qui)
+        client_de(qui, ident)
+        return {"client": ident, "pays": pays.regler(reglages, ident, corps.get("pays"))}
 
     @r.get("/clients/{ident}/versions")
     def historique(ident: str, qui: Identite = Depends(identite)):
@@ -538,8 +561,13 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
 
     def suivable(qui: Identite, ident: str, conversations: bool = False) -> tuple[dict, bool]:
         """Le client, et si son suivi passe par la porte (zones Europe et États-Unis) ou par le pilotage
-        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations)."""
+        (hors Cloudflare : le dernier relevé de son installation, jamais ses conversations).
+
+        Les conversations d'un client ne se lisent que par lui : MEGGA suit la santé et les chiffres, jamais ce qui se
+        dit (décision de Julien, 20.11.2026, qui remplace celle du 15.11.2026)."""
         c = client_de(qui, ident)
+        if conversations and qui.role == "megga":
+            raise Refus(403, "les conversations d'un client ne se lisent que par lui")
         if zone_de(ident) not in regles.ZONES_PORTE:
             if conversations:
                 raise Refus(409, "les conversations d'une installation hors Cloudflare ne la quittent jamais : elles se lisent chez le client")
@@ -659,6 +687,33 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             raise Refus(409, "ce client est servi par la porte de Cloudflare : il n'a pas d'installation à piloter")
         return c
 
+    @r.get("/releves")
+    async def releves(requete: Request, qui: Identite = Depends(identite)):
+        megga(qui)
+        brut = requete.query_params.get("jours") or "7"
+        if not re.fullmatch(r"[0-9]{1,2}", brut, re.ASCII) or not 1 <= int(brut) <= JOURS_LUS_MAX:
+            raise Refus(400, f"jours : de 1 à {JOURS_LUS_MAX}")
+        return await rassembler_tout(int(brut))
+
+    async def rassembler_tout(jours: int) -> dict:
+        """Le relevé de tous les agents, avec coûts, écart et silence (aucun conteneur réveillé)."""
+        if porte is None:
+            raise Refus(503, "porte non réglée (PORTE_URL)")
+        try:
+            lus = await porte.releves(jours)
+        except PorteErreur as e:
+            raise Refus(502, f"porte : {e.texte[:120]}") from e
+        connus = {c["component_id"]: {"entreprise": c.get("description"), "version_en_service": c.get("current_version")}
+                  for c in await bd(versions.clients)}
+        return rassembler(lus, await bd(lire_tarifs), connus, time.time())
+
+    routes_alertes.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
+                          etats=EtatsAlertes(env["DATABASE_URL"]), porte=porte, rassembler_tout=rassembler_tout,
+                          transport=transport_alertes)
+    abonnements = Abonnements(env["DATABASE_URL"])
+    routes_forfaits.monter(r, identite=identite, megga=megga, bd=bd, reglages=reglages,
+                           abonnements=abonnements, client_de=client_de, rassembler_tout=rassembler_tout)
+
     @r.get("/installations")
     def installations(qui: Identite = Depends(identite)):
         megga(qui)
@@ -755,6 +810,10 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
             dicible = str(e) if str(e).startswith(("heure", "requête rejouée", "relevé")) else "installation non reconnue"
             return JSONResponse({"erreur": dicible}, status_code=401)
 
+    # Stripe (atelier/routes_stripe.py) : sa route d'événements est hors de /atelier, sans jeton mais signée.
+    stripe = Stripe(env["STRIPE_CLE"], transport_stripe) if env.get("STRIPE_CLE") else None
+    routes_stripe.monter(app, r, identite=identite, megga=megga, bd=bd, reglages=reglages, abonnements=abonnements,
+                         client_de=client_de, rassembler_tout=rassembler_tout, stripe=stripe, secret=env.get("STRIPE_SIGNATURE"))
     app.include_router(r)
     return app
 

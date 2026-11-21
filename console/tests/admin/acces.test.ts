@@ -25,10 +25,12 @@ import { TA } from "@/lib/admin/textes";
 import { acces, refus } from "./aides";
 
 describe("les droits d'un membre", () => {
-  it("un externe ne garde que trois droits ; un droit inconnu n'est jamais accordé", () => {
-    expect([...droitsEffectifs(DROITS, true, false)].sort()).toEqual(["clients.voir", "conversations.lire", "versions.preparer"]);
+  it("un externe ne garde que deux droits ; un droit inconnu n'est jamais accordé", () => {
+    expect([...droitsEffectifs(DROITS, true, false)].sort()).toEqual(["clients.voir", "versions.preparer"]);
     expect(droitsEffectifs(["clients.voir", "inconnu"], false, false)).toEqual(new Set(["clients.voir"]));
     expect(droitsEffectifs([], false, true).size).toBe(13);
+    // un rôle qui avait coché la lecture des conversations la garde en base, sans effet
+    expect(droitsEffectifs(["clients.voir", "conversations.lire"], false, false)).toEqual(new Set(["clients.voir"]));
     expect(refus(() => exiger(acces({ droits: ["clients.voir"] }), "couts.voir"))).toMatchObject({ statut: 403, message: TA.sansDroit });
     expect(peut(acces({ droits: ["clients.voir"] }), "clients.voir")).toBe(true);
     expect(() => exiger(acces({ droits: ["clients.voir"] }), "clients.voir")).not.toThrow();
@@ -139,10 +141,10 @@ describe("le rôle proposé d'abord à une invitation", () => {
 
 describe("le rail", () => {
   it("le rail ne montre que les entrées ouvertes", () => {
-    expect(entreesRail(acces({ superadmin: true })).map((e) => e.href)).toEqual(["/admin", "/admin/clients", "/admin/alertes",
-      "/admin/installations", "/admin/comptes", "/admin/tarifs", "/admin/equipe", "/admin/journal"]);
+    expect(entreesRail(acces({ superadmin: true })).map((e) => e.href)).toEqual(["/admin", "/admin/analyses", "/admin/clients", "/admin/alertes",
+      "/admin/installations", "/admin/comptes", "/admin/payants", "/admin/tarifs", "/admin/equipe", "/admin/journal"]);
     expect(entreesRail(acces({ externe: true, droits: DROITS, perimetre: ["garage-essai"] })).map((e) => e.href))
-      .toEqual(["/admin", "/admin/clients", "/admin/alertes", "/admin/installations"]);
+      .toEqual(["/admin", "/admin/analyses", "/admin/clients", "/admin/alertes", "/admin/installations"]);
     expect(entreesRail(acces({ superadmin: true }))[0]).toEqual({ href: "/admin", texte: TA.vueEnsemble });
   });
 });
@@ -150,10 +152,10 @@ describe("le rail", () => {
 describe("les onglets d'un client", () => {
   const textes = (o: { texte: string }[]) => o.map((x) => x.texte);
 
-  it("un externe voit Suivi, Alertes, Conversations, Versions, et Installation hors Cloudflare seulement", () => {
+  it("un externe voit Suivi, Alertes, Versions, et Installation hors Cloudflare seulement ; jamais de conversations", () => {
     const e = acces({ externe: true, droits: DROITS, perimetre: ["garage-essai"] });
-    expect(textes(ongletsClient(e, "garage-essai", false))).toEqual([TA.suivi, TA.alertes, TA.conversations, TA.versions]);
-    expect(textes(ongletsClient(e, "chalet-essai", true))).toEqual([TA.suivi, TA.alertes, TA.conversations, TA.versions, TA.installation]);
+    expect(textes(ongletsClient(e, "garage-essai", false))).toEqual([TA.suivi, TA.alertes, TA.versions]);
+    expect(textes(ongletsClient(e, "chalet-essai", true))).toEqual([TA.suivi, TA.alertes, TA.versions, TA.installation]);
   });
 
   it("un membre Finance voit Suivi, Alertes, Versions ; Accès s'ouvre avec acces.gerer ou clients.piloter", () => {
@@ -162,7 +164,7 @@ describe("les onglets d'un client", () => {
     for (const d of ["acces.gerer", "clients.piloter"] as const)
       expect(textes(ongletsClient(acces({ droits: ["clients.voir", d] }), "garage-essai", false)), d).toContain(TA.acces);
     expect(ongletsClient(acces({ superadmin: true }), "garage-essai", true).map((o) => o.href)).toEqual([
-      "/admin/clients/garage-essai", "/admin/clients/garage-essai/alertes", "/admin/clients/garage-essai/conversations",
+      "/admin/clients/garage-essai", "/admin/clients/garage-essai/alertes",
       "/admin/clients/garage-essai/versions", "/admin/clients/garage-essai/acces", "/admin/clients/garage-essai/installation",
     ]);
   });
@@ -171,7 +173,7 @@ describe("les onglets d'un client", () => {
     const o = ongletsClient(acces({ superadmin: true }), "garage-essai", true);
     expect(o.filter((x) => x.periode).map((x) => x.texte)).toEqual([TA.suivi, TA.alertes]);
     expect(avecPeriode(o, "30").map((x) => x.href)).toEqual([
-      "/admin/clients/garage-essai?jours=30", "/admin/clients/garage-essai/alertes?jours=30", "/admin/clients/garage-essai/conversations",
+      "/admin/clients/garage-essai?jours=30", "/admin/clients/garage-essai/alertes?jours=30",
       "/admin/clients/garage-essai/versions", "/admin/clients/garage-essai/acces", "/admin/clients/garage-essai/installation",
     ]);
     for (const j of [null, "abc", "999"]) expect(avecPeriode(o, j).map((x) => x.href), String(j)).toEqual(o.map((x) => x.href));

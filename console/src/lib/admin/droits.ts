@@ -1,11 +1,12 @@
 import { TA } from "./textes";
 
 // Les treize droits de l'admin, fixés dans le code : un rôle ne peut cocher que ceux-là (conception, « Les droits »).
+// « conversations.lire » est retiré (20.11.2026) : MEGGA ne lit jamais une conversation. Un rôle qui l'avait coché le
+// garde en base sans effet (roles.ts et acces.ts ne retiennent que les droits connus).
 
 export const DROITS = [
   "clients.voir",
   "couts.voir",
-  "conversations.lire",
   "clients.creer",
   "versions.preparer",
   "clients.piloter",
@@ -16,6 +17,8 @@ export const DROITS = [
   "comptes.gerer",
   "equipe.gerer",
   "journal.voir",
+  // Les règles et les destinations des alertes envoyées (20.11.2026), réglées pour tous les clients à la fois.
+  "alertes.regler",
 ] as const;
 
 export type Droit = (typeof DROITS)[number];
@@ -28,7 +31,7 @@ export function estDroit(x: unknown): x is Droit {
 
 /** Les droits cochés par groupe, à l'écran des rôles ; chaque droit est dans un seul groupe. */
 export const GROUPES_DE_DROITS: readonly { titre: string; droits: readonly Droit[] }[] = [
-  { titre: TA.groupeClients, droits: ["clients.voir", "clients.creer", "conversations.lire"] },
+  { titre: TA.groupeClients, droits: ["clients.voir", "clients.creer", "alertes.regler"] },
   { titre: TA.groupeVersions, droits: ["versions.preparer", "clients.piloter", "acces.gerer", "installations.gerer"] },
   { titre: TA.groupeCouts, droits: ["couts.voir", "tarifs.regler"] },
   { titre: TA.groupeComptes, droits: ["comptes.voir", "comptes.gerer"] },
@@ -36,7 +39,7 @@ export const GROUPES_DE_DROITS: readonly { titre: string; droits: readonly Droit
 ];
 
 /** Ce qu'un externe garde, quels que soient les droits de son rôle (décision 5 de Thomas). */
-export const DROITS_EXTERNE: readonly Droit[] = ["clients.voir", "conversations.lire", "versions.preparer"];
+export const DROITS_EXTERNE: readonly Droit[] = ["clients.voir", "versions.preparer"];
 
 /** Le rôle fixe : tous les droits, aucun périmètre, ni modifiable ni retirable. */
 export const SUPERADMIN = "superadmin";
@@ -48,8 +51,8 @@ export const ROLES_DE_DEPART: readonly { id: string; nom: string; description: s
     id: "exploitation",
     nom: TA.roleExploitation,
     description: TA.roleExploitationDescription,
-    droits: ["clients.voir", "conversations.lire", "versions.preparer", "clients.piloter", "acces.gerer", "installations.gerer",
-      "clients.creer", "comptes.voir", "comptes.gerer"],
+    droits: ["clients.voir", "versions.preparer", "clients.piloter", "acces.gerer", "installations.gerer",
+      "clients.creer", "comptes.voir", "comptes.gerer", "alertes.regler"],
   },
   { id: "finance", nom: TA.roleFinance, description: TA.roleFinanceDescription, droits: ["clients.voir", "couts.voir", "tarifs.regler", "comptes.voir"] },
   { id: "lecture", nom: TA.roleLecture, description: TA.roleLectureDescription, droits: ["clients.voir", "comptes.voir"] },

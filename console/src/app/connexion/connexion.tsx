@@ -33,7 +33,8 @@ export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null,
   const [courriel, setCourriel] = useState("");
   const [motDePasse, setMotDePasse] = useState("");
   const [erreur, setErreur] = useState<string | null>(erreurInitiale);
-  const [envoi, setEnvoi] = useState(false);
+  // repos, puis envoi (« Connexion en cours »), puis connecte (« Connecté ») le temps que la page suivante arrive.
+  const [etape, setEtape] = useState<"repos" | "envoi" | "connecte">("repos");
   const inscription = inscriptionPossible && mode === "inscription";
   const router = useRouter();
 
@@ -41,17 +42,18 @@ export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null,
     e.preventDefault();
     setErreur(null);
     if (inscription && motDePasse.length < 8) return setErreur(T.erreurMotDePasse);
-    setEnvoi(true);
+    setEtape("envoi");
     const { error } = inscription
       ? await authClient.signUp.email({ name: entreprise.trim(), email: courriel.trim(), password: motDePasse })
       : await authClient.signIn.email({ email: courriel.trim(), password: motDePasse });
     if (error) {
       setErreur(messageErreur(error.code));
-      setEnvoi(false);
+      setEtape("repos");
       return;
     }
+    setEtape("connecte");
+    // Une seule navigation : la page suivante est rendue à la demande, avec la nouvelle session (pas de refresh en plus).
     router.replace(retour);
-    router.refresh();
   }
 
   const champ = "h-11 rounded-xl bg-bg px-3.5 text-[15px] text-ink placeholder:text-faint";
@@ -112,8 +114,8 @@ export function Connexion({ fournisseurs, retour, erreur: erreurInitiale = null,
               {erreur}
             </p>
           )}
-          <Button type="submit" disabled={envoi} className="mt-1 h-11 rounded-full text-[15px] font-bold">
-            {inscription ? T.creerCompte : T.seConnecter}
+          <Button type="submit" disabled={etape !== "repos"} aria-live="polite" className="mt-1 h-11 rounded-full text-[15px] font-bold disabled:opacity-100">
+            {etape === "connecte" ? T.connecte : etape === "envoi" ? (inscription ? T.creationEnCours : T.connexionEnCours) : inscription ? T.creerCompte : T.seConnecter}
           </Button>
         </form>
 

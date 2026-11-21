@@ -66,7 +66,8 @@ def test_conteneur_injoignable(essai):
     """Le suivi du fleuriste ne répond pas ; ses alertes, si : la panne gardée par la porte et « conteneur injoignable »."""
     t = essai.t
     assert t.get("/atelier/clients/fleuriste-essai/suivi?jours=7").status_code == 502
-    assert t.get("/atelier/clients/fleuriste-essai/conversations").status_code == 502
+    # Les conversations d'un client ne se lisent jamais par MEGGA (atelier, 20.11.2026) : refusées avant la porte.
+    assert t.get("/atelier/clients/fleuriste-essai/conversations").status_code == 403
     r = t.get("/atelier/clients/fleuriste-essai/alertes?jours=7")
     assert r.status_code == 200
     genres = {a["genre"]: a for a in r.json()["alertes"]}
@@ -128,12 +129,17 @@ def test_suivi_avec_couts(essai):
     assert 0 < un < trente
 
 
-def test_conversations(essai):
-    t = essai.t
-    personnes = t.get("/atelier/clients/boulangerie-essai/conversations").json()["conversations"]
-    assert len(personnes) == 2 and all(p["personne"].startswith("+4179000000") for p in personnes)
-    fil = t.get(f"/atelier/clients/boulangerie-essai/conversations/{personnes[0]['personne']}").json()
-    assert {m["sens"] for m in fil["messages"]} == {"recu", "envoye"}
+def test_releves(essai):
+    """Le relevé chiffré : le garage en panne, le fleuriste silencieux, les autres en bonne santé ; aucune conversation."""
+    r = essai.t.get("/atelier/releves?jours=7")
+    assert r.status_code == 200, r.text
+    d = {c["id"]: c for c in r.json()["clients"]}
+    assert set(d) == {"agence-essai", "boulangerie-essai", "fleuriste-essai", "garage-essai"}
+    assert d["fleuriste-essai"]["silencieux"] and not d["boulangerie-essai"]["silencieux"]
+    assert [p["quoi"] for p in d["garage-essai"]["etat"]["pannes_en_cours"]] == ["transmission"]
+    assert len(d["boulangerie-essai"]["jours"]) == 7 and d["boulangerie-essai"]["totaux"]["tours"] == 7 * 14
+    assert d["boulangerie-essai"]["totaux"]["cout"] > 0
+    assert "+4179" not in r.text and "Martin" not in r.text
 
 
 def test_essai_repond_sans_reseau(essai):

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { fournisseursActifs, inscriptionOuverte, session } from "@/lib/auth";
+import { serveurAgents } from "@/lib/serveur-agents";
 import { Connexion } from "./connexion";
 import { messageErreur } from "./erreurs";
 import { retourSur } from "./retour";
@@ -8,7 +9,8 @@ import { retourSur } from "./retour";
 // jamais tel quel.
 export default async function PageConnexion({ searchParams }: PageProps<"/connexion">) {
   const p = await searchParams;
-  const retour = retourSur(p.retour);
+  // Sans équipe d'agents (en ligne), « / » ne fait que renvoyer à /admin : on y va directement, sans ce détour.
+  const retour = retourSur(p.retour, serveurAgents() ? "/" : "/admin");
   if (await session()) redirect(retour);
   const erreur = p.error === undefined || p.error === "" ? null : messageErreur(p.error); // ?error= vide : comme sans paramètre
   return <Connexion fournisseurs={fournisseursActifs()} retour={retour} erreur={erreur} inscription={inscriptionOuverte()} />;

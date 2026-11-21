@@ -165,12 +165,12 @@ whatsapp:
 modeles_meta:
   message: {nom: fsp_agent_attente}
   message_en: {nom: fsp_agent_attente, langue: en}
-  rappel: {nom: fsp_agent_rappel}
+  rappel: {nom: fsp_agent_greg_rappel}
   demande: {nom: fsp_agent_demande}
-  partenaire: {nom: fsp_agent_partenaire}
-  veille: {nom: fsp_agent_suivi_maj}
-  zone: {nom: fsp_agent_suivi_maj}
-  rapprochement: {nom: fsp_agent_suivi_maj}
+  partenaire: {nom: fsp_agent_greg_partenaire}
+  veille: {nom: fsp_agent_greg_suivi}
+  zone: {nom: fsp_agent_greg_suivi}
+  rapprochement: {nom: fsp_agent_greg_suivi}
   livraison: {nom: fsp_agent_livraison}
   reponse_visiteur: {nom: fsp_agent_reponse}
   reponse_visiteur_en: {nom: fsp_agent_reponse, langue: en}

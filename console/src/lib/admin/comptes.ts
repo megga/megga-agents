@@ -210,6 +210,11 @@ export async function totauxConsole(b: Base, jours: Jours, maintenant = new Date
   parJour: { jour: string; inscriptions: number; messages: number }[];
 }> {
   const compter = async (sql: string) => (await b.un<{ n: number }>(sql))!.n;
+  // Les deux compteurs partent en même temps que les messages : rien ne dépend d'eux.
+  const nbComptes = compter('SELECT COUNT(*) AS n FROM "user"');
+  const nbAgents = compter("SELECT COUNT(*) AS n FROM agent");
+  nbComptes.catch(() => {}); // une erreur est relevée plus bas, à l'await
+  nbAgents.catch(() => {});
   const messages = await messagesParJour(b, jours, maintenant);
   const veille = new Date(Date.parse(`${messages[0].jour}T00:00:00Z`) - 24 * 3600 * 1000).toISOString();
   const inscrits = await b.tous<{ createdAt: string }>('SELECT "createdAt" FROM "user" WHERE "createdAt" >= ?', veille);
@@ -219,8 +224,8 @@ export async function totauxConsole(b: Base, jours: Jours, maintenant = new Date
     parJour.set(jour, (parJour.get(jour) ?? 0) + 1);
   }
   return {
-    comptes: await compter('SELECT COUNT(*) AS n FROM "user"'),
-    agents: await compter("SELECT COUNT(*) AS n FROM agent"),
+    comptes: await nbComptes,
+    agents: await nbAgents,
     messages: messages.reduce((s, j) => s + j.messages, 0),
     parJour: messages.map((j) => ({ jour: j.jour, inscriptions: parJour.get(j.jour) ?? 0, messages: j.messages })),
   };

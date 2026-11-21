@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer } from "@/components/admin/envoyer";
 import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, etiquette } from "@/components/admin/formulaire";
@@ -116,6 +117,7 @@ function DroitsParGroupe({ droits }: { droits: Droit[] }) {
 
 function FormRole({ role, permis, onFini }: { role: RoleVu | null; permis: Droit[]; onFini: () => void }) {
   const [nom, setNom] = useState(role?.nom ?? "");
+  const { avant, fenetre } = useDemande();
   const [description, setDescription] = useState(role?.description ?? "");
   const [droits, setDroits] = useState<Droit[]>(role?.droits ?? []);
   const [erreur, setErreur] = useState<string | null>(null);
@@ -141,7 +143,8 @@ function FormRole({ role, permis, onFini }: { role: RoleVu | null; permis: Droit
   }
 
   return (
-    <form onSubmit={enregistrer} className="flex flex-col gap-3.5">
+    <form onSubmit={avant(TA.confirmerRole(nom.trim(), !role), role ? TA.enregistrer : TA.creer, enregistrer)} className="flex flex-col gap-3.5">
+      {fenetre}
       <DialogTitle className="text-[17px] font-extrabold">{role ? TA.titreModifier(role.nom) : TA.nouveauRole}</DialogTitle>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="role-nom" className={etiquette}>{TA.nomDuRole}</Label>

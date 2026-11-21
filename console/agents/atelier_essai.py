@@ -1,6 +1,6 @@
 """L'atelier d'essai local de l'admin MEGGA : le vrai atelier (`atelier.app.creer`) sur SQLite, devant une porte simulée.
 
-La porte invente l'activité, les alertes, les conversations et les clés de six clients fictifs, sur les modèles
+La porte invente l'activité, les alertes et les clés de six clients fictifs (aucune conversation : MEGGA n'en lit jamais), sur les modèles
 de FaussePorte (tests/test_lot5.py), PorteSuivie (tests/test_suivi.py) et PorteAuxCles (tests/test_lot6_api.py).
 L'un d'eux tourne hors Cloudflare : son pilote inventé envoie des relevés signés par `noyau.pilotage.entetes`,
 comme `releve_signe` (tests/test_lot6_pilote.py). Il ne sert qu'au développement et aux essais de bout en bout ;
@@ -56,6 +56,20 @@ CLIENTS = (
 CHALET = "chalet-essai"
 INJOIGNABLES = {"fleuriste-essai"}  # en service, mais son conteneur ne répond plus : la porte rend 503 à tout suivi
 BROUILLONS = {"librairie-essai"}  # jamais mis en service : un brouillon, inconnu de la porte
+# Le pays de chacun, pour la carte du monde ; la librairie n'en a pas.
+PAYS = {"boulangerie-essai": "CH", "garage-essai": "FR", "agence-essai": "ES", "chalet-essai": "CH", "fleuriste-essai": "AE"}
+# Deux forfaits et quatre abonnements : un actif, un en retard, un en essai, un à l'année ; le fleuriste et la librairie n'en ont pas.
+FORFAITS = {"devise": "USD", "multiplicateur": 3, "forfaits": [
+    {"id": "essentiel", "nom": "Essentiel", "prix_mensuel": 290, "conversations": 200, "remise_annuelle": 20,
+     "recharge": {"conversations": 100, "prix": 120}},
+    {"id": "pro", "nom": "Pro", "prix_mensuel": 790, "conversations": 600, "remise_annuelle": 20,
+     "recharge": {"conversations": 250, "prix": 290}}]}
+ABONNEMENTS = {
+    "boulangerie-essai": {"forfait": "essentiel", "statut": "actif", "seuil_recharge": 60},
+    "garage-essai": {"forfait": "pro", "statut": "retard"},
+    "agence-essai": {"forfait": "essentiel", "statut": "essai"},
+    "chalet-essai": {"forfait": "pro", "statut": "actif", "rythme": "annuel"},
+}
 # Un seul modèle a son tarif : le secours (deepseek-v4-pro), la voix et l'écoute sortent « sans tarif ».
 TARIFS = {"devise": "USD", "modeles": {"claude-sonnet-5-5": {"entree": 3, "sortie": 15, "cache_lecture": 0.3, "cache_ecriture": 3.75}}}
 
@@ -78,26 +92,6 @@ ECHECS = {
 PANNES = {
     "garage-essai": (("demarrage", 180, "secret manquant", 150), ("transmission", 40, "conteneur arrêté", None)),
     "fleuriste-essai": (("transmission", 25, "conteneur injoignable", None),),
-}
-
-# Les conversations : (il y a combien de minutes, sens, texte). Des numéros fictifs.
-CONVERSATIONS = {
-    "boulangerie-essai": {
-        "+41790000001": ((190, "recu", "Bonjour, vous avez encore des tresses au beurre pour samedi ?"),
-                         (190, "envoye", "Bonjour ! Oui, je vous en mets une de côté. À quel nom ?"),
-                         (185, "recu", "Au nom de Martin, merci."),
-                         (185, "envoye", "C'est noté : une tresse au beurre pour samedi, au nom de Martin.")),
-        "+41790000002": ((45, "recu", "Vous êtes ouverts le lundi ?"),
-                         (45, "envoye", "Nous sommes fermés le lundi, ouverts du mardi au dimanche dès 7 h.")),
-    },
-    "garage-essai": {
-        "+41790000003": ((130, "recu", "Ma voiture fait un bruit au freinage."),
-                         (130, "envoye", "Je transmets à l'atelier. Quand pourriez-vous passer ?")),
-    },
-    "agence-essai": {
-        "+41790000004": ((600, "recu", "Je cherche un trois pièces à louer, près de la gare."),
-                         (600, "envoye", "Volontiers. Quel est votre budget, et pour quand ?")),
-    },
 }
 
 
@@ -161,11 +155,6 @@ def conteneur(ident: str, maintenant: float) -> dict:
     return {"demarre": all(p["resolue"] for p in pannes), "alertes": pannes}
 
 
-def fils(ident: str, maintenant: float) -> dict[str, list[dict]]:
-    return {p: [{"quand": maintenant - m * 60, "sens": s, "genre": "texte", "texte": t} for m, s, t in messages]
-            for p, messages in CONVERSATIONS.get(ident, {}).items()}
-
-
 class PorteEssai:
     """La porte simulée : l'annuaire et ses mises en service (FaussePorte), le suivi des conteneurs (PorteSuivie),
     les clés des logiciels gardées en empreinte (PorteAuxCles)."""
@@ -192,18 +181,38 @@ class PorteEssai:
         if ident in INJOIGNABLES:
             raise PorteErreur(503, json.dumps({"erreur": "conteneur injoignable"}))
         maintenant = time.time()
-        limite = params.get("limite") or 50
         if chemin == "":
             return activite(ident, float(params.get("depuis") or 0), maintenant)
         if chemin == "/alertes":
             return {"alertes": [a for a in echecs(ident, maintenant) if a["quand"] >= float(params.get("depuis") or 0)]}
-        if chemin == "/conversations":
-            personnes = [{"personne": p, "messages": len(m), "derniere": m[-1]["quand"]} for p, m in fils(ident, maintenant).items()]
-            return {"conversations": sorted(personnes, key=lambda p: p["derniere"], reverse=True)[:limite]}
-        if chemin.startswith("/conversations/"):
-            personne = chemin.removeprefix("/conversations/")
-            return {"personne": personne, "messages": fils(ident, maintenant).get(personne, [])[-limite:]}
         raise PorteErreur(404, "introuvable")
+
+    async def releves(self, jours):
+        """Le relevé chiffré de l'annuaire (porte/src/releves.js, lireReleves) : un jour de PAR_JOUR par jour de la période,
+        les échecs de son jour ; un conteneur injoignable n'a jamais rangé de relevé (silencieux), une panne qui dure se voit."""
+        maintenant = time.time()
+        debut = int(maintenant // JOUR) * JOUR
+        clients = []
+        for c, v in self.annuaire.items():
+            if c not in PAR_JOUR:
+                clients.append({"id": c, "zone": "europe", "actif": 1, "version": v, "etat": None, "releve_le": None, "jours": {}})
+                continue
+            par_jour = {}
+            for k in range(jours):
+                d = debut - (jours - 1 - k) * JOUR
+                a = activite(c, maintenant - JOUR, maintenant)
+                a["tours_en_echec"] = sum(1 for e in echecs(c, maintenant) if e["genre"] == "tour_echec" and d <= e["quand"] < d + JOUR)
+                a["delais"] = {"lecture": {"nombre": a["tours"], "moyenne": 2.0, "mediane": 1.5, "p95": 4.0},
+                               "reponse": {"nombre": a["tours"], "moyenne": 7.5, "mediane": 6.0, "p95": 18.0}, "lentes": 0}
+                a["outils"] = {"rappeler": {"appels": 2, "echecs": 0, "duree": 0.4, "mesures": 2}} if a["tours"] else {}
+                par_jour[time.strftime("%Y-%m-%d", time.gmtime(d))] = {k2: a[k2] for k2 in
+                    ("tours", "tours_api", "tours_en_echec", "secours", "personnes", "modeles", "journal", "delais", "outils")}
+            etat = conteneur(c, maintenant)
+            en_cours = [{"quoi": p["quoi"], "quand": p["quand"]} for p in etat["alertes"] if not p["resolue"]]
+            clients.append({"id": c, "zone": "europe", "actif": 1, "version": v, "releve_le": (maintenant - 300) * 1000,
+                            "etat": {"demarre": etat["demarre"], "pannes_en_cours": en_cours}, "jours": par_jour})
+        return {"depuis": time.strftime("%Y-%m-%d", time.gmtime(debut - (jours - 1) * JOUR)), "jours": jours, "clients": clients,
+                "suivant": None}
 
     async def cles(self, ident, methode="GET", chemin="", corps=None):
         liste = self.gardees.setdefault(ident, [])
@@ -306,6 +315,13 @@ def peupler(t: TestClient, porte: PorteEssai) -> None:
         attendu(t.post("/atelier/clients", json=c))
         if c["client"]["id"] not in BROUILLONS:
             attendu(t.post(f"/atelier/clients/{c['client']['id']}/versions/1/activer", json={"forcer": True}))
+    for ident, pays in PAYS.items():
+        attendu(t.put(f"/atelier/clients/{ident}/pays", json={"pays": pays}))
+    attendu(t.put("/atelier/forfaits", json=FORFAITS))
+    debut = time.strftime("%Y-%m-01", time.gmtime())
+    for ident, abo in ABONNEMENTS.items():
+        attendu(t.put(f"/atelier/clients/{ident}/abonnement", json={"debut": debut, **abo}))
+    attendu(t.post("/atelier/clients/boulangerie-essai/recharges", json={"conversations": 100, "prix": 120}))
     attendu(t.post("/atelier/clients/agence-essai/versions", json={"changements": {"ton": "chaleureux et précis, vouvoie en français"}}))
     attendu(t.post("/atelier/clients/agence-essai/versions/2/activer", json={"forcer": True}))
     # Une mise en service interrompue après la porte : l'annuaire sert encore la version 1, d'où l'écart.

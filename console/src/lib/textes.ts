@@ -11,6 +11,9 @@ export const T = {
   motDePasse: "Mot de passe",
   seConnecter: "Se connecter",
   creerCompte: "Créer mon compte",
+  connexionEnCours: "Connexion en cours",
+  creationEnCours: "Création en cours",
+  connecte: "Connecté",
   avecGoogle: "Continuer avec Google",
   avecMicrosoft: "Continuer avec Microsoft",
   ou: "ou",
@@ -36,6 +39,7 @@ export const T = {
   desepingler: "Désépingler",
   compteEtReglages: "Compte et réglages",
   seDeconnecter: "Se déconnecter",
+  confirmerDeconnexion: "Se déconnecter ?",
   monCompte: "Mon compte", // nouveau
   retourSite: "Retour au site", // nouveau
   chercherPlaceholder: "Chercher un agent ou un groupe",

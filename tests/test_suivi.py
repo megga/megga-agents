@@ -355,6 +355,18 @@ def test_le_client_voit_son_activite_mais_pas_les_couts(atelier):
     assert t.porte.suivis[-1] == ("exemple", f"/conversations/{MOI}", {"limite": 5})
 
 
+def test_megga_ne_lit_jamais_une_conversation(atelier):
+    """MEGGA suit la santé et les chiffres, jamais ce qui se dit (20.11.2026) : refusé avant toute lecture de la porte."""
+    t = atelier
+    avant = len(t.porte.suivis)
+    for route in ("/atelier/clients/exemple/conversations", f"/atelier/clients/exemple/conversations/{MOI}"):
+        r = t.get(route, headers=MEGGA)
+        assert r.status_code == 403 and "ne se lisent que par lui" in r.text
+    assert len(t.porte.suivis) == avant
+    assert t.get("/atelier/clients/exemple/suivi", headers=MEGGA).status_code == 200  # les chiffres, oui
+    assert t.get("/atelier/clients/inconnu-x/conversations", headers=MEGGA).status_code == 404  # un client inconnu reste inconnu
+
+
 def test_entrees_du_suivi(atelier):
     t = atelier
     for q in ("jours=0", "jours=400", "jours=abc"):
@@ -491,3 +503,26 @@ def test_le_suivi_sur_les_deux_bases(moteur, tmp_path):
                 c.execute(supprimer(runs).where(runs.c.user_id == personne))
             schema = "ai." if moteur == "postgres" else ""
             c.execute(stockage.text(f"DELETE FROM {schema}agno_sessions WHERE user_id = :p"), {"p": personne})
+
+
+def test_le_journal_garde_les_delais_et_les_reponses_lentes(tmp_path):
+    from test_app import FauxAgent
+
+    from noyau.suivi import resumer
+    from noyau.whatsapp import Entrant
+
+    j = stockage.Journal(f"sqlite:///{tmp_path}/d.db")
+    c = Conversations(lire("clients/exemple.yaml"), FauxAgent(), FauxExpediteur(), attente=0.01, journal=j)
+    tour_complet(c, MOI, [Entrant(id="w1", de=MOI, texte="Bonjour", envoye=time.time(), genre="text")])
+    t = j.totaux(0)
+    assert t["delai_lecture"]["nombre"] == 1 and t["delai_reponse"]["nombre"] == 1 and "reponse_lente" not in t
+    # un message resté deux cents secondes : lu et répondu en retard, noté comme lent, sans texte ni numéro
+    tour_complet(c, MOI, [Entrant(id="w2", de=MOI, texte="Mon secret", envoye=time.time() - 200, genre="text")])
+    t = j.totaux(0)
+    assert t["delai_reponse"]["nombre"] == 2 and t["reponse_lente"]["nombre"] == 1 and t["delai_lecture"]["quantite"] >= 200
+    lentes = [a for a in j.alertes(0) if a["genre"] == "reponse_lente"]
+    assert len(lentes) == 1 and "lecture" in lentes[0]["detail"] and "secret" not in json.dumps(lentes) and MOI not in json.dumps(lentes)
+    d = resumer(lire("clients/exemple.yaml"), [], t, 0, 0)["delais"]
+    assert d["lentes"] == 1 and d["reponse"]["nombre"] == 2 and d["lecture"]["moyenne"] >= 100
+    assert resumer(lire("clients/exemple.yaml"), [], {}, 0, 0)["delais"] == {
+        "lecture": {"nombre": 0, "moyenne": None}, "reponse": {"nombre": 0, "moyenne": None}, "lentes": 0}

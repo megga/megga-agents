@@ -21,22 +21,32 @@
 //   PUT  /admin/clients/:id/config  la configuration mise en service par l'atelier : annuaire,
 //                                  puis redémarrage du conteneur du client (jeton ADMIN_TOKEN)
 //   GET  /admin/clients[?id=]      les clients de l'annuaire et l'état de leur conteneur
+//   GET  /admin/releves[?jours=&apres=]
+//                                  le relevé chiffré des clients, jour par jour (92 jours au plus), par pages de 50,
+//                                  lu dans l'annuaire seul (jeton ADMIN_TOKEN) ; chaque objet l'y range à son alarme
 //   GET  /admin/clients/:id/suivi[/conversations[/:personne]|/alertes]
 //                                  le suivi d'un client, lu dans son conteneur (jeton ADMIN_TOKEN)
 //   POST /admin/clients/:id/oublier          {personne} sa conversation repart à neuf, le fil reste (jeton ADMIN_TOKEN)
 //   GET  /admin/clients/:id/rappels?personne= ses rappels en attente ; POST …/rappels/annuler {personne, id}
+//   POST /admin/courriel           {a, sujet, texte} un courriel d'alerte de l'atelier, par Cloudflare Email Service
+//                                  (liaison COURRIEL, expéditeur COURRIEL_DE ; jeton ADMIN_TOKEN)
 //   PUT  /admin/atelier/secrets    la base de l'atelier (jeton ADMIN_TOKEN), écriture seule
 //   POST /admin/redemarrer         après un déploiement : chaque conteneur allumé finit ses tours,
 //                                  puis repart sur la nouvelle image (jeton ADMIN_TOKEN)
 //   *    /atelier/…                l'API de l'atelier, transmise telle quelle à son conteneur,
 //                                  qui vérifie lui-même les jetons (MEGGA ou client)
+//   POST /stripe                   les événements de Stripe (paiements, recharges) : signés, vérifiés par l'atelier
 //   POST /pilotage/…               le pilote d'une installation hors Cloudflare (chez le client, zone
 //                                  suisse) : requête signée de sa clé, transmise à l'atelier qui la vérifie
+//
+// Toutes les 5 minutes, son déclencheur fait évaluer les alertes par l'atelier (src/alertes.js).
 //
 // Elle ne garde aucun message et ne journalise ni texte ni numéro de personne.
 // Le routeur megga-whatsapp (megga-erp) et l'app « Alix FSP » ne passent pas ici.
 import { RefusAnnuaire, clientParId, clientParNumero, idValide, inscrire, lister } from "./annuaire.js";
 import { defiAbonnement, egal, numerosDe, signatureValide } from "./meta.js";
+import { envoyerCourriel, evaluerAlertes, evaluerRecharges } from "./alertes.js";
+import { JOURS_LUS_MAX, lireReleves } from "./releves.js";
 import { agentDe } from "./zones.js";
 
 export { AgentEtatsUnis, AgentEurope, Atelier } from "./agent.js";
@@ -55,6 +65,7 @@ const atelierDe = (env) => env.ATELIER?.jurisdiction("eu").getByName("megga") ??
 // Le pilotage : l'heure d'une requête signée, à 5 minutes près, et un relevé de 256 Kio au plus.
 const FENETRE_PILOTAGE_S = 300;
 const TAILLE_PILOTAGE = 256 * 1024;
+const TAILLE_STRIPE = 256 * 1024;
 
 export async function recevoir(requete, env, ctx) {
   const url = new URL(requete.url);
@@ -79,6 +90,10 @@ export async function recevoir(requete, env, ctx) {
   const admin = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(secrets|config)$/);
   if (admin && requete.method === "PUT") return admin[2] === "secrets" ? secrets(requete, env, admin[1]) : configuration(requete, env, admin[1]);
   if (url.pathname === "/admin/clients" && requete.method === "GET") return clients(requete, env, url.searchParams.get("id"));
+  if (url.pathname === "/admin/releves" && requete.method === "GET") return releves(requete, env, url.searchParams);
+  if (url.pathname === "/admin/courriel" && requete.method === "POST") {
+    return autorise(requete, env) ? envoyerCourriel(requete, env) : texte("refusé", 401);
+  }
   const entretien = url.pathname.match(/^\/admin\/clients\/([^/]+)\/(oublier|rappels|rappels\/annuler)$/);
   if (entretien) return entretenir(requete, env, entretien[1], entretien[2], url);
   const suivi = url.pathname.match(/^\/admin\/clients\/([^/]+)\/suivi(\/.*)?$/);
@@ -86,6 +101,7 @@ export async function recevoir(requete, env, ctx) {
   if (url.pathname === "/admin/atelier/secrets" && requete.method === "PUT") return secretsAtelier(requete, env);
   if (url.pathname === "/admin/redemarrer" && requete.method === "POST") return redemarrerTout(requete, env);
   if (url.pathname === "/pilotage" || url.pathname.startsWith("/pilotage/")) return pilote(requete, env);
+  if (url.pathname === "/stripe") return stripe(requete, env);
   if (url.pathname === "/atelier" || url.pathname.startsWith("/atelier/")) {
     // Sans jeton, rien ne réveille le conteneur de l'atelier ; c'est lui qui vérifie le jeton.
     if (!/^Bearer \S+$/.test(requete.headers.get("authorization") ?? "")) return texte("jeton attendu", 401);
@@ -320,6 +336,16 @@ async function clients(requete, env, seul) {
   return json({ clients: tous.map((c, i) => ({ ...c, conteneur: etats[i] })) });
 }
 
+/** Les relevés chiffrés de tous les clients (releves.js), lus dans l'annuaire seul : aucun conteneur n'est réveillé. */
+async function releves(requete, env, params) {
+  if (!autorise(requete, env)) return texte("refusé", 401);
+  const jours = params.get("jours") ?? "7";
+  const apres = params.get("apres") ?? "";
+  if (!/^[0-9]{1,2}$/.test(jours) || Number(jours) < 1 || Number(jours) > JOURS_LUS_MAX) return texte(`jours : de 1 à ${JOURS_LUS_MAX}`, 400);
+  if (apres && !idValide(apres)) return texte("apres : un identifiant de client", 400);
+  return json(await lireReleves(env.ANNUAIRE, Number(jours), apres));
+}
+
 /** Le suivi d'un client : la porte ne lit rien elle-même, elle transmet à son conteneur et rend la réponse. */
 /**
  * L'entretien d'une conversation (jeton ADMIN_TOKEN, audit du 17.11.2026) : POST …/oublier {personne}, GET
@@ -423,4 +449,29 @@ async function secretsAtelier(requete, env) {
   }
 }
 
-export default { fetch: recevoir };
+/** Toutes les 5 minutes (triggers.crons) : l'évaluation des alertes, puis les recharges sous le seuil (Stripe). */
+export function declencher(_controle, env, ctx) {
+  const atelier = atelierDe(env);
+  ctx.waitUntil(evaluerAlertes(env, atelier));
+  ctx.waitUntil(evaluerRecharges(env, atelier));
+}
+
+/** Un événement de Stripe bien formé : une signature (t=…,v1=…) et une longueur annoncée, bornée. L'atelier la vérifie. */
+export function stripeBienForme(entetes) {
+  const longueur = entetes.get("content-length") ?? "";
+  return (
+    /^t=[0-9]{1,12},(.*,)?v1=[0-9a-f]{64}(,.*)?$/.test(entetes.get("stripe-signature") ?? "") &&
+    /^[0-9]{1,9}$/.test(longueur) &&
+    Number(longueur) <= TAILLE_STRIPE
+  );
+}
+
+/** Les événements de Stripe : sans signature bien formée, rien ne réveille l'atelier, qui vérifie la signature lui-même. */
+async function stripe(requete, env) {
+  if (requete.method !== "POST") return texte("méthode", 405);
+  if (!stripeBienForme(requete.headers)) return texte("événement signé attendu", 400);
+  const atelier = atelierDe(env);
+  return atelier ? atelier.fetch(requete) : texte("atelier absent", 503);
+}
+
+export default { fetch: recevoir, scheduled: declencher };

@@ -58,7 +58,12 @@
   "version_metadata": { "binding": "VERSION_PORTE" },
   // L'adresse publique de la porte : l'atelier l'appelle pour mettre une configuration en service.
   // API_HOTE : l'hôte de l'entrée par API, qui ne sert rien d'autre.
-  "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev", "API_HOTE": "api.megga.ai" },
+  // COURRIEL_DE : l'expéditeur des courriels d'alerte, sur un sous-domaine à part, ouvert à Email Sending
+  // (wrangler email sending enable notifications.megga.ai) : le courrier de megga.ai n'est pas touché.
+  "vars": { "PORTE_URL": "https://megga-agents.api-963.workers.dev", "API_HOTE": "api.megga.ai", "COURRIEL_DE": "alertes@notifications.megga.ai" },
+  // Les alertes envoyées (20.11.2026) : l'évaluation toutes les 5 minutes, et les courriels par Email Service.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "send_email": [{ "name": "COURRIEL" }],
   // L'annuaire des clients (D1, juridiction UE, créé le 15.11.2026).
   "d1_databases": [
     { "binding": "ANNUAIRE", "database_name": "megga-agents-annuaire", "database_id": "637715e3-6675-4310-bbdd-27a4f3b5d8c2", "migrations_dir": "migrations" }

@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer, refusDe } from "@/components/admin/envoyer";
 import { ErreursChamps } from "@/components/admin/erreurs";
 import { cadre, champ, etiquette, titreBloc, zoneTexte } from "@/components/admin/formulaire";
@@ -27,6 +28,7 @@ export function Preparer({ id, externe, gabarits, champsSimples, base }: {
   /** La base du brouillon et sa configuration ; enService : c'est la version en service (sinon la dernière). */
   base: { numero: number; config: Record<string, unknown>; enService: boolean } | null;
 }) {
+  const { avant, fenetre } = useDemande();
   const router = useRouter();
   const modeles = !externe && gabarits.length > 0;
   const [mode, setMode] = useState<"json" | "modele">("json");
@@ -94,7 +96,8 @@ export function Preparer({ id, externe, gabarits, champsSimples, base }: {
 
   const choisi = gabarits.find((g) => g.id === gabarit);
   return (
-    <form noValidate onSubmit={soumettre} className={cadre}>
+    <form noValidate onSubmit={avant(TA.confirmerBrouillon, TA.creerBrouillon, soumettre)} className={cadre}>
+      {fenetre}
       <h2 className={titreBloc}>{TA.preparerBrouillon}</h2>
       {modeles && (
         <div role="radiogroup" className="flex flex-wrap gap-x-4 gap-y-1.5 text-[14px]">

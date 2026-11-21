@@ -1,6 +1,7 @@
 import "server-only";
 import { Refus } from "@/lib/agents";
 import { estChamp, type ChampErreur } from "./champs";
+import type { Releves } from "./releves";
 import { TA } from "./textes";
 
 // Le client de l'atelier, côté serveur seulement : il détient le jeton de MEGGA, que le navigateur ne voit jamais.
@@ -32,6 +33,46 @@ export type ClientAtelier = {
   ecart?: boolean | null;
   annuaire?: { version?: number; conteneur?: { demarre: boolean } } | null;
   installation?: Record<string, unknown>;
+  /** Le pays du client (code ISO à deux lettres), réglé dans l'atelier ; absent d'un atelier d'avant le 20.11.2026. */
+  pays?: string | null;
+};
+/** Les forfaits et les clients payants (atelier/forfaits.py, 20.11.2026) : l'unité vendue est la conversation. */
+export type Forfait = {
+  id: string;
+  nom: string;
+  prix_mensuel: number;
+  conversations: number;
+  remise_annuelle: number;
+  recharge: { conversations: number; prix: number } | null;
+};
+export type CatalogueForfaits = { devise: string; multiplicateur: number; forfaits: Forfait[]; retour_paiement?: string };
+export type StatutAbonnement = "essai" | "actif" | "retard" | "parti";
+export type Abonnement = { forfait: string; rythme: "mensuel" | "annuel"; statut: StatutAbonnement; debut: string; seuil_recharge: number | null };
+export type LignePayant = {
+  client: string;
+  entreprise: string | null;
+  abonnement: Abonnement;
+  forfait_inconnu: boolean;
+  mois: { debut: string };
+  enveloppe: number;
+  consommees: number;
+  reste: number;
+  proche: boolean;
+  recharges: { nombre: number; conversations: number; prix: number };
+  revenu: number;
+  cout: number;
+  marge: number | null;
+  /** Relié à Stripe (un abonnement payé par carte) ; une recharge prélevée attend sa réponse. Absent avant Stripe. */
+  stripe?: { relie: boolean; recharge_en_cours: boolean };
+};
+export type TotauxPayants = Record<StatutAbonnement, number> & { revenu: number; cout: number; marge: number | null; proches: number };
+export type VuePayants = {
+  devise: string;
+  devise_couts: string | null;
+  catalogue: CatalogueForfaits;
+  clients: LignePayant[];
+  totaux: TotauxPayants;
+  releve_lisible: boolean;
 };
 export type Alerte = { quand: number | null; genre: string; detail: string; resolue?: number | null }; // quand : inconnu d'une installation sans relevé
 export type Activite = {
@@ -62,9 +103,39 @@ export type Tarifs = {
   voix_par_1000_caracteres: number | null;
   par_vocal_entendu: number | null;
 };
+/** Une règle des alertes envoyées (atelier/alertes.py, Regle). */
+export type RegleAlerte = {
+  id: string;
+  nom: string;
+  mesure: string;
+  comparaison: ">" | ">=" | "<" | "<=";
+  alerte: number;
+  avertissement: number | null;
+  fenetre_jours: number;
+  sans_donnees: "ok" | "garder" | "signaler";
+  clients: string[];
+  destinations: string[];
+  rappel_heures: number;
+  en_pause: boolean;
+};
+export type EtatAlerte = {
+  regle: string;
+  client: string;
+  etat: "ok" | "avertissement" | "alerte" | "sans_donnees";
+  depuis: number;
+  valeur: number | null;
+  envoye_le: number | null;
+};
+export type Destination = { id: string; genre: "courriel" | "slack" | "web"; adresse: string };
+export type AlertesEnvoyees = {
+  mesures: Record<string, { libelle: string; unite: string }>;
+  fenetre_max: number;
+  proposees: boolean;
+  regles: RegleAlerte[];
+  destinations: Destination[];
+  etats: EtatAlerte[];
+};
 export type Gabarit = { id: string; titre: string; description: string; metier: string; reglages: Record<string, unknown> };
-export type Personne = { personne: string; messages: number; derniere: number | string | null };
-export type Message = { quand: number | string; sens: "recu" | "envoye"; genre: string; texte: string };
 export type Corps = Record<string, unknown>;
 
 export function atelierBranche(): boolean {
@@ -189,6 +260,7 @@ export const atelier = {
   essai: (id: string, n: number, corps: Corps) =>
     ecrire<{ version: number; conversation: string; reponse: string }>(`${v(id, n)}/essai`, "POST", corps, ATTENTE_ESSAI_MS),
   activer: (id: string, n: number, corps: Corps) => ecrire<Corps>(`${v(id, n)}/activer`, "POST", corps, ATTENTE_ACTIVER_MS),
+  reglerPays: (id: string, pays: string | null) => ecrire<{ client: string; pays: string | null }>(`${c(id)}/pays`, "PUT", { pays }),
   reprise: (id: string, corps: Corps) => ecrire<{ client: string; gere_par_megga: boolean }>(`${c(id)}/reprise`, "POST", corps),
   creerJeton: (id: string) => ecrire<{ client: string; jeton: string }>(`${c(id)}/jetons`, "POST"),
   retirerJetons: (id: string) => ecrire<{ client: string; retires: number }>(`${c(id)}/jetons`, "DELETE"),
@@ -198,16 +270,27 @@ export const atelier = {
   retirerCle: (id: string, cle: string) => ecrire<Corps>(`${c(id)}/cles/${encodeURIComponent(cle)}`, "DELETE"),
   suivi: (id: string, jours: Jours) => lire<Suivi>(`${c(id)}/suivi?jours=${jours}`),
   alertes: (id: string, jours: Jours) => lire<{ periode_jours: number; alertes: Alerte[] }>(`${c(id)}/alertes?jours=${jours}`),
-  conversations: (id: string) => lire<{ conversations: Personne[] }>(`${c(id)}/conversations`),
-  echanges: (id: string, personne: string) =>
-    lire<{ personne: string; messages: Message[] }>(`${c(id)}/conversations/${encodeURIComponent(personne)}`),
   installations: () => lire<{ installations: (Corps & { client: string })[]; cle_pilotage: boolean }>("/installations"),
   installation: (id: string) => lire<Corps>(`${c(id)}/installation`),
   enregistrerInstallation: (id: string, corps: Corps) => ecrire<{ client: string; cle: string }>(`${c(id)}/installation`, "PUT", corps),
   revoquerInstallation: (id: string) => ecrire<{ client: string; revoquee: boolean }>(`${c(id)}/installation`, "DELETE"),
   proposerImage: (id: string, corps: Corps) => ecrire<Corps>(`${c(id)}/installation/image`, "POST", corps),
+  releves: (jours: Jours) => lire<Releves>(`/releves?jours=${jours}`),
   tarifs: () => lire<Tarifs>("/tarifs"),
   reglerTarifs: (corps: Corps) => ecrire<Tarifs>("/tarifs", "PUT", corps),
+  alertesEnvoyees: () => lire<AlertesEnvoyees>("/alertes"),
+  reglerAlertes: (regles: unknown[]) => ecrire<{ regles: RegleAlerte[] }>("/alertes/regles", "PUT", regles),
+  ajouterDestination: (corps: Corps) => ecrire<Destination & { secret?: string }>("/alertes/destinations", "POST", corps),
+  retirerDestination: (id: string) => ecrire<{ retiree: string }>(`/alertes/destinations/${encodeURIComponent(id)}`, "DELETE"),
+  essayerDestination: (id: string) => ecrire<{ envoye: boolean }>(`/alertes/destinations/${encodeURIComponent(id)}/essai`, "POST"),
+  forfaits: () => lire<CatalogueForfaits>("/forfaits"),
+  reglerForfaits: (corps: Corps) => ecrire<CatalogueForfaits>("/forfaits", "PUT", corps),
+  payants: () => lire<VuePayants>("/abonnements"),
+  reglerAbonnement: (id: string, corps: Corps) => ecrire<Abonnement & { client: string }>(`${c(id)}/abonnement`, "PUT", corps),
+  retirerAbonnement: (id: string) => ecrire<{ client: string; retire: boolean }>(`${c(id)}/abonnement`, "DELETE"),
+  lienPaiement: (id: string) => ecrire<{ client: string; url: string }>(`${c(id)}/stripe/lien`, "POST"),
+  portailPaiement: (id: string) => ecrire<{ client: string; url: string }>(`${c(id)}/stripe/portail`, "POST"),
+  recharger: (id: string, corps: Corps) => ecrire<{ client: string; conversations: number; prix: number }>(`${c(id)}/recharges`, "POST", corps),
   creerClient: (corps: Corps) => ecrire<Version & { client: string }>("/clients", "POST", corps),
 };
 
@@ -220,5 +303,5 @@ export function ouRefus<T>(lecture: Promise<T>): Promise<T | RefusChamps> {
   });
 }
 
-/** Ce que le suivi lit (suivi.ts, lireTout) : remplaçable dans les essais. */
+/** Ce que le suivi lit (suivi.ts, lireSuivis et lireAlertes) : remplaçable dans les essais. */
 export type Lecteur = Pick<typeof atelier, "clients" | "suivi" | "alertes">;

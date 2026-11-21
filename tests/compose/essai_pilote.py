@@ -221,7 +221,7 @@ def parcours(essai: Essai) -> None:
     code, s = essai.attendre("le suivi est là", lambda: (lambda r: r if r[0] == 200 else None)(
         essai.atelier("GET", f"/atelier/clients/{CLIENT}/suivi?jours=7")))
     assert "activite" in s and s["installation"]["pilotage"] == "complet", s
-    assert essai.atelier("GET", f"/atelier/clients/{CLIENT}/conversations")[0] == 409
+    assert essai.atelier("GET", f"/atelier/clients/{CLIENT}/conversations")[0] == 403  # MEGGA ne lit jamais une conversation
 
     print("Le client revient à son fichier")
     assert "client.yaml" in essai.pilote("revenir")

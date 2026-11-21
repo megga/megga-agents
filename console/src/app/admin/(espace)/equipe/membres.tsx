@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Confirmation } from "@/components/admin/confirmation";
+import { useDemande } from "@/components/admin/demande";
 import { envoyer } from "@/components/admin/envoyer";
 import { ErreursChamps } from "@/components/admin/erreurs";
 import { champ, ChampsAcces, etiquette, ExterneGarde, perimetreDe, PerimetreVu, tousPossible, type RoleChoix, type Vu } from "@/components/admin/formulaire";
@@ -99,6 +100,7 @@ export function Membres({ membres, roles, tousPermis }: { membres: MembreVu[]; r
 
 function FormMembre({ membre: m, roles, tousPermis, onFini }: { membre: MembreVu; roles: RoleChoix[]; tousPermis: boolean; onFini: () => void }) {
   const [role, setRole] = useState(m.role);
+  const { avant, fenetre } = useDemande();
   const [mode, setMode] = useState<"tous" | "liste">(m.perimetre === "tous" ? "tous" : "liste");
   const [liste, setListe] = useState(m.perimetre === "tous" ? "" : m.perimetre.clients.join(", "));
   const [fin, setFin] = useState(m.finAcces ?? "");
@@ -122,7 +124,8 @@ function FormMembre({ membre: m, roles, tousPermis, onFini }: { membre: MembreVu
   }
 
   return (
-    <form onSubmit={enregistrer} className="flex flex-col gap-3.5">
+    <form onSubmit={avant(TA.confirmerMembre(m.nom || m.courriel), TA.enregistrer, enregistrer)} className="flex flex-col gap-3.5">
+      {fenetre}
       <DialogTitle className="text-[17px] font-extrabold">{TA.titreModifier(m.nom || m.courriel)}</DialogTitle>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="membre-role" className={etiquette}>{TA.role}</Label>

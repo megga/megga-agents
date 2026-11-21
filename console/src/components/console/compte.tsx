@@ -3,6 +3,7 @@
 import { Menu as MenuPrimitive } from "@base-ui/react/menu";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { useDemande } from "@/components/admin/demande";
 import { authClient } from "@/lib/auth-client";
 import { T } from "@/lib/textes";
 import {
@@ -31,6 +32,7 @@ export function Compte({ entreprise, lien, image, monCompte }: {
   monCompte?: string;
 }) {
   const router = useRouter();
+  const { demander, fenetre } = useDemande();
   const [theme, setTheme] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     try {
@@ -103,11 +105,12 @@ export function Compte({ entreprise, lien, image, monCompte }: {
               {T.monCompte}
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onClick={sortir} className={entree}>
+          <DropdownMenuItem onClick={() => demander(T.confirmerDeconnexion, T.seDeconnecter, () => void sortir())} className={entree}>
             {T.seDeconnecter}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      {fenetre}
     </div>
   );
 }
