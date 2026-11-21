@@ -114,13 +114,13 @@ def chercher(recherche: str, zone: str | None) -> list[dict]:
 
 
 def outils(lire: Callable[[], dict], ecrire: Callable[[dict], None], zone: str | None,
-           preparer: Callable[[dict], dict]) -> list[Callable]:
-    """Les outils de l'agent d'accueil, sur l'état d'un client (`lire`, `ecrire`). `preparer` écrit le brouillon."""
+           preparer: Callable[[dict], dict], verrou: threading.Lock) -> list[Callable]:
+    """Les outils de l'agent d'accueil, sur l'état d'un client (`lire`, `ecrire`). `preparer` écrit le brouillon.
+    `verrou` : celui du client, le même pour tous ses tours (deux onglets, MEGGA et le client en même temps)."""
 
     def repondre(d: dict) -> str:
         return json.dumps(d, ensure_ascii=False)
 
-    verrou = threading.Lock()  # un même tour peut appeler plusieurs outils à la fois : jamais deux écritures mêlées
 
     def changer(f: Callable[[dict], object]) -> dict:
         with verrou:

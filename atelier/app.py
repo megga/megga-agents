@@ -440,6 +440,9 @@ def creer(env: dict[str, str] | None = None, db=None, porte=None, principal_essa
         """Hors Cloudflare (chez le client, zone suisse) : la version est mise en service dans l'atelier, puis
         un ordre signé part à l'installation à son prochain relevé. Une version déjà en service peut être
         renvoyée si l'installation ne la sert pas (refusée, en échec, expirée)."""
+        if conf.presentation:
+            # Une image d'avant ce champ refuserait toute la configuration (Config refuse les champs inconnus).
+            raise Refus(409, "la présentation de l'entreprise n'est pas encore servie hors Cloudflare : retirez-la de cette version")
         if canal.cle is None:
             raise Refus(503, "clé de pilotage absente : l'atelier ne peut pas signer d'ordre (scripts/pilotage.py poser)")
         if conf.whatsapp is None:

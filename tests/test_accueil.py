@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from atelier import accueil, regles
 from atelier.app import creer
-from noyau.agent import consignes
+from noyau.agent import PRESENTATION, consignes
 from noyau.config import Config
 from test_lot5 import ADMIN, MEGGA, FaussePorte, jeton_client
 
@@ -93,6 +93,7 @@ def test_une_conversation_ecrit_l_agent_du_client(atelier):
     ]
     flux = tour(t, "Je tiens une boulangerie au bord du lac.")
     assert "RUN_STARTED" in flux and "Qu'est-ce que vos clients" in flux
+    assert '"RAW"' not in flux and "scenario" not in flux  # rien d'Agno ne sort : ni le modèle, ni ses identifiants
     flux = tour(t, "Surtout des commandes de gâteaux, et un ton chaleureux.")
     assert "Il vous convient" in flux
     flux = tour(t, "Oui, et elle s'appellera Rose.")
@@ -108,7 +109,10 @@ def test_une_conversation_ecrit_l_agent_du_client(atelier):
     assert config["presentation"] == etat["presentation"]
     assert config["whatsapp"]["numero_id"] == IDENTITE["numero_id"]  # ce que MEGGA règle ne bouge pas
     # La présentation part dans les consignes de l'agent du client, après celles du modèle.
-    assert any(c.startswith("About the business, in its own words:\nBusiness: Boulangerie") for c in consignes(Config.model_validate(config)))
+    textes = consignes(Config.model_validate(config))
+    i = next(i for i, c in enumerate(textes) if c.startswith(PRESENTATION))
+    assert textes[i].endswith(etat["presentation"]) and "never" in textes[i]
+    assert textes.index(config["consignes"]) > i  # les consignes de MEGGA viennent après, et gardent le dernier mot
     # Le client essaie et met en service le brouillon, comme tout autre.
     assert t.post(f"/atelier/clients/{IDENTITE['id']}/versions/2/essai", headers=t.client, json={"message": "Bonjour"}).status_code == 200
     assert t.post(f"/atelier/clients/{IDENTITE['id']}/versions/2/activer", headers=t.client).status_code == 200
@@ -163,3 +167,60 @@ def test_le_client_regle_lui_meme_sa_presentation(atelier):
     r = t.post(f"/atelier/clients/{IDENTITE['id']}/versions", headers=t.client,
                json={"changements": {"presentation": "un tiret \u2014 long"}})
     assert r.status_code == 422 and "presentation" in r.text
+
+
+def test_une_presentation_vide_n_est_pas_ecrite():
+    """Une image d'avant ce champ lit toujours une configuration sans présentation (Config refuse les champs inconnus)."""
+    from test_lot5 import conf_exemple
+
+    conf = Config.model_validate(conf_exemple())
+    assert "presentation" not in conf.model_dump(mode="json")
+    avec = Config.model_validate({**conf_exemple(), "presentation": "Business: boulangerie"})
+    assert avec.model_dump(mode="json")["presentation"] == "Business: boulangerie"
+    assert Config.model_validate(conf.model_dump(mode="json")) == conf
+
+
+def test_seul_le_texte_du_tour_passe(atelier):
+    """Ni image, ni document, ni adresse (Agno irait les chercher depuis l'atelier), ni outils ou contexte de la console."""
+    t = atelier
+    t.modele.etapes = ["Bien noté \u2014 merci \u00b7 à bientôt"]
+    corps = {"threadId": "f", "runId": "r", "state": {"x": 1}, "context": [{"description": "d", "value": "v"}],
+             "tools": [{"name": "piege", "description": "d", "parameters": {}}], "forwardedProps": {},
+             "messages": [{"id": "1", "role": "user", "content": [
+                 {"type": "text", "text": "Voici ma carte"},
+                 {"type": "document", "source": {"type": "url", "value": "http://169.254.169.254/x", "mimeType": "text/plain"}}]}]}
+    r = t.post(f"/atelier/clients/{IDENTITE['id']}/accueil", headers=t.client, json=corps)
+    assert r.status_code == 200, r.text
+    vus = t.modele.vus[-1]
+    assert not any("169.254" in str(getattr(m, "content", "")) or getattr(m, "files", None) or getattr(m, "images", None)
+                   for m in vus)
+    assert "Voici ma carte" in str([getattr(m, "content", "") for m in vus])
+    assert "piege" not in r.text and "\u2014" not in r.text and "\\u2014" not in r.text and "Bien not" in r.text
+    for mauvais in ({"threadId": "f", "runId": "r", "messages": [{"id": "1", "role": "user", "content": "x" * 4001}]},
+                    {"threadId": "f", "runId": "r", "messages": []}):
+        assert t.post(f"/atelier/clients/{IDENTITE['id']}/accueil", headers=t.client, json=mauvais).status_code == 400
+
+
+def test_une_panne_du_modele_ne_dit_rien_de_technique(atelier):
+    t = atelier
+
+    def panne(*a, **k):
+        raise RuntimeError("http://10.0.0.7:5432 refused")
+
+    t.modele.invoke = t.modele.ainvoke = panne
+    flux = tour(t, "Bonjour")
+    assert "RUN_ERROR" in flux and "10.0.0.7" not in flux and "Un souci est survenu" in flux
+
+
+def test_pas_de_presentation_hors_cloudflare(atelier):
+    """Une installation chez le client peut servir une image d'avant ce champ : l'accueil ne la prépare pas, et une version
+    qui en porte une n'y est pas mise en service."""
+    from test_lot5 import conf_exemple
+
+    t = atelier
+    conf = {**conf_exemple(id="cabinet-geneve", entreprise="Cabinet Genève", zone="suisse"), "presentation": "Business: x"}
+    r = t.post("/atelier/clients", headers=MEGGA, json={"config": conf})
+    assert r.status_code == 201, r.text
+    r = t.post("/atelier/clients/cabinet-geneve/versions/1/activer", headers=MEGGA, json={"forcer": True})
+    assert r.status_code == 409 and "hors Cloudflare" in r.text, r.text
+

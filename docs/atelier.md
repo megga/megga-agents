@@ -89,6 +89,8 @@ Le client ne remplit plus d'écrans : il raconte son entreprise à l'agent d'acc
 
 Il n'écrit rien d'autre : ni les consignes de MEGGA, ni le numéro, ni les modèles de langue. La présentation est aussi un réglage simple du client (`CHAMPS_CLIENT`). Ses notes sont gardées dans l'atelier (`megga_reglages`), sans conversation ; la conversation est une session d'Agno, dont le fil est toujours préfixé par l'identifiant du client. 200 messages par jour et par client au plus. Le modèle : Claude Sonnet 5.5.
 
+De la console, seul le texte du dernier message passe (4000 caractères au plus) : ni image, ni document, ni adresse, ni outils, contexte ou état. Une erreur technique reste dans le journal de l'atelier ; le client lit « Un souci est survenu ». La présentation est relue comme des faits, avant les consignes de MEGGA, qui gardent le dernier mot. Hors Cloudflare (installations chez le client), l'accueil ne prépare rien et une version avec présentation n'est pas mise en service, tant qu'aucune image ne la sert là-bas.
+
 ## L'entrée par API (lot 6.6)
 
 Un logiciel du client parle à son agent sans WhatsApp, à l'adresse `https://api.megga.ai/api/<client>/messages` (`docs/api.md`, pour le développeur). Les clés se créent ici pour un client servi par la porte : l'atelier tire la clé, la rend une seule fois, et n'en envoie que l'empreinte (SHA-256) au conteneur du client, par la porte. L'empreinte est gardée dans la base du client (`megga_cles_api`), jamais dans l'atelier : une clé se vérifie là où elle sert, se retire sans redémarrage, et suit le client s'il déménage. Hors Cloudflare, l'atelier refuse (`409`) : les clés se créent sur l'installation (`python -m noyau.cles`), rien n'entrant chez le client.
