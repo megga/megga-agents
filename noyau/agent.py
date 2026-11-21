@@ -32,10 +32,12 @@ TOOL_CALL_LIMIT = 25  # appels d'outils par tour, au plus (relecture du 16.11.20
 
 
 def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool = False, effort: str | None = None,
-           temperature: float | None = None) -> Model:
+           temperature: float | None = None, cache: bool = False) -> Model:
     """Un modèle d'après son nom : « claude-… » chez Anthropic, « deepseek-… » chez DeepSeek. Pour Claude : `jetons` par
     réponse, la réflexion adaptative et son effort (Modeles.jetons, reflexion, effort ; parité D8). `temperature` : celle
-    de la réécriture pour l'oral (Modeles.temperature_oral) ; jamais avec la réflexion, que Claude refuse."""
+    de la réécriture pour l'oral (Modeles.temperature_oral) ; jamais avec la réflexion, que Claude refuse. `cache` : seulement
+    pour l'agent principal, dont un tour fait plusieurs appels ; un appel unique (l'oral, le fil, le juge) écrirait le cache
+    sans jamais le relire, 25 % plus cher."""
     if nom.startswith("claude-"):
         from agno.models.anthropic import Claude
 
@@ -48,7 +50,7 @@ def modele(nom: str, cles: dict[str, str], jetons: int = 4096, reflexion: bool =
                       thinking={"type": "adaptive"} if reflexion else None,
                       output_config={"effort": effort} if effort else None,
                       temperature=None if reflexion else temperature,
-                      cache_tools=True, request_params={"cache_control": CACHE})
+                      cache_tools=cache, request_params={"cache_control": CACHE} if cache else None)
     if nom.startswith("deepseek-"):
         from agno.models.deepseek import DeepSeek
 
@@ -109,7 +111,7 @@ def construire(config: Config, db, cles: dict[str, str], principal: Model | None
     """`principal` et `secours` remplacent les modèles de la configuration (essais) ; `outils` : ceux du noyau et des packs ;
     `contexte` : le Contexte de chaque tour (instructions_du_tour)."""
     m = config.modeles
-    principal = principal or modele(m.principal, cles, m.jetons, m.reflexion, m.effort)
+    principal = principal or modele(m.principal, cles, m.jetons, m.reflexion, m.effort, cache=True)
     if secours is None and config.modeles.secours:
         secours = modele(config.modeles.secours, cles)
     return Agent(

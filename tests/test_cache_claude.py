@@ -26,7 +26,7 @@ def test_claude_marque_le_cache():
         envoyes.append(json.loads(r.content))
         return httpx.Response(200, json=REPONSE)
 
-    m = modele("claude-sonnet-5-5", {"ANTHROPIC_API_KEY": "cle-d-essai"}, reflexion=True, effort="medium")
+    m = modele("claude-sonnet-5-5", {"ANTHROPIC_API_KEY": "cle-d-essai"}, reflexion=True, effort="medium", cache=True)
     m.http_client = httpx.AsyncClient(transport=httpx.MockTransport(repondre))
     sortie = asyncio.run(Agent(model=m, tools=[meteo], instructions=["Réponds."], telemetry=False).arun("Bonjour"))
     corps = envoyes[0]
@@ -34,6 +34,16 @@ def test_claude_marque_le_cache():
     assert corps["tools"][-1]["cache_control"] == {"type": "ephemeral"}  # les outils, stables d'un tour à l'autre
     assert corps["thinking"] == {"type": "adaptive"} and corps["output_config"] == {"effort": "medium"}  # rien d'autre ne change
     assert sortie.metrics.cache_read_tokens == 8  # lu par Agno, donc par le relevé
+
+
+def test_seul_l_agent_principal_marque_le_cache():
+    from noyau.agent import construire
+    from test_lot3 import conf
+
+    assert construire(conf(), None, {"ANTHROPIC_API_KEY": "cle-d-essai"}).model.request_params == {"cache_control": {"type": "ephemeral"}}
+    # Un appel unique (l'oral, le fil, le juge) : aucune marque, il ne relirait jamais le cache.
+    seul = modele("claude-haiku-5-5", {"ANTHROPIC_API_KEY": "cle-d-essai"})
+    assert not seul.request_params and not seul.cache_tools
 
 
 def test_deepseek_sans_marque():
