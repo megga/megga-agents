@@ -56,6 +56,8 @@ class Catalogue(Strict):
     # Le prix visé, en multiple de notre coût : il ne fixe aucun prix, il sert de repère à l'écran.
     multiplicateur: float = Field(default=3, gt=0, le=50)
     forfaits: list[Forfait] = Field(default=[], max_length=20)
+    # Où revient le client après le paiement ou le portail de Stripe.
+    retour_paiement: str = Field(default="https://megga.ai", pattern=r"^https://[^\s]{4,300}$")
 
     @model_validator(mode="after")
     def ids_uniques(self):
@@ -127,6 +129,8 @@ class Abonnements:
             Column("conversations", Integer, nullable=False),
             Column("prix", Float, nullable=False),
             Column("source", String(20), nullable=False),
+            # La facture Stripe d'une recharge prélevée : un événement rejoué ne la compte pas deux fois.
+            Column("reference", String(100), nullable=True),
         )
 
     def tous(self) -> dict[str, Abonnement]:
@@ -146,18 +150,54 @@ class Abonnements:
         with self._e.begin() as c:
             return c.execute(delete(self._a).where(self._a.c.client == client)).rowcount > 0
 
-    def recharger(self, client: str, conversations: int, prix: float, source: str, quand: float | None = None) -> dict:
-        r = {"client": client, "quand": quand or time.time(), "conversations": conversations, "prix": prix, "source": source}
+    def recharger(self, client: str, conversations: int, prix: float, source: str, quand: float | None = None,
+                  reference: str | None = None) -> dict | None:
+        """Une recharge ; None si sa référence (une facture Stripe) est déjà comptée."""
+        r = {"client": client, "quand": quand or time.time(), "conversations": conversations, "prix": prix, "source": source,
+             "reference": reference}
         with self._e.begin() as c:
+            if reference and c.execute(select(self._r.c.id).where(self._r.c.reference == reference)).first():
+                return None
             c.execute(insert(self._r).values(**r))
         return r
+
+    def stripe(self, client: str) -> dict:
+        """Ce que l'atelier garde de Stripe pour ce client : client, abonnement, recharge en cours, recharges du mois."""
+        with self._e.connect() as c:
+            v = c.execute(select(self._a.c.stripe).where(self._a.c.client == client)).scalar()
+        return json.loads(v) if v else {}
+
+    def tous_stripe(self) -> dict[str, dict]:
+        with self._e.connect() as c:
+            lignes = c.execute(select(self._a.c.client, self._a.c.stripe).where(self._a.c.stripe.is_not(None))).all()
+        return {l.client: json.loads(l.stripe) or {} for l in lignes}
+
+    def ecrire_stripe(self, client: str, valeur: dict) -> None:
+        t = self._a
+        with self._e.begin() as c:
+            c.execute(update(t).where(t.c.client == client).values(stripe=json.dumps(valeur), maj_le=time.time()))
+
+    def par_client_stripe(self, client_stripe: str) -> str | None:
+        """Notre client d'après l'identifiant de son client chez Stripe."""
+        with self._e.connect() as c:
+            for ligne in c.execute(select(self._a.c.client, self._a.c.stripe).where(self._a.c.stripe.is_not(None))):
+                if (json.loads(ligne.stripe) or {}).get("client") == client_stripe:
+                    return ligne.client
+        return None
+
+    def statut(self, client: str, statut: str) -> None:
+        """Le statut d'un abonnement, d'après Stripe (payé, en retard, résilié)."""
+        a = self.tous().get(client)
+        if a is not None and a.statut != statut:
+            self.regler(client, a.model_copy(update={"statut": statut}))
 
     def recharges(self, depuis: float) -> list[dict]:
         with self._e.connect() as c:
             return [dict(l) for l in c.execute(select(self._r).where(self._r.c.quand >= depuis).order_by(self._r.c.quand)).mappings()]
 
 
-def vue(catalogue: Catalogue, abonnements: dict[str, Abonnement], recharges: list[dict], releve: dict, aujourdhui: date) -> dict:
+def vue(catalogue: Catalogue, abonnements: dict[str, Abonnement], recharges: list[dict], releve: dict, aujourdhui: date,
+        stripe: dict[str, dict] | None = None) -> dict:
     """Les clients payants : pour chacun, son mois en cours (enveloppe, conversations, revenu, coût, marge) ; puis les totaux.
 
     `releve` : le relevé rassemblé (atelier/releves.py) sur au moins 31 jours ; `recharges` : celles des 31 derniers jours.
@@ -198,6 +238,9 @@ def vue(catalogue: Catalogue, abonnements: dict[str, Abonnement], recharges: lis
             "revenu": revenu,
             "cout": cout,
             "marge": round(revenu - cout, 2) if meme_devise else None,
+            # Relié à Stripe (un abonnement payé par carte) ; une recharge prélevée attend la réponse de la banque.
+            "stripe": {"relie": bool((stripe or {}).get(client, {}).get("abonnement")),
+                       "recharge_en_cours": bool((stripe or {}).get(client, {}).get("recharge_en_cours"))},
         })
     compte = {s: sum(1 for l in lignes if l["abonnement"]["statut"] == s) for s in STATUTS}
     revenu = round(sum(l["revenu"] for l in lignes), 2)

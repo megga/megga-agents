@@ -50,3 +50,18 @@ export async function evaluerAlertes(env, atelier) {
     return 0;
   }
 }
+
+/** Toutes les 5 minutes aussi, après les alertes : l'atelier prélève une recharge pour chaque client sous son seuil (Stripe). */
+export async function evaluerRecharges(env, atelier) {
+  if (!atelier || !env.ADMIN_TOKEN) return null;
+  try {
+    const r = await atelier.fetch(
+      new Request("https://atelier/atelier/recharges/evaluer", { method: "POST", headers: { authorization: `Bearer ${env.ADMIN_TOKEN}` } }),
+    );
+    if (!r.ok) console.error("recharges :", r.status);
+    return r.status;
+  } catch (e) {
+    console.error("recharges injoignables :", String(e?.message ?? e).slice(0, 120));
+    return 0;
+  }
+}

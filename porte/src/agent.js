@@ -74,8 +74,9 @@ export const SECRETS_CLIENT = [...SECRETS_CLIENT_REQUIS, "GESTIONNAIRES", "GESTI
 const SECRETS_MEGGA = ["META_TOKEN", "META_APP_SECRET", "ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY", "ELEVENLABS_API_KEY"];
 // L'atelier n'a besoin que des modèles (mode d'essai) : il n'envoie rien sur WhatsApp.
 const SECRETS_ATELIER = ["ANTHROPIC_API_KEY", "DEEPSEEK_API_KEY"];
-// Ceux qu'on pose dans l'objet de l'atelier : sa base, et la clé qui signe les ordres de pilotage.
-const SECRETS_POSES_ATELIER = ["DATABASE_URL", "PILOTAGE_CLE"];
+// Ceux qu'on pose dans l'objet de l'atelier : sa base, la clé qui signe les ordres de pilotage, et Stripe (sa clé, le
+// secret qui signe ses événements), que Julien pose lui-même.
+const SECRETS_POSES_ATELIER = ["DATABASE_URL", "PILOTAGE_CLE", "STRIPE_CLE", "STRIPE_SIGNATURE"];
 
 /** Un objet qui fait tourner un conteneur de l'image unique, et lui transmet les requêtes. */
 class Conteneur extends DurableObject {
@@ -491,6 +492,8 @@ export class Atelier extends Conteneur {
     const env = { MEGGA_SERVICE: "atelier", DATABASE_URL: secrets.DATABASE_URL, ADMIN_TOKEN: this.env.ADMIN_TOKEN, PORTE_URL: this.env.PORTE_URL };
     // Sans elle, l'atelier sert tout, sauf les ordres de pilotage (scripts/pilotage.py poser).
     if (secrets.PILOTAGE_CLE) env.PILOTAGE_CLE = secrets.PILOTAGE_CLE;
+    // Sans eux, l'atelier sert tout, sauf Stripe (ses routes répondent 503).
+    for (const k of ["STRIPE_CLE", "STRIPE_SIGNATURE"]) if (secrets[k]) env[k] = secrets[k];
     for (const k of SECRETS_ATELIER) if (this.env[k]) env[k] = this.env[k];
     return env;
   }
