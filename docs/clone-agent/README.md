@@ -81,3 +81,7 @@ Trois briques nouvelles, posées sur le socle existant :
 1. Lire ce dossier, corriger ce qui ne tient pas, trancher les questions ouvertes de chaque fichier (elles sont rassemblées dans [08-lots.md](08-lots.md)).
 2. Valider l'ordre des lots et le périmètre de la première version publique (C1 à C5, « le clone qui écrit »).
 3. Choisir avec Thomas un juriste pour l'AI Act, le RGPD et la nLPD avant le lot C4 (le clone agit au nom de quelqu'un).
+
+## La console et l'espace client
+
+Ce que ce cadrage change pour ce qui est déjà construit, écrit le 21.11.2026 à la demande de Julien : [10-console.md](10-console.md) pour la console de MEGGA, puis [11-espace-client.md](11-espace-client.md) pour l'espace où un client construit son agent.
